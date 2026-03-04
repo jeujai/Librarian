@@ -1,0 +1,9 @@
+{
+  "timestamp": "2026-01-18T20:50:31.691797",
+  "task_definition": "multimodal-lib-prod-app:71",
+  "task_definition_arn": "arn:aws:ecs:us-east-1:591222106065:task-definition/multimodal-lib-prod-app:71",
+  "cluster": "multimodal-lib-prod-cluster",
+  "service": "multimodal-lib-prod-service-alb",
+  "change": "Fixed health check path to /api/health/simple (added /api prefix)",
+  "deployment_method": "ECS service update with force new deployment"
+}

@@ -1,0 +1,38 @@
+{
+  "timestamp": "2026-01-16T23:18:30.581201",
+  "operation": "switch_to_alb_with_https",
+  "steps": {
+    "get_alb": {
+      "success": true,
+      "alb_arn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:loadbalancer/app/multimodal-lib-prod-alb/f24be2cfb7f2f8ec",
+      "alb_dns": "multimodal-lib-prod-alb-1415728107.us-east-1.elb.amazonaws.com"
+    },
+    "get_vpc_info": {
+      "success": true,
+      "vpc_id": "vpc-0b2186b38779e77f6",
+      "subnets": [
+        "subnet-02f4d9ecb751beb27",
+        "subnet-02fe694f061238d5a",
+        "subnet-0c352188f5398a718"
+      ]
+    },
+    "create_target_group": {
+      "success": true,
+      "target_group_arn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-alb-tg/8f7b59ea06a035bf",
+      "existing": false
+    },
+    "configure_listeners": {
+      "success": true,
+      "https_enabled": false
+    },
+    "update_ecs_service": {
+      "success": true,
+      "target_group_arn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-alb-tg/8f7b59ea06a035bf"
+    },
+    "wait_for_stable": {
+      "success": false,
+      "warning": "Timeout waiting for stability"
+    }
+  },
+  "success": true
+}

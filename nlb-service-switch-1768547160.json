@@ -1,0 +1,137 @@
+{
+  "timestamp": "2026-01-15T23:51:49.773882",
+  "success": false,
+  "steps": {
+    "scale_down": true,
+    "delete_service": true,
+    "create_service": {
+      "ServiceName": "multimodal-lib-prod-service",
+      "ServiceArn": "arn:aws:ecs:us-east-1:591222106065:service/multimodal-lib-prod-cluster/multimodal-lib-prod-service",
+      "Status": "ACTIVE",
+      "Details": {
+        "serviceArn": "arn:aws:ecs:us-east-1:591222106065:service/multimodal-lib-prod-cluster/multimodal-lib-prod-service",
+        "serviceName": "multimodal-lib-prod-service",
+        "clusterArn": "arn:aws:ecs:us-east-1:591222106065:cluster/multimodal-lib-prod-cluster",
+        "loadBalancers": [
+          {
+            "targetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-nlb-tg/e3896922f939759a",
+            "containerName": "multimodal-lib-prod-app",
+            "containerPort": 8000
+          }
+        ],
+        "serviceRegistries": [],
+        "status": "ACTIVE",
+        "desiredCount": 1,
+        "runningCount": 0,
+        "pendingCount": 0,
+        "launchType": "FARGATE",
+        "platformVersion": "LATEST",
+        "platformFamily": "Linux",
+        "taskDefinition": "arn:aws:ecs:us-east-1:591222106065:task-definition/multimodal-lib-prod-app:37",
+        "deploymentConfiguration": {
+          "deploymentCircuitBreaker": {
+            "enable": true,
+            "rollback": true
+          },
+          "maximumPercent": 200,
+          "minimumHealthyPercent": 100,
+          "strategy": "ROLLING",
+          "bakeTimeInMinutes": 0
+        },
+        "deployments": [
+          {
+            "id": "ecs-svc/6231814079494582417",
+            "status": "PRIMARY",
+            "taskDefinition": "arn:aws:ecs:us-east-1:591222106065:task-definition/multimodal-lib-prod-app:37",
+            "desiredCount": 0,
+            "pendingCount": 0,
+            "runningCount": 0,
+            "failedTasks": 0,
+            "createdAt": "2026-01-15 23:55:51.917000-07:00",
+            "updatedAt": "2026-01-15 23:55:51.917000-07:00",
+            "launchType": "FARGATE",
+            "platformVersion": "1.4.0",
+            "platformFamily": "Linux",
+            "networkConfiguration": {
+              "awsvpcConfiguration": {
+                "subnets": [
+                  "subnet-02fe694f061238d5a",
+                  "subnet-02f4d9ecb751beb27",
+                  "subnet-0c352188f5398a718"
+                ],
+                "securityGroups": [
+                  "sg-0135b368e20b7bd01"
+                ],
+                "assignPublicIp": "ENABLED"
+              }
+            },
+            "rolloutState": "IN_PROGRESS",
+            "rolloutStateReason": "ECS deployment ecs-svc/6231814079494582417 in progress."
+          }
+        ],
+        "roleArn": "arn:aws:iam::591222106065:role/aws-service-role/ecs.amazonaws.com/AWSServiceRoleForECS",
+        "events": [],
+        "createdAt": "2026-01-15 23:55:51.917000-07:00",
+        "currentServiceRevisions": [
+          {
+            "arn": "arn:aws:ecs:us-east-1:591222106065:service-revision/multimodal-lib-prod-cluster/multimodal-lib-prod-service/6231814079494582417",
+            "requestedTaskCount": 0,
+            "runningTaskCount": 0,
+            "pendingTaskCount": 0
+          }
+        ],
+        "placementConstraints": [],
+        "placementStrategy": [],
+        "networkConfiguration": {
+          "awsvpcConfiguration": {
+            "subnets": [
+              "subnet-02fe694f061238d5a",
+              "subnet-02f4d9ecb751beb27",
+              "subnet-0c352188f5398a718"
+            ],
+            "securityGroups": [
+              "sg-0135b368e20b7bd01"
+            ],
+            "assignPublicIp": "ENABLED"
+          }
+        },
+        "healthCheckGracePeriodSeconds": 300,
+        "schedulingStrategy": "REPLICA",
+        "deploymentController": {
+          "type": "ECS"
+        },
+        "tags": [
+          {
+            "key": "CreatedDate",
+            "value": "2026-01-15T23:55:50.781529"
+          },
+          {
+            "key": "Environment",
+            "value": "production"
+          },
+          {
+            "key": "LoadBalancer",
+            "value": "NLB"
+          },
+          {
+            "key": "Application",
+            "value": "multimodal-librarian"
+          },
+          {
+            "key": "Name",
+            "value": "multimodal-lib-prod-service"
+          }
+        ],
+        "createdBy": "arn:aws:iam::591222106065:root",
+        "enableECSManagedTags": false,
+        "propagateTags": "NONE",
+        "enableExecuteCommand": false,
+        "availabilityZoneRebalancing": "ENABLED",
+        "resourceManagementType": "CUSTOMER"
+      }
+    },
+    "startup": false,
+    "connectivity": false
+  },
+  "task_definition": "arn:aws:ecs:us-east-1:591222106065:task-definition/multimodal-lib-prod-app:37"
+}

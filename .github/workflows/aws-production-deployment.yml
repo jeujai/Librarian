@@ -1,0 +1,503 @@
+name: AWS Production Deployment
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'infrastructure/**'
+      - 'Dockerfile'
+      - 'requirements.txt'
+      - '.github/workflows/aws-production-deployment.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'infrastructure/**'
+      - 'Dockerfile'
+      - 'requirements.txt'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+      deployment_strategy:
+        description: 'Deployment strategy'
+        required: true
+        default: 'blue-green'
+        type: choice
+        options:
+          - blue-green
+          - rolling
+      skip_tests:
+        description: 'Skip tests (emergency deployment only)'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: multimodal-librarian
+  TERRAFORM_VERSION: 1.6.0
+
+jobs:
+  # Security and validation checks
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          
+      - name: Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+          
+      - name: Run Checkov security scan
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: infrastructure/
+          framework: terraform
+          output_format: sarif
+          output_file_path: checkov-results.sarif
+          
+      - name: Upload Checkov scan results
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: checkov-results.sarif
+
+  # Application testing
+  test-application:
+    name: Test Application
+    runs-on: ubuntu-latest
+    if: github.event.inputs.skip_tests != 'true'
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: test_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          
+      - name: Cache pip dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov pytest-asyncio
+          
+      - name: Run unit tests
+        run: |
+          pytest tests/ -v --cov=src --cov-report=xml --cov-report=html
+          
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          flags: unittests
+          
+      - name: Run integration tests
+        run: |
+          pytest tests/integration/ -v
+          
+      - name: Run security tests
+        run: |
+          pytest tests/security/ -v
+
+  # Infrastructure validation
+  validate-infrastructure:
+    name: Validate Infrastructure
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+          
+      - name: Terraform Init
+        working-directory: infrastructure/aws-native
+        run: terraform init
+        
+      - name: Terraform Validate
+        working-directory: infrastructure/aws-native
+        run: terraform validate
+        
+      - name: Terraform Plan
+        working-directory: infrastructure/aws-native
+        run: |
+          terraform plan -var-file="terraform.tfvars" -out=tfplan
+          terraform show -json tfplan > tfplan.json
+          
+      - name: Run Terraform security scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'config'
+          scan-ref: 'infrastructure/aws-native'
+          format: 'sarif'
+          output: 'terraform-trivy-results.sarif'
+          
+      - name: Upload Terraform scan results
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: 'terraform-trivy-results.sarif'
+          
+      - name: Estimate costs
+        uses: infracost/infracost-gh-action@v0.16
+        with:
+          api-key: ${{ secrets.INFRACOST_API_KEY }}
+          path: infrastructure/aws-native/tfplan.json
+          usage-file: infrastructure/aws-native/infracost-usage.yml
+
+  # Build and push container image
+  build-and-push:
+    name: Build and Push Container
+    runs-on: ubuntu-latest
+    needs: [security-scan, test-application, validate-infrastructure]
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    
+    outputs:
+      image-tag: ${{ steps.build.outputs.image-tag }}
+      
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+          
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+        
+      - name: Build and push Docker image
+        id: build
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          # Build image
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
+          
+          # Push image
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          
+          echo "image-tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+          
+      - name: Scan container image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.build.outputs.image-tag }}
+          format: 'sarif'
+          output: 'container-trivy-results.sarif'
+          
+      - name: Upload container scan results
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: 'container-trivy-results.sarif'
+
+  # Deploy to staging
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [build-and-push]
+    if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging')
+    environment: staging
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+          
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          
+      - name: Deploy infrastructure
+        working-directory: infrastructure/aws-native
+        env:
+          TF_VAR_environment: staging
+          TF_VAR_image_tag: ${{ needs.build-and-push.outputs.image-tag }}
+        run: |
+          terraform init
+          terraform workspace select staging || terraform workspace new staging
+          terraform apply -var-file="staging.tfvars" -auto-approve
+          
+      - name: Update ECS service
+        env:
+          IMAGE_TAG: ${{ needs.build-and-push.outputs.image-tag }}
+        run: |
+          # Update ECS service with new image
+          aws ecs update-service \
+            --cluster multimodal-librarian-staging \
+            --service multimodal-librarian-staging \
+            --force-new-deployment
+            
+      - name: Wait for deployment
+        run: |
+          aws ecs wait services-stable \
+            --cluster multimodal-librarian-staging \
+            --services multimodal-librarian-staging
+            
+      - name: Run smoke tests
+        run: |
+          # Wait for service to be healthy
+          sleep 60
+          
+          # Get load balancer URL
+          ALB_URL=$(aws elbv2 describe-load-balancers \
+            --names multimodal-librarian-staging \
+            --query 'LoadBalancers[0].DNSName' \
+            --output text)
+            
+          # Run basic health checks
+          curl -f "https://$ALB_URL/health/simple" || exit 1
+          curl -f "https://$ALB_URL/health/detailed" || exit 1
+
+  # Deploy to production (requires manual approval)
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [build-and-push, deploy-staging]
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production'
+    environment: production
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_PROD }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_PROD }}
+          aws-region: ${{ env.AWS_REGION }}
+          
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          
+      - name: Pre-deployment backup
+        run: |
+          # Create Neptune snapshot
+          aws neptune create-db-cluster-snapshot \
+            --db-cluster-identifier multimodal-librarian-production \
+            --db-cluster-snapshot-identifier "pre-deploy-$(date +%Y%m%d-%H%M%S)"
+            
+          # Create OpenSearch snapshot
+          aws opensearch create-domain-endpoint \
+            --domain-name multimodal-librarian-production \
+            --domain-endpoint-options EnforceHTTPS=true
+            
+      - name: Deploy with blue-green strategy
+        if: github.event.inputs.deployment_strategy == 'blue-green'
+        working-directory: infrastructure/aws-native
+        env:
+          TF_VAR_environment: production
+          TF_VAR_image_tag: ${{ needs.build-and-push.outputs.image-tag }}
+          TF_VAR_deployment_strategy: blue-green
+        run: |
+          terraform init
+          terraform workspace select production
+          
+          # Deploy green environment
+          terraform apply -var-file="production.tfvars" -var="blue_green_deployment=true" -auto-approve
+          
+      - name: Deploy with rolling strategy
+        if: github.event.inputs.deployment_strategy == 'rolling'
+        working-directory: infrastructure/aws-native
+        env:
+          TF_VAR_environment: production
+          TF_VAR_image_tag: ${{ needs.build-and-push.outputs.image-tag }}
+        run: |
+          terraform init
+          terraform workspace select production
+          terraform apply -var-file="production.tfvars" -auto-approve
+          
+      - name: Run production validation
+        run: |
+          # Wait for deployment to stabilize
+          sleep 120
+          
+          # Get production load balancer URL
+          ALB_URL=$(aws elbv2 describe-load-balancers \
+            --names multimodal-librarian-production \
+            --query 'LoadBalancers[0].DNSName' \
+            --output text)
+            
+          # Run comprehensive health checks
+          curl -f "https://$ALB_URL/health/simple" || exit 1
+          curl -f "https://$ALB_URL/health/detailed" || exit 1
+          
+          # Run API validation tests
+          python scripts/validate-production-deployment.py --url "https://$ALB_URL"
+          
+      - name: Switch traffic (blue-green only)
+        if: github.event.inputs.deployment_strategy == 'blue-green'
+        run: |
+          # Switch load balancer target group to green environment
+          python scripts/switch-blue-green-traffic.py --environment production
+          
+      - name: Post-deployment monitoring
+        run: |
+          # Enable enhanced monitoring for 24 hours
+          python scripts/enable-enhanced-monitoring.py --duration 24h
+          
+          # Send deployment notification
+          python scripts/send-deployment-notification.py \
+            --environment production \
+            --image-tag ${{ needs.build-and-push.outputs.image-tag }} \
+            --strategy ${{ github.event.inputs.deployment_strategy }}
+
+  # Rollback job (manual trigger only)
+  rollback:
+    name: Rollback Deployment
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.rollback == 'true'
+    environment: production
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_PROD }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_PROD }}
+          aws-region: ${{ env.AWS_REGION }}
+          
+      - name: Execute rollback
+        run: |
+          # Get previous stable deployment
+          PREVIOUS_TAG=$(aws ssm get-parameter \
+            --name "/multimodal-librarian/production/last-stable-tag" \
+            --query 'Parameter.Value' \
+            --output text)
+            
+          # Rollback ECS service
+          python scripts/rollback-deployment.py \
+            --environment production \
+            --target-tag "$PREVIOUS_TAG"
+            
+      - name: Validate rollback
+        run: |
+          # Wait for rollback to complete
+          aws ecs wait services-stable \
+            --cluster multimodal-librarian-production \
+            --services multimodal-librarian-production
+            
+          # Validate service health
+          ALB_URL=$(aws elbv2 describe-load-balancers \
+            --names multimodal-librarian-production \
+            --query 'LoadBalancers[0].DNSName' \
+            --output text)
+            
+          curl -f "https://$ALB_URL/health/simple" || exit 1
+          
+      - name: Send rollback notification
+        run: |
+          python scripts/send-rollback-notification.py \
+            --environment production \
+            --reason "Manual rollback triggered"
+
+  # Cleanup job
+  cleanup:
+    name: Cleanup Resources
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [deploy-staging, deploy-production]
+    
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+          
+      - name: Cleanup old ECR images
+        run: |
+          # Keep only the last 10 images
+          aws ecr list-images \
+            --repository-name $ECR_REPOSITORY \
+            --filter tagStatus=TAGGED \
+            --query 'imageIds[10:].[imageTag]' \
+            --output text | \
+          while read tag; do
+            if [ ! -z "$tag" ]; then
+              aws ecr batch-delete-image \
+                --repository-name $ECR_REPOSITORY \
+                --image-ids imageTag=$tag
+            fi
+          done
+          
+      - name: Cleanup old snapshots
+        run: |
+          # Keep only snapshots from the last 7 days
+          python scripts/cleanup-old-snapshots.py --retention-days 7

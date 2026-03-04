@@ -1,0 +1,203 @@
+# Optimized Multi-stage Dockerfile for Multimodal Librarian
+# Focused on faster startup times and smaller image sizes
+# CRITICAL FIX: Platform specification to prevent "exec format error" on AWS Fargate
+
+# =============================================================================
+# CACHE STAGE - Pre-built dependencies for faster rebuilds
+# =============================================================================
+FROM --platform=linux/amd64 python:3.11-slim as cache-builder
+
+# Set environment variables for build optimization
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    DEBIAN_FRONTEND=noninteractive
+
+# Install only essential system dependencies for building
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Create cache directory
+WORKDIR /cache
+
+# Copy requirements first for better layer caching
+COPY requirements.txt ./
+
+# Pre-install core dependencies in a separate layer for better caching
+RUN pip install --upgrade pip setuptools wheel && \
+    pip install --target /cache/packages \
+    numpy>=1.24.0 \
+    packaging \
+    typing-extensions>=4.8.0 \
+    certifi \
+    charset-normalizer \
+    idna \
+    urllib3 \
+    requests==2.31.0 \
+    six \
+    python-dateutil==2.8.2 \
+    pytz==2023.3 \
+    "python-dotenv>=1.0.1,<2.0.0"
+
+# Install PyTorch with CPU-only version for faster download and smaller size
+RUN pip install --target /cache/packages \
+    torch>=2.1.0,\<2.5.0+cpu \
+    torchvision>=0.16.0,\<0.20.0+cpu \
+    torchaudio>=2.1.0,\<2.5.0+cpu \
+    --index-url https://download.pytorch.org/whl/cpu
+
+# Install remaining dependencies
+RUN pip install --target /cache/packages -r requirements.txt
+
+# =============================================================================
+# BASE STAGE - Minimal runtime with optimized system dependencies
+# =============================================================================
+FROM --platform=linux/amd64 python:3.11-slim as base
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app/src \
+    TORCH_HOME=/app/.cache/torch \
+    TRANSFORMERS_CACHE=/app/.cache/transformers \
+    HF_HOME=/app/.cache/huggingface \
+    DEBIAN_FRONTEND=noninteractive
+
+# Set work directory
+WORKDIR /app
+
+# Install only essential runtime dependencies (minimal set for faster startup)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    libpq5 \
+    libglib2.0-0 \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Copy pre-built packages from cache stage
+COPY --from=cache-builder /cache/packages /usr/local/lib/python3.11/site-packages/
+
+# Create necessary directories with proper permissions
+RUN mkdir -p uploads media exports logs audit_logs \
+    .cache/torch .cache/transformers .cache/huggingface \
+    && chmod 755 uploads media exports logs audit_logs \
+    && chmod 755 .cache/torch .cache/transformers .cache/huggingface
+
+# =============================================================================
+# MODEL CACHE STAGE - Pre-download essential models for faster startup
+# =============================================================================
+FROM base as model-cache
+
+# Download essential ML models and data in parallel for faster builds
+RUN python -c "import spacy; spacy.cli.download('en_core_web_sm')" & \
+    python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')" & \
+    python -c "import nltk; nltk.download('punkt'); nltk.download('stopwords'); nltk.download('averaged_perceptron_tagger')" & \
+    wait
+
+# Verify installations
+RUN python -c "import torch; print(f'PyTorch version: {torch.__version__}')" && \
+    python -c "import transformers; print(f'Transformers version: {transformers.__version__}')"
+
+# =============================================================================
+# DEVELOPMENT STAGE - Optimized for local development with hot reload
+# =============================================================================
+FROM model-cache as development
+
+# Install minimal development tools (only what's essential)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    vim \
+    htop \
+    procps \
+    net-tools \
+    iputils-ping \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Copy development requirements
+COPY requirements-dev.txt ./
+
+# Install development Python packages
+RUN pip install --no-cache-dir -r requirements-dev.txt
+
+# Copy project files (source code will be mounted as volume in docker-compose)
+COPY src/ ./src/
+COPY pyproject.toml ./
+
+# Install the package in development mode
+RUN pip install -e .
+
+# Create non-root user for security
+RUN groupadd -r appuser && useradd -r -g appuser -s /bin/bash appuser \
+    && chown -R appuser:appuser /app
+
+# Switch to non-root user
+USER appuser
+
+# Set up development environment
+ENV PYTHONPATH=/app/src:/app \
+    ML_ENVIRONMENT=local \
+    DATABASE_TYPE=local \
+    DEBUG=true \
+    LOG_LEVEL=DEBUG
+
+# Expose ports for API, WebSocket, and debugging
+EXPOSE 8000 5678
+
+# Optimized health check for development (faster and more reliable)
+HEALTHCHECK --interval=10s --timeout=5s --start-period=20s --retries=2 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/simple', timeout=3).read()" || exit 1
+
+# Development command with optimized hot reload settings
+CMD ["python", "-m", "uvicorn", "multimodal_librarian.main:app", \
+     "--host", "0.0.0.0", "--port", "8000", \
+     "--reload", "--reload-dir", "/app/src", \
+     "--reload-include", "*.py", "--reload-include", "*.yaml", \
+     "--reload-include", "*.yml", "--reload-include", "*.json", \
+     "--reload-exclude", "__pycache__", "--reload-exclude", "*.pyc", \
+     "--reload-exclude", "*.pyo", "--reload-exclude", "*.pyd", \
+     "--reload-exclude", ".git", \
+     "--access-log", "--use-colors"]
+
+# =============================================================================
+# PRODUCTION STAGE - Optimized for production deployment
+# =============================================================================
+FROM model-cache as production
+
+# Copy project files
+COPY src/ ./src/
+COPY pyproject.toml ./
+
+# Install the package
+RUN pip install .
+
+# Create non-root user for security (no sudo access in production)
+RUN groupadd -r appuser && useradd -r -g appuser appuser \
+    && chown -R appuser:appuser /app
+
+USER appuser
+
+# Production environment variables
+ENV ML_ENVIRONMENT=aws \
+    DATABASE_TYPE=aws \
+    DEBUG=false \
+    LOG_LEVEL=INFO
+
+# Expose ports for API and WebSocket
+EXPOSE 8000
+
+# Optimized health check for production
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/simple', timeout=8).read()" || exit 1
+
+# Run the production application
+CMD ["python", "-m", "uvicorn", "multimodal_librarian.main:app", \
+     "--host", "0.0.0.0", "--port", "8000", \
+     "--workers", "1", "--access-log"]

@@ -1,0 +1,497 @@
+{
+  "eip_analysis": {
+    "total_eips": 12,
+    "associated_eips": 8,
+    "unassociated_eips": 4,
+    "eip_details": [
+      {
+        "allocation_id": "eipalloc-0c6509c24f4b04a22",
+        "public_ip": "13.216.83.67",
+        "domain": "vpc",
+        "associated": false,
+        "instance_id": null,
+        "network_interface_id": null,
+        "tags": [
+          {
+            "Key": "Environment",
+            "Value": "full-ml"
+          },
+          {
+            "Key": "aws:cloudformation:stack-name",
+            "Value": "MultimodalLibrarianFullML"
+          },
+          {
+            "Key": "ManagedBy",
+            "Value": "CDK"
+          },
+          {
+            "Key": "Name",
+            "Value": "MultimodalLibrarianFullML/Vpc/Vpc/PublicSubnet1"
+          },
+          {
+            "Key": "Project",
+            "Value": "multimodal-librarian"
+          },
+          {
+            "Key": "Owner",
+            "Value": "Student"
+          },
+          {
+            "Key": "aws:cloudformation:logical-id",
+            "Value": "VpcPublicSubnet1EIP2293BAA3"
+          },
+          {
+            "Key": "Component",
+            "Value": "Networking"
+          },
+          {
+            "Key": "CostCenter",
+            "Value": "Learning"
+          },
+          {
+            "Key": "DatabaseStack",
+            "Value": "Complete"
+          },
+          {
+            "Key": "aws:cloudformation:stack-id",
+            "Value": "arn:aws:cloudformation:us-east-1:591222106065:stack/MultimodalLibrarianFullML/f12fc8c0-ea96-11f0-a402-0e197c3315cb"
+          }
+        ]
+      },
+      {
+        "allocation_id": "eipalloc-0a5ecf5b82e95b2ea",
+        "public_ip": "18.213.251.34",
+        "domain": "vpc",
+        "associated": false,
+        "instance_id": null,
+        "network_interface_id": null,
+        "tags": [
+          {
+            "Key": "Environment",
+            "Value": "prod"
+          },
+          {
+            "Key": "CostCenter",
+            "Value": "engineering"
+          },
+          {
+            "Key": "Name",
+            "Value": "multimodal-lib-prod-nat-eip-3"
+          },
+          {
+            "Key": "Owner",
+            "Value": "platform-team"
+          },
+          {
+            "Key": "Project",
+            "Value": "multimodal-lib"
+          },
+          {
+            "Key": "CreatedBy",
+            "Value": "aws-production-deployment-spec"
+          },
+          {
+            "Key": "ManagedBy",
+            "Value": "terraform"
+          }
+        ]
+      },
+      {
+        "allocation_id": "eipalloc-0b0cb2486d155f18d",
+        "public_ip": "23.23.223.211",
+        "domain": "vpc",
+        "associated": true,
+        "instance_id": null,
+        "network_interface_id": "eni-04c4ddb3d5414f84f",
+        "tags": []
+      },
+      {
+        "allocation_id": "eipalloc-09b80a65d01553bd7",
+        "public_ip": "3.224.10.96",
+        "domain": "vpc",
+        "associated": true,
+        "instance_id": null,
+        "network_interface_id": "eni-094615db6b9c09943",
+        "tags": []
+      },
+      {
+        "allocation_id": "eipalloc-0fd37f4434708cc32",
+        "public_ip": "3.224.8.100",
+        "domain": "vpc",
+        "associated": true,
+        "instance_id": null,
+        "network_interface_id": "eni-0d3730ab2ddc1609c",
+        "tags": [
+          {
+            "Key": "Environment",
+            "Value": "production"
+          },
+          {
+            "Key": "aws:cloudformation:stack-name",
+            "Value": "CollaborativeEditorProdStack"
+          },
+          {
+            "Key": "Name",
+            "Value": "CollaborativeEditorProdStack/EditorVPC/PublicSubnet1"
+          },
+          {
+            "Key": "aws:cloudformation:stack-id",
+            "Value": "arn:aws:cloudformation:us-east-1:591222106065:stack/CollaborativeEditorProdStack/2c32aec0-e695-11f0-a00b-0e06cbd79b19"
+          },
+          {
+            "Key": "Project",
+            "Value": "collaborative-editor"
+          },
+          {
+            "Key": "HighAvailability",
+            "Value": "true"
+          },
+          {
+            "Key": "aws:cloudformation:logical-id",
+            "Value": "EditorVPCPublicSubnet1EIPD99A20AA"
+          }
+        ]
+      },
+      {
+        "allocation_id": "eipalloc-058e2e2938d98e99e",
+        "public_ip": "34.233.175.98",
+        "domain": "vpc",
+        "associated": true,
+        "instance_id": null,
+        "network_interface_id": "eni-038b1514cd6d7438f",
+        "tags": []
+      },
+      {
+        "allocation_id": "eipalloc-074bf387b83e1100c",
+        "public_ip": "52.2.227.65",
+        "domain": "vpc",
+        "associated": true,
+        "instance_id": null,
+        "network_interface_id": "eni-0e8603e71399c4836",
+        "tags": []
+      },
+      {
+        "allocation_id": "eipalloc-097b561b92c56a63e",
+        "public_ip": "52.202.142.217",
+        "domain": "vpc",
+        "associated": false,
+        "instance_id": null,
+        "network_interface_id": null,
+        "tags": [
+          {
+            "Key": "CreatedBy",
+            "Value": "aws-production-deployment-spec"
+          },
+          {
+            "Key": "ManagedBy",
+            "Value": "terraform"
+          },
+          {
+            "Key": "Project",
+            "Value": "multimodal-lib"
+          },
+          {
+            "Key": "CostCenter",
+            "Value": "engineering"
+          },
+          {
+            "Key": "Name",
+            "Value": "multimodal-lib-prod-nat-eip-2"
+          },
+          {
+            "Key": "Owner",
+            "Value": "platform-team"
+          },
+          {
+            "Key": "Environment",
+            "Value": "prod"
+          }
+        ]
+      },
+      {
+        "allocation_id": "eipalloc-0facd1545198692df",
+        "public_ip": "52.207.22.58",
+        "domain": "vpc",
+        "associated": false,
+        "instance_id": null,
+        "network_interface_id": null,
+        "tags": [
+          {
+            "Key": "Project",
+            "Value": "multimodal-lib"
+          },
+          {
+            "Key": "ManagedBy",
+            "Value": "terraform"
+          },
+          {
+            "Key": "CreatedBy",
+            "Value": "aws-production-deployment-spec"
+          },
+          {
+            "Key": "Name",
+            "Value": "multimodal-lib-prod-nat-eip-1"
+          },
+          {
+            "Key": "Environment",
+            "Value": "prod"
+          },
+          {
+            "Key": "CostCenter",
+            "Value": "engineering"
+          },
+          {
+            "Key": "Owner",
+            "Value": "platform-team"
+          }
+        ]
+      },
+      {
+        "allocation_id": "eipalloc-09393f37296c16112",
+        "public_ip": "52.71.109.128",
+        "domain": "vpc",
+        "associated": true,
+        "instance_id": null,
+        "network_interface_id": "eni-0baf73ef5004c07c7",
+        "tags": []
+      },
+      {
+        "allocation_id": "eipalloc-0d29c1ef5ae3fdf40",
+        "public_ip": "54.225.8.1",
+        "domain": "vpc",
+        "associated": true,
+        "instance_id": null,
+        "network_interface_id": "eni-061648717d46b9248",
+        "tags": []
+      },
+      {
+        "allocation_id": "eipalloc-03816059a39633348",
+        "public_ip": "98.94.152.147",
+        "domain": "vpc",
+        "associated": true,
+        "instance_id": null,
+        "network_interface_id": "eni-02e8b366e05da0fff",
+        "tags": []
+      }
+    ],
+    "unused_eips": [
+      {
+        "allocation_id": "eipalloc-0c6509c24f4b04a22",
+        "public_ip": "13.216.83.67",
+        "domain": "vpc",
+        "associated": false,
+        "instance_id": null,
+        "network_interface_id": null,
+        "tags": [
+          {
+            "Key": "Environment",
+            "Value": "full-ml"
+          },
+          {
+            "Key": "aws:cloudformation:stack-name",
+            "Value": "MultimodalLibrarianFullML"
+          },
+          {
+            "Key": "ManagedBy",
+            "Value": "CDK"
+          },
+          {
+            "Key": "Name",
+            "Value": "MultimodalLibrarianFullML/Vpc/Vpc/PublicSubnet1"
+          },
+          {
+            "Key": "Project",
+            "Value": "multimodal-librarian"
+          },
+          {
+            "Key": "Owner",
+            "Value": "Student"
+          },
+          {
+            "Key": "aws:cloudformation:logical-id",
+            "Value": "VpcPublicSubnet1EIP2293BAA3"
+          },
+          {
+            "Key": "Component",
+            "Value": "Networking"
+          },
+          {
+            "Key": "CostCenter",
+            "Value": "Learning"
+          },
+          {
+            "Key": "DatabaseStack",
+            "Value": "Complete"
+          },
+          {
+            "Key": "aws:cloudformation:stack-id",
+            "Value": "arn:aws:cloudformation:us-east-1:591222106065:stack/MultimodalLibrarianFullML/f12fc8c0-ea96-11f0-a402-0e197c3315cb"
+          }
+        ]
+      },
+      {
+        "allocation_id": "eipalloc-0a5ecf5b82e95b2ea",
+        "public_ip": "18.213.251.34",
+        "domain": "vpc",
+        "associated": false,
+        "instance_id": null,
+        "network_interface_id": null,
+        "tags": [
+          {
+            "Key": "Environment",
+            "Value": "prod"
+          },
+          {
+            "Key": "CostCenter",
+            "Value": "engineering"
+          },
+          {
+            "Key": "Name",
+            "Value": "multimodal-lib-prod-nat-eip-3"
+          },
+          {
+            "Key": "Owner",
+            "Value": "platform-team"
+          },
+          {
+            "Key": "Project",
+            "Value": "multimodal-lib"
+          },
+          {
+            "Key": "CreatedBy",
+            "Value": "aws-production-deployment-spec"
+          },
+          {
+            "Key": "ManagedBy",
+            "Value": "terraform"
+          }
+        ]
+      },
+      {
+        "allocation_id": "eipalloc-097b561b92c56a63e",
+        "public_ip": "52.202.142.217",
+        "domain": "vpc",
+        "associated": false,
+        "instance_id": null,
+        "network_interface_id": null,
+        "tags": [
+          {
+            "Key": "CreatedBy",
+            "Value": "aws-production-deployment-spec"
+          },
+          {
+            "Key": "ManagedBy",
+            "Value": "terraform"
+          },
+          {
+            "Key": "Project",
+            "Value": "multimodal-lib"
+          },
+          {
+            "Key": "CostCenter",
+            "Value": "engineering"
+          },
+          {
+            "Key": "Name",
+            "Value": "multimodal-lib-prod-nat-eip-2"
+          },
+          {
+            "Key": "Owner",
+            "Value": "platform-team"
+          },
+          {
+            "Key": "Environment",
+            "Value": "prod"
+          }
+        ]
+      },
+      {
+        "allocation_id": "eipalloc-0facd1545198692df",
+        "public_ip": "52.207.22.58",
+        "domain": "vpc",
+        "associated": false,
+        "instance_id": null,
+        "network_interface_id": null,
+        "tags": [
+          {
+            "Key": "Project",
+            "Value": "multimodal-lib"
+          },
+          {
+            "Key": "ManagedBy",
+            "Value": "terraform"
+          },
+          {
+            "Key": "CreatedBy",
+            "Value": "aws-production-deployment-spec"
+          },
+          {
+            "Key": "Name",
+            "Value": "multimodal-lib-prod-nat-eip-1"
+          },
+          {
+            "Key": "Environment",
+            "Value": "prod"
+          },
+          {
+            "Key": "CostCenter",
+            "Value": "engineering"
+          },
+          {
+            "Key": "Owner",
+            "Value": "platform-team"
+          }
+        ]
+      }
+    ]
+  },
+  "eip_cleanup": {
+    "eips_released": [
+      {
+        "allocation_id": "eipalloc-0c6509c24f4b04a22",
+        "public_ip": "13.216.83.67"
+      },
+      {
+        "allocation_id": "eipalloc-0a5ecf5b82e95b2ea",
+        "public_ip": "18.213.251.34"
+      },
+      {
+        "allocation_id": "eipalloc-097b561b92c56a63e",
+        "public_ip": "52.202.142.217"
+      },
+      {
+        "allocation_id": "eipalloc-0facd1545198692df",
+        "public_ip": "52.207.22.58"
+      }
+    ],
+    "release_errors": [],
+    "space_created": 4
+  },
+  "nat_gateway_creation": {
+    "success": false,
+    "nat_gateway_id": null,
+    "subnet_id": null,
+    "allocation_id": null,
+    "public_ip": null,
+    "error": "An error occurred (InvalidParameter) when calling the CreateNatGateway operation: 'nat-gateway' is not a valid taggable resource type for this operation."
+  },
+  "route_table_updates": {
+    "private_route_tables": [],
+    "routes_added": [],
+    "update_errors": []
+  },
+  "summary": {
+    "eips_released": 4,
+    "nat_gateway_created": false,
+    "route_tables_updated": 0,
+    "connectivity_restored": false,
+    "cost_impact": {},
+    "next_steps": [
+      "\u274c NAT Gateway creation or routing failed",
+      "\ud83d\udd0d Check AWS permissions and VPC configuration",
+      "\ud83d\udd04 Retry NAT Gateway creation if needed",
+      "\ud83d\udcb0 Monitor costs and optimize as needed",
+      "\ud83d\udd12 Validate security groups allow required traffic"
+    ]
+  }
+}

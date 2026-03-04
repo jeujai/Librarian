@@ -1,0 +1,267 @@
+# Cold Start Optimized Makefile for Multimodal Librarian
+# This Makefile provides targets specifically optimized for minimizing cold start times
+
+.PHONY: cold-start-help cold-start-optimize cold-start-build cold-start-start cold-start-stop
+.PHONY: cold-start-benchmark cold-start-status cold-start-clean cold-start-prewarm
+.PHONY: cold-start-fast cold-start-monitor cold-start-logs cold-start-health
+
+# Default target
+cold-start-help:
+	@echo "Cold Start Optimization Targets:"
+	@echo ""
+	@echo "Setup and Optimization:"
+	@echo "  cold-start-optimize    - Apply all cold start optimizations"
+	@echo "  cold-start-build       - Build optimized images with pre-warming"
+	@echo "  cold-start-prewarm     - Pre-warm containers and cache dependencies"
+	@echo ""
+	@echo "Startup Operations:"
+	@echo "  cold-start-fast        - Start with fastest possible cold start"
+	@echo "  cold-start-start       - Start services with cold start optimizations"
+	@echo "  cold-start-stop        - Stop all cold start optimized services"
+	@echo ""
+	@echo "Monitoring and Analysis:"
+	@echo "  cold-start-monitor     - Monitor cold start progress in real-time"
+	@echo "  cold-start-health      - Check cold start health status"
+	@echo "  cold-start-benchmark   - Benchmark cold start performance"
+	@echo "  cold-start-status      - Show cold start optimization status"
+	@echo "  cold-start-logs        - View cold start optimized service logs"
+	@echo ""
+	@echo "Maintenance:"
+	@echo "  cold-start-clean       - Clean up cold start optimization artifacts"
+	@echo ""
+	@echo "Environment Variables:"
+	@echo "  COLD_START_LEVEL       - Optimization level: standard, aggressive (default: aggressive)"
+	@echo "  STARTUP_MODE           - Startup mode: fast, normal, full (default: fast)"
+	@echo "  COLD_START_TIMEOUT     - Timeout for cold start operations (default: 120s)"
+
+# Apply all cold start optimizations
+cold-start-optimize:
+	@echo "🚀 Applying cold start optimizations..."
+	@chmod +x scripts/optimize-cold-start-times.sh
+	@./scripts/optimize-cold-start-times.sh optimize
+	@echo "✅ Cold start optimizations applied successfully"
+
+# Build optimized images with pre-warming
+cold-start-build:
+	@echo "🔨 Building cold start optimized images..."
+	@chmod +x scripts/optimize-cold-start-times.sh
+	@./scripts/optimize-cold-start-times.sh build
+	@echo "✅ Cold start optimized images built successfully"
+
+# Pre-warm containers and dependencies
+cold-start-prewarm:
+	@echo "🔥 Pre-warming containers and dependencies..."
+	@if [ -f "scripts/prewarm-containers.sh" ]; then \
+		chmod +x scripts/prewarm-containers.sh; \
+		./scripts/prewarm-containers.sh; \
+	else \
+		echo "❌ Pre-warming script not found. Run 'make cold-start-optimize' first."; \
+		exit 1; \
+	fi
+	@echo "✅ Container pre-warming completed"
+
+# Start with fastest possible cold start
+cold-start-fast:
+	@echo "⚡ Starting with fastest possible cold start..."
+	@if [ -f "scripts/fast-startup.sh" ]; then \
+		chmod +x scripts/fast-startup.sh; \
+		./scripts/fast-startup.sh; \
+	else \
+		echo "❌ Fast startup script not found. Run 'make cold-start-optimize' first."; \
+		exit 1; \
+	fi
+
+# Start services with cold start optimizations
+cold-start-start:
+	@echo "🚀 Starting services with cold start optimizations..."
+	@if [ -f "docker-compose.cold-start-optimized.yml" ]; then \
+		export COLD_START_OPTIMIZATION=true; \
+		export STARTUP_MODE=${STARTUP_MODE:-fast}; \
+		docker compose -f docker-compose.cold-start-optimized.yml up -d; \
+		echo "✅ Cold start optimized services started"; \
+		echo "🌐 Application: http://localhost:8000"; \
+		echo "🏥 Health check: http://localhost:8000/health/cold-start"; \
+	else \
+		echo "❌ Cold start optimized compose file not found. Run 'make cold-start-optimize' first."; \
+		exit 1; \
+	fi
+
+# Stop all cold start optimized services
+cold-start-stop:
+	@echo "🛑 Stopping cold start optimized services..."
+	@if [ -f "docker-compose.cold-start-optimized.yml" ]; then \
+		docker compose -f docker-compose.cold-start-optimized.yml down; \
+		echo "✅ Cold start optimized services stopped"; \
+	else \
+		echo "⚠️  Cold start compose file not found, trying standard compose..."; \
+		docker compose -f docker-compose.local.yml down || true; \
+	fi
+
+# Monitor cold start progress in real-time
+cold-start-monitor:
+	@echo "📊 Monitoring cold start progress..."
+	@echo "Press Ctrl+C to stop monitoring"
+	@while true; do \
+		clear; \
+		echo "=== Cold Start Monitor - $(date) ==="; \
+		echo ""; \
+		if curl -s http://localhost:8000/health/cold-start 2>/dev/null | jq . 2>/dev/null; then \
+			echo ""; \
+			echo "=== Startup Progress ==="; \
+			curl -s http://localhost:8000/health/startup-progress 2>/dev/null | jq '.metrics // empty' 2>/dev/null || echo "Startup progress not available"; \
+		else \
+			echo "❌ Application not responding yet..."; \
+		fi; \
+		echo ""; \
+		echo "=== Service Status ==="; \
+		docker compose -f docker-compose.cold-start-optimized.yml ps 2>/dev/null || docker compose -f docker-compose.local.yml ps 2>/dev/null || echo "No services running"; \
+		sleep 2; \
+	done
+
+# Check cold start health status
+cold-start-health:
+	@echo "🏥 Checking cold start health status..."
+	@if curl -s http://localhost:8000/health/cold-start >/dev/null 2>&1; then \
+		echo "✅ Application is responding"; \
+		echo ""; \
+		echo "=== Health Status ==="; \
+		curl -s http://localhost:8000/health/cold-start | jq . 2>/dev/null || curl -s http://localhost:8000/health/cold-start; \
+		echo ""; \
+		echo "=== Readiness Status ==="; \
+		curl -s http://localhost:8000/health/readiness | jq . 2>/dev/null || curl -s http://localhost:8000/health/readiness; \
+	else \
+		echo "❌ Application is not responding"; \
+		echo ""; \
+		echo "=== Service Status ==="; \
+		docker compose -f docker-compose.cold-start-optimized.yml ps 2>/dev/null || docker compose -f docker-compose.local.yml ps 2>/dev/null || echo "No services running"; \
+	fi
+
+# Benchmark cold start performance
+cold-start-benchmark:
+	@echo "📈 Benchmarking cold start performance..."
+	@chmod +x scripts/optimize-cold-start-times.sh
+	@./scripts/optimize-cold-start-times.sh benchmark
+	@echo "✅ Cold start benchmark completed"
+
+# Show cold start optimization status
+cold-start-status:
+	@echo "📋 Cold start optimization status..."
+	@chmod +x scripts/optimize-cold-start-times.sh
+	@./scripts/optimize-cold-start-times.sh status
+
+# View cold start optimized service logs
+cold-start-logs:
+	@echo "📜 Viewing cold start optimized service logs..."
+	@if [ -f "docker-compose.cold-start-optimized.yml" ]; then \
+		docker compose -f docker-compose.cold-start-optimized.yml logs -f --tail=100; \
+	else \
+		echo "❌ Cold start compose file not found. Showing standard logs..."; \
+		docker compose -f docker-compose.local.yml logs -f --tail=100; \
+	fi
+
+# Clean up cold start optimization artifacts
+cold-start-clean:
+	@echo "🧹 Cleaning up cold start optimization artifacts..."
+	@chmod +x scripts/optimize-cold-start-times.sh
+	@./scripts/optimize-cold-start-times.sh clean
+	@echo "✅ Cold start cleanup completed"
+
+# Advanced targets for development and debugging
+
+# Test cold start with different optimization levels
+cold-start-test-levels:
+	@echo "🧪 Testing cold start with different optimization levels..."
+	@for level in standard aggressive; do \
+		echo ""; \
+		echo "=== Testing $$level optimization level ==="; \
+		COLD_START_LEVEL=$$level ./scripts/optimize-cold-start-times.sh optimize; \
+		./scripts/fast-startup.sh; \
+		sleep 10; \
+		curl -s http://localhost:8000/health/cold-start | jq '.startup_progress.total_startup_time // "N/A"'; \
+		docker compose -f docker-compose.cold-start-optimized.yml down; \
+		sleep 5; \
+	done
+
+# Profile cold start performance
+cold-start-profile:
+	@echo "🔍 Profiling cold start performance..."
+	@echo "Starting profiling session..."
+	@start_time=$$(date +%s); \
+	./scripts/fast-startup.sh; \
+	while ! curl -s http://localhost:8000/health/cold-start >/dev/null 2>&1; do \
+		sleep 0.5; \
+	done; \
+	health_time=$$(date +%s); \
+	while ! curl -s http://localhost:8000/health/readiness | grep -q '"ready": true' 2>/dev/null; do \
+		sleep 1; \
+	done; \
+	ready_time=$$(date +%s); \
+	echo ""; \
+	echo "=== Cold Start Profile Results ==="; \
+	echo "Health check ready: $$((health_time - start_time))s"; \
+	echo "Application ready: $$((ready_time - start_time))s"; \
+	echo "Total startup time: $$((ready_time - start_time))s"; \
+	echo ""; \
+	echo "=== Detailed Metrics ==="; \
+	curl -s http://localhost:8000/health/metrics | jq . 2>/dev/null || echo "Metrics not available"
+
+# Validate cold start optimizations
+cold-start-validate:
+	@echo "✅ Validating cold start optimizations..."
+	@echo "Checking required files..."
+	@files_ok=true; \
+	for file in "Dockerfile.cold-start-optimized" "docker-compose.cold-start-optimized.yml" "scripts/prewarm-containers.sh" "scripts/fast-startup.sh"; do \
+		if [ ! -f "$$file" ]; then \
+			echo "❌ Missing: $$file"; \
+			files_ok=false; \
+		else \
+			echo "✅ Found: $$file"; \
+		fi; \
+	done; \
+	if [ "$$files_ok" = "false" ]; then \
+		echo ""; \
+		echo "❌ Some optimization files are missing. Run 'make cold-start-optimize' first."; \
+		exit 1; \
+	fi; \
+	echo ""; \
+	echo "Checking Docker images..."; \
+	if docker images | grep -q "multimodal-librarian.*dependency-cache"; then \
+		echo "✅ Pre-warmed dependency cache image found"; \
+	else \
+		echo "⚠️  Pre-warmed dependency cache image not found"; \
+	fi; \
+	echo ""; \
+	echo "Checking cache directories..."; \
+	for dir in "./cache/models" "./cache/pip" "./data"; do \
+		if [ -d "$$dir" ]; then \
+			size=$$(du -sh "$$dir" 2>/dev/null | cut -f1 || echo "0"); \
+			echo "✅ Cache directory $$dir: $$size"; \
+		else \
+			echo "⚠️  Cache directory $$dir: not found"; \
+		fi; \
+	done; \
+	echo ""; \
+	echo "✅ Cold start optimization validation completed"
+
+# Integration with existing Makefile targets
+include Makefile
+
+# Override dev target to use cold start optimization if available
+dev-cold-start:
+	@if [ -f "docker-compose.cold-start-optimized.yml" ]; then \
+		echo "🚀 Starting development environment with cold start optimization..."; \
+		$(MAKE) cold-start-fast; \
+	else \
+		echo "⚠️  Cold start optimization not available, using standard dev target..."; \
+		$(MAKE) dev; \
+	fi
+
+# Quick setup target that applies optimizations and starts services
+cold-start-quick:
+	@echo "⚡ Quick cold start setup and launch..."
+	@$(MAKE) cold-start-optimize
+	@$(MAKE) cold-start-prewarm
+	@$(MAKE) cold-start-fast
+	@echo "🎉 Cold start quick setup completed!"
+	@echo "🌐 Application: http://localhost:8000"
+	@echo "🏥 Health check: http://localhost:8000/health/cold-start"

@@ -1,0 +1,8 @@
+{
+  "removed_load_balancers": [],
+  "removed_target_groups": [
+    "multimodal-lib-prod-alb-tg",
+    "multimodal-lib-prod-nlb-tg"
+  ],
+  "errors": []
+}

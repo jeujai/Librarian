@@ -1,0 +1,30 @@
+{
+  "name": "Alex Kim",
+  "role": "Senior Software Engineer",
+  "background": "Full-stack developer with 8 years experience",
+  "technical_level": "Very High",
+  "goals": [
+    "Quickly understand API documentation",
+    "Find code examples and best practices",
+    "Troubleshoot technical issues",
+    "Learn new technologies efficiently"
+  ],
+  "pain_points": [
+    "Scattered documentation across multiple sources",
+    "Outdated or incomplete technical docs",
+    "Difficulty finding specific implementation details",
+    "Time pressure to deliver features quickly"
+  ],
+  "usage_patterns": [
+    "Uploads technical manuals and API docs",
+    "Asks specific implementation questions",
+    "Needs code examples and snippets",
+    "Uses system for just-in-time learning"
+  ],
+  "success_metrics": [
+    "Reduces documentation search time by 70%",
+    "Finds accurate technical information faster",
+    "Improves code quality through better practices",
+    "Accelerates feature development"
+  ]
+}

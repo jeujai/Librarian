@@ -1,0 +1,42 @@
+{
+  "version": "1.0.0",
+  "migration_settings": {
+    "auto_backup": true,
+    "backup_retention_days": 30,
+    "migration_timeout": 3600,
+    "parallel_execution": false,
+    "dry_run_validation": true,
+    "rollback_on_failure": true
+  },
+  "database_connections": {
+    "postgresql": {
+      "connection_string": "postgresql://ml_user:ml_password@localhost:5432/multimodal_librarian",
+      "migration_table": "schema_migrations",
+      "backup_command": "pg_dump",
+      "restore_command": "psql"
+    },
+    "milvus": {
+      "host": "localhost",
+      "port": 19530,
+      "backup_method": "collection_export",
+      "restore_method": "collection_import"
+    },
+    "neo4j": {
+      "uri": "bolt://localhost:7687",
+      "user": "neo4j",
+      "password": "ml_password",
+      "backup_command": "neo4j-admin database backup",
+      "restore_command": "neo4j-admin database restore"
+    }
+  },
+  "version_history": {},
+  "migration_dependencies": {
+    "postgresql": [],
+    "milvus": [
+      "postgresql"
+    ],
+    "neo4j": [
+      "postgresql"
+    ]
+  }
+}

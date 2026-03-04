@@ -1,0 +1,474 @@
+services:
+  # =============================================================================
+  # MAIN APPLICATION SERVICE - COLD START OPTIMIZED
+  # =============================================================================
+  multimodal-librarian:
+    build:
+      context: .
+      dockerfile: Dockerfile.cold-start-optimized
+      target: development
+      cache_from:
+        - multimodal-librarian:cache
+      args:
+        BUILDKIT_INLINE_CACHE: 1
+    env_file:
+      - .env.local
+    ports:
+      - "${API_PORT:-8000}:8000"
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1.5G  # Reduced for faster allocation
+        reservations:
+          cpus: '1.0'   # Higher reservation for faster startup
+          memory: 768M
+      restart_policy:
+        condition: on-failure
+        delay: 2s     # Faster restart
+        max_attempts: 3
+        window: 60s
+    # =============================================================================
+    # COLD START OPTIMIZATIONS
+    # =============================================================================
+    stop_signal: SIGTERM
+    stop_grace_period: 15s  # Reduced for faster shutdown/restart
+    init: true
+    # Use tmpfs for temporary files to reduce I/O latency
+    tmpfs:
+      - /tmp:size=256M,noatime
+      - /app/logs:size=128M,noatime
+    # Memory-mapped volumes for faster access
+    volumes:
+      # Source code with optimized mount options
+      - ./src:/app/src:rw,cached
+      - ./pyproject.toml:/app/pyproject.toml:ro,cached
+      - ./.env.local:/app/.env.local:ro,cached
+      
+      # Persistent data with optimized mount options
+      - ./uploads:/app/uploads:rw,delegated
+      - ./media:/app/media:rw,delegated
+      - ./exports:/app/exports:rw,delegated
+      
+      # Cache volumes for faster access
+      - ml_model_cache:/app/.cache:rw,cached
+      - python_cache:/root/.cache/pip:rw,cached
+    environment:
+      # Cold start specific optimizations
+      - ML_ENVIRONMENT=local
+      - DATABASE_TYPE=local
+      - DEBUG=true
+      - LOG_LEVEL=INFO
+      - STARTUP_MODE=fast
+      - COLD_START_OPTIMIZATION=true
+      
+      # Uvicorn optimizations for faster startup
+      - UVICORN_WORKERS=1
+      - UVICORN_LOOP=uvloop
+      - UVICORN_HTTP=httptools
+      - UVICORN_RELOAD_DELAY=0.5
+      
+      # Python optimizations
+      - PYTHONOPTIMIZE=1
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONUNBUFFERED=1
+      
+      # Database connection optimizations
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=multimodal_librarian
+      - POSTGRES_USER=ml_user
+      - POSTGRES_PASSWORD=ml_password
+      - POSTGRES_POOL_SIZE=5      # Reduced pool size for faster startup
+      - POSTGRES_MAX_CONNECTIONS=20
+      
+      # Neo4j optimizations
+      - NEO4J_HOST=neo4j
+      - NEO4J_PORT=7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=ml_password
+      
+      # Milvus optimizations
+      - MILVUS_HOST=milvus
+      - MILVUS_PORT=19530
+      
+      # Redis optimizations
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - CACHE_TTL=1800  # Reduced TTL for development
+    depends_on:
+      postgres:
+        condition: service_healthy
+        restart: true
+      neo4j:
+        condition: service_started  # Don't wait for full health
+        restart: true
+      milvus:
+        condition: service_started  # Don't wait for full health
+        restart: true
+      redis:
+        condition: service_healthy
+        restart: true
+    restart: unless-stopped
+    networks:
+      - ml-local-network
+    # Optimized health check for cold start
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/simple', timeout=2).read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 2
+      start_period: 10s
+
+  # =============================================================================
+  # POSTGRESQL - COLD START OPTIMIZED
+  # =============================================================================
+  postgres:
+    image: postgres:15-alpine
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    stop_signal: SIGTERM
+    stop_grace_period: 10s
+    init: true
+    # Use tmpfs for WAL and temporary files
+    tmpfs:
+      - /tmp:size=128M,noatime
+      - /var/run/postgresql:size=64M,noatime
+    environment:
+      - POSTGRES_DB=multimodal_librarian
+      - POSTGRES_USER=ml_user
+      - POSTGRES_PASSWORD=ml_password
+      - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
+      # Cold start optimizations
+      - POSTGRES_SHARED_PRELOAD_LIBRARIES=
+      - POSTGRES_MAX_CONNECTIONS=20
+      - POSTGRES_SHARED_BUFFERS=128MB
+      - POSTGRES_EFFECTIVE_CACHE_SIZE=256MB
+    volumes:
+      - postgres_data:/var/lib/postgresql/data:rw,delegated
+      - ./database/postgresql/init/01_extensions.sql:/docker-entrypoint-initdb.d/01_extensions.sql:ro
+      - ./database/postgresql/init/06_application_schema.sql:/docker-entrypoint-initdb.d/06_application_schema.sql:ro
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    networks:
+      - ml-local-network
+    # Fast health check for cold start
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ml_user -d multimodal_librarian"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    # Optimized PostgreSQL configuration for cold start
+    command: >
+      postgres
+      -c max_connections=20
+      -c shared_buffers=128MB
+      -c effective_cache_size=256MB
+      -c maintenance_work_mem=32MB
+      -c work_mem=4MB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c max_wal_size=512MB
+      -c min_wal_size=128MB
+      -c log_statement=none
+      -c log_min_duration_statement=-1
+      -c fsync=off
+      -c synchronous_commit=off
+      -c full_page_writes=off
+
+  # =============================================================================
+  # NEO4J - COLD START OPTIMIZED
+  # =============================================================================
+  neo4j:
+    image: neo4j:5.15-community
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 768M
+        reservations:
+          cpus: '0.25'
+          memory: 384M
+    stop_signal: SIGTERM
+    stop_grace_period: 15s
+    init: true
+    environment:
+      - NEO4J_AUTH=neo4j/ml_password
+      - NEO4J_PLUGINS=["apoc"]
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*
+      # Cold start memory optimizations
+      - NEO4J_server_memory_heap_initial__size=256m
+      - NEO4J_server_memory_heap_max__size=512m
+      - NEO4J_server_memory_pagecache_size=256m
+      - NEO4J_server_memory_off__heap_max__size=128m
+      # Performance optimizations for cold start
+      - NEO4J_db_tx__log_rotation_retention__policy=512M size
+      - NEO4J_db_tx__log_rotation_size=64M
+      - NEO4J_dbms_query__cache__size=500
+      - NEO4J_server_bolt_thread__pool__min__size=2
+      - NEO4J_server_bolt_thread__pool__max__size=100
+      - NEO4J_db_checkpoint_interval_time=10m
+      - NEO4J_db_checkpoint_interval_tx=5000
+      # Disable expensive operations
+      - NEO4J_dbms_usage__report_enabled=false
+      - NEO4J_metrics_enabled=false
+      - NEO4J_dbms_logs_query_enabled=false
+      - NEO4J_server_logs_debug_level=WARN
+    volumes:
+      - neo4j_data:/data:rw,delegated
+      - neo4j_logs:/logs:rw,delegated
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    restart: unless-stopped
+    networks:
+      - ml-local-network
+    # Simplified health check for faster startup
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p ml_password 'RETURN 1'"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # =============================================================================
+  # MILVUS - COLD START OPTIMIZED
+  # =============================================================================
+  milvus:
+    image: milvusdb/milvus:v2.3.4
+    command: ["milvus", "run", "standalone"]
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 512M
+    stop_signal: SIGTERM
+    stop_grace_period: 15s
+    init: true
+    environment:
+      - ETCD_ENDPOINTS=etcd:2379
+      - MINIO_ADDRESS=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+      # Cold start optimizations
+      - MILVUS_QUERY_NODE_GRACEFUL_TIME=5
+      - MILVUS_QUERY_NODE_STATS_TASK_DELAY_EXECUTE=5
+      - MILVUS_QUERY_NODE_CACHE_SIZE=1073741824
+      - MILVUS_DATA_NODE_FLUSH_INSERT_BUFFER_SIZE=8388608
+      - MILVUS_QUERY_NODE_SEARCH_TIMEOUT=15
+      - MILVUS_QUERY_NODE_SEARCH_RESULT_TIMEOUT=15
+    volumes:
+      - milvus_data:/var/lib/milvus:rw,delegated
+    ports:
+      - "19530:19530"
+      - "9091:9091"
+    depends_on:
+      etcd:
+        condition: service_started
+      minio:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - ml-local-network
+    # Fast health check
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9091/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 2
+      start_period: 30s
+
+  # =============================================================================
+  # ETCD - COLD START OPTIMIZED
+  # =============================================================================
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.5
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    stop_signal: SIGTERM
+    stop_grace_period: 5s
+    init: true
+    environment:
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      - ETCD_AUTO_COMPACTION_RETENTION=500
+      - ETCD_QUOTA_BACKEND_BYTES=2147483648
+      - ETCD_SNAPSHOT_COUNT=25000
+    volumes:
+      - etcd_data:/etcd:rw,delegated
+    command: etcd -advertise-client-urls=http://etcd:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    ports:
+      - "2379:2379"
+    restart: unless-stopped
+    networks:
+      - ml-local-network
+    # Fast health check
+    healthcheck:
+      test: ["CMD-SHELL", "etcdctl endpoint health"]
+      interval: 10s
+      timeout: 3s
+      retries: 2
+      start_period: 15s
+
+  # =============================================================================
+  # MINIO - COLD START OPTIMIZED
+  # =============================================================================
+  minio:
+    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    stop_signal: SIGTERM
+    stop_grace_period: 10s
+    init: true
+    environment:
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+    volumes:
+      - minio_data:/data:rw,delegated
+    command: minio server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    restart: unless-stopped
+    networks:
+      - ml-local-network
+    # Fast health check
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 2
+      start_period: 15s
+
+  # =============================================================================
+  # REDIS - COLD START OPTIMIZED
+  # =============================================================================
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly no --save "" --maxmemory 128mb --maxmemory-policy allkeys-lru
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    stop_signal: SIGTERM
+    stop_grace_period: 5s
+    init: true
+    volumes:
+      - redis_data:/data:rw,delegated
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    networks:
+      - ml-local-network
+    # Fast health check
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping"]
+      interval: 5s
+      timeout: 2s
+      retries: 2
+      start_period: 5s
+
+# =============================================================================
+# VOLUMES - OPTIMIZED FOR COLD START
+# =============================================================================
+volumes:
+  postgres_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind,noatime
+      device: ./data/postgres
+  neo4j_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind,noatime
+      device: ./data/neo4j
+  neo4j_logs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind,noatime
+      device: ./data/neo4j-logs
+  milvus_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind,noatime
+      device: ./data/milvus
+  etcd_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind,noatime
+      device: ./data/etcd
+  minio_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind,noatime
+      device: ./data/minio
+  redis_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind,noatime
+      device: ./data/redis
+  
+  # Cache volumes with optimized settings
+  ml_model_cache:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind,cached
+      device: ./cache/models
+  python_cache:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind,cached
+      device: ./cache/pip
+
+# =============================================================================
+# NETWORKS - OPTIMIZED FOR COLD START
+# =============================================================================
+networks:
+  ml-local-network:
+    name: multimodal-librarian-cold-start
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_icc: "true"
+      com.docker.network.bridge.enable_ip_masquerade: "true"
+      com.docker.network.driver.mtu: 1500
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.22.0.0/16
+          gateway: 172.22.0.1
+

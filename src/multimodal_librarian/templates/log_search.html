@@ -1,0 +1,803 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Log Search - Multimodal Librarian</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: #f5f5f5;
+            color: #333;
+            line-height: 1.6;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 1rem 2rem;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .header h1 {
+            font-size: 1.8rem;
+            font-weight: 600;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        .search-panel {
+            background: white;
+            border-radius: 12px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+        }
+
+        .search-form {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .form-group label {
+            font-weight: 500;
+            margin-bottom: 0.5rem;
+            color: #555;
+        }
+
+        .form-group input,
+        .form-group select {
+            padding: 0.75rem;
+            border: 2px solid #e1e5e9;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            transition: border-color 0.3s ease;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .search-actions {
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-secondary {
+            background: #f8f9fa;
+            color: #495057;
+            border: 2px solid #e9ecef;
+        }
+
+        .btn-secondary:hover {
+            background: #e9ecef;
+        }
+
+        .results-panel {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+
+        .results-header {
+            background: #f8f9fa;
+            padding: 1.5rem 2rem;
+            border-bottom: 1px solid #e9ecef;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+
+        .results-info {
+            font-size: 0.9rem;
+            color: #6c757d;
+        }
+
+        .results-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .log-entries {
+            max-height: 600px;
+            overflow-y: auto;
+        }
+
+        .log-entry {
+            padding: 1rem 2rem;
+            border-bottom: 1px solid #f1f3f4;
+            transition: background-color 0.2s ease;
+        }
+
+        .log-entry:hover {
+            background-color: #f8f9fa;
+        }
+
+        .log-entry:last-child {
+            border-bottom: none;
+        }
+
+        .log-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 0.5rem;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .log-meta {
+            display: flex;
+            gap: 1rem;
+            font-size: 0.8rem;
+            color: #6c757d;
+            flex-wrap: wrap;
+        }
+
+        .log-level {
+            padding: 0.2rem 0.6rem;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .log-level.debug {
+            background: #e3f2fd;
+            color: #1976d2;
+        }
+
+        .log-level.info {
+            background: #e8f5e8;
+            color: #2e7d32;
+        }
+
+        .log-level.warning {
+            background: #fff3e0;
+            color: #f57c00;
+        }
+
+        .log-level.error {
+            background: #ffebee;
+            color: #d32f2f;
+        }
+
+        .log-level.critical {
+            background: #fce4ec;
+            color: #c2185b;
+        }
+
+        .log-message {
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 0.9rem;
+            line-height: 1.5;
+            margin: 0.5rem 0;
+            word-break: break-word;
+        }
+
+        .log-details {
+            margin-top: 0.5rem;
+            padding: 0.75rem;
+            background: #f8f9fa;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            display: none;
+        }
+
+        .log-details.expanded {
+            display: block;
+        }
+
+        .log-details pre {
+            margin: 0;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .expand-btn {
+            background: none;
+            border: none;
+            color: #667eea;
+            cursor: pointer;
+            font-size: 0.8rem;
+            text-decoration: underline;
+        }
+
+        .statistics-panel {
+            background: white;
+            border-radius: 12px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .stat-card {
+            text-align: center;
+            padding: 1.5rem;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #667eea;
+            margin-bottom: 0.5rem;
+        }
+
+        .stat-label {
+            font-size: 0.9rem;
+            color: #6c757d;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 3rem;
+            color: #6c757d;
+        }
+
+        .error {
+            background: #ffebee;
+            color: #d32f2f;
+            padding: 1rem;
+            border-radius: 8px;
+            margin: 1rem 0;
+        }
+
+        .pagination {
+            display: flex;
+            justify-content: center;
+            gap: 0.5rem;
+            padding: 1.5rem;
+        }
+
+        .pagination button {
+            padding: 0.5rem 1rem;
+            border: 1px solid #e9ecef;
+            background: white;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .pagination button:hover:not(:disabled) {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+
+        .pagination button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .pagination button.active {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+
+            .search-form {
+                grid-template-columns: 1fr;
+            }
+
+            .log-header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .log-meta {
+                flex-direction: column;
+                gap: 0.5rem;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="header">
+        <h1>🔍 Log Search & Analysis</h1>
+    </div>
+
+    <div class="container">
+        <!-- Search Panel -->
+        <div class="search-panel">
+            <form id="searchForm" class="search-form">
+                <div class="form-group">
+                    <label for="query">Search Query</label>
+                    <input type="text" id="query" name="query" placeholder="Enter search terms...">
+                </div>
+
+                <div class="form-group">
+                    <label for="level">Log Level</label>
+                    <select id="level" name="level">
+                        <option value="">All Levels</option>
+                        <option value="DEBUG">Debug</option>
+                        <option value="INFO">Info</option>
+                        <option value="WARNING">Warning</option>
+                        <option value="ERROR">Error</option>
+                        <option value="CRITICAL">Critical</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="source">Source</label>
+                    <select id="source" name="source">
+                        <option value="">All Sources</option>
+                        <option value="application">Application</option>
+                        <option value="postgres">PostgreSQL</option>
+                        <option value="neo4j">Neo4j</option>
+                        <option value="milvus">Milvus</option>
+                        <option value="redis">Redis</option>
+                        <option value="docker">Docker</option>
+                        <option value="system">System</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="service">Service</label>
+                    <input type="text" id="service" name="service" placeholder="Service name...">
+                </div>
+
+                <div class="form-group">
+                    <label for="startTime">Start Time</label>
+                    <input type="datetime-local" id="startTime" name="start_time">
+                </div>
+
+                <div class="form-group">
+                    <label for="endTime">End Time</label>
+                    <input type="datetime-local" id="endTime" name="end_time">
+                </div>
+            </form>
+
+            <div class="search-actions">
+                <button type="button" class="btn btn-primary" onclick="searchLogs()">
+                    🔍 Search Logs
+                </button>
+                <button type="button" class="btn btn-secondary" onclick="clearSearch()">
+                    🗑️ Clear
+                </button>
+                <button type="button" class="btn btn-secondary" onclick="loadRecentLogs()">
+                    ⏰ Recent Logs
+                </button>
+                <button type="button" class="btn btn-secondary" onclick="loadErrorLogs()">
+                    ⚠️ Errors Only
+                </button>
+                <button type="button" class="btn btn-secondary" onclick="exportLogs()">
+                    📥 Export
+                </button>
+            </div>
+        </div>
+
+        <!-- Statistics Panel -->
+        <div id="statisticsPanel" class="statistics-panel" style="display: none;">
+            <h3 style="margin-bottom: 1.5rem;">📊 Log Statistics</h3>
+            <div id="statisticsContent" class="stats-grid">
+                <!-- Statistics will be populated here -->
+            </div>
+        </div>
+
+        <!-- Results Panel -->
+        <div class="results-panel">
+            <div class="results-header">
+                <div class="results-info">
+                    <span id="resultsCount">Ready to search logs</span>
+                </div>
+                <div class="results-actions">
+                    <button type="button" class="btn btn-secondary" onclick="toggleStatistics()">
+                        📊 Statistics
+                    </button>
+                    <button type="button" class="btn btn-secondary" onclick="refreshLogs()">
+                        🔄 Refresh
+                    </button>
+                </div>
+            </div>
+
+            <div id="logEntries" class="log-entries">
+                <div class="loading">
+                    <p>Enter search criteria and click "Search Logs" to begin</p>
+                </div>
+            </div>
+
+            <div id="pagination" class="pagination" style="display: none;">
+                <!-- Pagination will be populated here -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentPage = 0;
+        let currentLimit = 100;
+        let currentFilters = {};
+        let totalCount = 0;
+
+        // Initialize the page
+        document.addEventListener('DOMContentLoaded', function () {
+            // Set default time range (last 24 hours)
+            const now = new Date();
+            const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+
+            document.getElementById('endTime').value = formatDateTimeLocal(now);
+            document.getElementById('startTime').value = formatDateTimeLocal(yesterday);
+
+            // Load recent logs by default
+            loadRecentLogs();
+        });
+
+        function formatDateTimeLocal(date) {
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            const hours = String(date.getHours()).padStart(2, '0');
+            const minutes = String(date.getMinutes()).padStart(2, '0');
+
+            return `${year}-${month}-${day}T${hours}:${minutes}`;
+        }
+
+        async function searchLogs(page = 0) {
+            const form = document.getElementById('searchForm');
+            const formData = new FormData(form);
+
+            // Build search parameters
+            const params = new URLSearchParams();
+
+            for (const [key, value] of formData.entries()) {
+                if (value.trim()) {
+                    params.append(key, value);
+                }
+            }
+
+            params.append('limit', currentLimit);
+            params.append('offset', page * currentLimit);
+
+            currentPage = page;
+            currentFilters = Object.fromEntries(params.entries());
+
+            try {
+                showLoading();
+
+                const response = await fetch(`/api/logs/search?${params}`);
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.detail || 'Search failed');
+                }
+
+                displayResults(data);
+                updatePagination(data);
+
+            } catch (error) {
+                showError(`Search failed: ${error.message}`);
+            }
+        }
+
+        async function loadRecentLogs() {
+            try {
+                showLoading();
+
+                const response = await fetch(`/api/logs/recent?limit=${currentLimit}`);
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.detail || 'Failed to load recent logs');
+                }
+
+                displayResults(data);
+                updatePagination(data);
+
+            } catch (error) {
+                showError(`Failed to load recent logs: ${error.message}`);
+            }
+        }
+
+        async function loadErrorLogs() {
+            try {
+                showLoading();
+
+                const response = await fetch(`/api/logs/errors?limit=${currentLimit}`);
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.detail || 'Failed to load error logs');
+                }
+
+                displayResults(data);
+                updatePagination(data);
+
+            } catch (error) {
+                showError(`Failed to load error logs: ${error.message}`);
+            }
+        }
+
+        async function loadStatistics() {
+            try {
+                const response = await fetch('/api/logs/statistics?hours=24');
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.detail || 'Failed to load statistics');
+                }
+
+                displayStatistics(data);
+
+            } catch (error) {
+                console.error('Failed to load statistics:', error);
+            }
+        }
+
+        function displayResults(data) {
+            const container = document.getElementById('logEntries');
+            const resultsCount = document.getElementById('resultsCount');
+
+            totalCount = data.total_count;
+
+            resultsCount.textContent = `Found ${data.total_count} entries (showing ${data.filtered_count}) - Search took ${data.search_time_ms.toFixed(1)}ms`;
+
+            if (data.entries.length === 0) {
+                container.innerHTML = '<div class="loading"><p>No log entries found matching your criteria</p></div>';
+                return;
+            }
+
+            const entriesHtml = data.entries.map(entry => createLogEntryHtml(entry)).join('');
+            container.innerHTML = entriesHtml;
+        }
+
+        function createLogEntryHtml(entry) {
+            const timestamp = new Date(entry.timestamp).toLocaleString();
+            const levelClass = entry.level.toLowerCase();
+
+            return `
+                <div class="log-entry">
+                    <div class="log-header">
+                        <div class="log-meta">
+                            <span class="log-level ${levelClass}">${entry.level}</span>
+                            <span>📅 ${timestamp}</span>
+                            <span>🔧 ${entry.service}</span>
+                            <span>📦 ${entry.source}</span>
+                            ${entry.container_name ? `<span>🐳 ${entry.container_name}</span>` : ''}
+                            ${entry.duration_ms ? `<span>⏱️ ${entry.duration_ms.toFixed(1)}ms</span>` : ''}
+                        </div>
+                        ${Object.keys(entry.metadata).length > 0 || entry.stack_trace ?
+                    `<button class="expand-btn" onclick="toggleDetails('${entry.id}')">Show Details</button>` : ''}
+                    </div>
+                    
+                    <div class="log-message">${escapeHtml(entry.message)}</div>
+                    
+                    ${Object.keys(entry.metadata).length > 0 || entry.stack_trace ? `
+                        <div id="details-${entry.id}" class="log-details">
+                            ${entry.user_id ? `<p><strong>User ID:</strong> ${entry.user_id}</p>` : ''}
+                            ${entry.correlation_id ? `<p><strong>Correlation ID:</strong> ${entry.correlation_id}</p>` : ''}
+                            ${entry.error_type ? `<p><strong>Error Type:</strong> ${entry.error_type}</p>` : ''}
+                            ${Object.keys(entry.metadata).length > 0 ? `
+                                <p><strong>Metadata:</strong></p>
+                                <pre>${JSON.stringify(entry.metadata, null, 2)}</pre>
+                            ` : ''}
+                            ${entry.stack_trace ? `
+                                <p><strong>Stack Trace:</strong></p>
+                                <pre>${escapeHtml(entry.stack_trace)}</pre>
+                            ` : ''}
+                            <p><strong>Raw Message:</strong></p>
+                            <pre>${escapeHtml(entry.raw_message)}</pre>
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        }
+
+        function displayStatistics(data) {
+            const container = document.getElementById('statisticsContent');
+
+            const stats = [
+                { label: 'Total Logs', value: data.total_logs },
+                { label: 'Logs/Hour', value: data.logs_per_hour.toFixed(1) },
+                { label: 'Error Rate', value: `${(data.error_rate * 100).toFixed(1)}%` },
+                { label: 'Active Services', value: Object.keys(data.service_distribution).length }
+            ];
+
+            const statsHtml = stats.map(stat => `
+                <div class="stat-card">
+                    <div class="stat-value">${stat.value}</div>
+                    <div class="stat-label">${stat.label}</div>
+                </div>
+            `).join('');
+
+            container.innerHTML = statsHtml;
+        }
+
+        function updatePagination(data) {
+            const container = document.getElementById('pagination');
+            const totalPages = Math.ceil(totalCount / currentLimit);
+
+            if (totalPages <= 1) {
+                container.style.display = 'none';
+                return;
+            }
+
+            container.style.display = 'flex';
+
+            let paginationHtml = '';
+
+            // Previous button
+            paginationHtml += `
+                <button ${currentPage === 0 ? 'disabled' : ''} onclick="searchLogs(${currentPage - 1})">
+                    ← Previous
+                </button>
+            `;
+
+            // Page numbers
+            const startPage = Math.max(0, currentPage - 2);
+            const endPage = Math.min(totalPages - 1, currentPage + 2);
+
+            for (let i = startPage; i <= endPage; i++) {
+                paginationHtml += `
+                    <button class="${i === currentPage ? 'active' : ''}" onclick="searchLogs(${i})">
+                        ${i + 1}
+                    </button>
+                `;
+            }
+
+            // Next button
+            paginationHtml += `
+                <button ${currentPage >= totalPages - 1 ? 'disabled' : ''} onclick="searchLogs(${currentPage + 1})">
+                    Next →
+                </button>
+            `;
+
+            container.innerHTML = paginationHtml;
+        }
+
+        function toggleDetails(entryId) {
+            const details = document.getElementById(`details-${entryId}`);
+            const button = details.previousElementSibling.querySelector('.expand-btn');
+
+            if (details.classList.contains('expanded')) {
+                details.classList.remove('expanded');
+                button.textContent = 'Show Details';
+            } else {
+                details.classList.add('expanded');
+                button.textContent = 'Hide Details';
+            }
+        }
+
+        function toggleStatistics() {
+            const panel = document.getElementById('statisticsPanel');
+
+            if (panel.style.display === 'none') {
+                panel.style.display = 'block';
+                loadStatistics();
+            } else {
+                panel.style.display = 'none';
+            }
+        }
+
+        function clearSearch() {
+            document.getElementById('searchForm').reset();
+
+            // Reset time range to last 24 hours
+            const now = new Date();
+            const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+
+            document.getElementById('endTime').value = formatDateTimeLocal(now);
+            document.getElementById('startTime').value = formatDateTimeLocal(yesterday);
+        }
+
+        function refreshLogs() {
+            if (Object.keys(currentFilters).length > 0) {
+                searchLogs(currentPage);
+            } else {
+                loadRecentLogs();
+            }
+        }
+
+        async function exportLogs() {
+            const form = document.getElementById('searchForm');
+            const formData = new FormData(form);
+
+            try {
+                const response = await fetch('/api/logs/export?format=json', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(Object.fromEntries(formData.entries()))
+                });
+
+                if (!response.ok) {
+                    throw new Error('Export failed');
+                }
+
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `logs_export_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.json`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(url);
+
+            } catch (error) {
+                showError(`Export failed: ${error.message}`);
+            }
+        }
+
+        function showLoading() {
+            document.getElementById('logEntries').innerHTML = '<div class="loading"><p>Searching logs...</p></div>';
+            document.getElementById('pagination').style.display = 'none';
+        }
+
+        function showError(message) {
+            document.getElementById('logEntries').innerHTML = `<div class="error">${escapeHtml(message)}</div>`;
+            document.getElementById('pagination').style.display = 'none';
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+
+</html>

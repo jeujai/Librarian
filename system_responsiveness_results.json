@@ -1,0 +1,60 @@
+{
+  "test_suite": "system_responsiveness_during_startup",
+  "timestamp": "2026-01-14T06:40:24.781270",
+  "tests": {
+    "health_endpoint_responsiveness": {
+      "test_name": "health_endpoint_responsiveness",
+      "startup_phase": "continuous",
+      "total_requests": 55,
+      "successful_responses": 0,
+      "timeout_errors": 0,
+      "connection_errors": 55,
+      "avg_response_time_ms": 0,
+      "max_response_time_ms": 0,
+      "p95_response_time_ms": 0,
+      "p99_response_time_ms": 0,
+      "cpu_usage_percent": 15.987272727272726,
+      "memory_usage_percent": 57.11818181818182,
+      "requests_per_second": 0.9029248692184617,
+      "success_rate_percent": 0.0,
+      "all_responses_under_10s": false,
+      "no_timeouts": true,
+      "no_connection_errors": false,
+      "resource_usage_acceptable": true,
+      "overall_responsive": false,
+      "duration_seconds": 60.91315221786499,
+      "timestamp": "2026-01-14T06:41:25.695079"
+    },
+    "api_endpoint_responsiveness": {
+      "test_name": "api_endpoint_responsiveness",
+      "startup_phase": "concurrent",
+      "total_requests": 240,
+      "successful_responses": 0,
+      "timeout_errors": 0,
+      "connection_errors": 240,
+      "avg_response_time_ms": 0,
+      "max_response_time_ms": 0,
+      "p95_response_time_ms": 0,
+      "p99_response_time_ms": 0,
+      "cpu_usage_percent": 15.683333333333334,
+      "memory_usage_percent": 58.13333333333333,
+      "requests_per_second": 3.907972201414485,
+      "success_rate_percent": 0.0,
+      "all_responses_under_10s": false,
+      "no_timeouts": true,
+      "no_connection_errors": false,
+      "resource_usage_acceptable": true,
+      "overall_responsive": false,
+      "duration_seconds": 61.41292405128479,
+      "timestamp": "2026-01-14T06:42:27.109617"
+    }
+  },
+  "overall_responsive": false,
+  "summary": {
+    "health_endpoint_responsive": false,
+    "api_endpoint_responsive": false,
+    "total_requests": 295,
+    "total_timeouts": 0,
+    "total_connection_errors": 295
+  }
+}

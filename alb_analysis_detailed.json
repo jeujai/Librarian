@@ -1,0 +1,108 @@
+{
+  "analysis_time": "2026-01-22T01:33:52.119532",
+  "alb_analysis": {
+    "multimodal-lib-prod-alb-v2": {
+      "name": "multimodal-lib-prod-alb-v2",
+      "dns_name": "multimodal-lib-prod-alb-v2-1090291461.us-east-1.elb.amazonaws.com",
+      "state": "active",
+      "vpc_id": "vpc-0b2186b38779e77f6",
+      "availability_zones": [
+        "us-east-1b",
+        "us-east-1c",
+        "us-east-1a"
+      ],
+      "subnets": [
+        "subnet-02f4d9ecb751beb27",
+        "subnet-02fe694f061238d5a",
+        "subnet-0c352188f5398a718"
+      ],
+      "scheme": "internet-facing",
+      "ip_address_type": "ipv4",
+      "created_time": "2026-01-16T06:02:45.161000+00:00",
+      "listeners": [
+        {
+          "port": 80,
+          "protocol": "HTTP",
+          "ssl_policy": "N/A",
+          "certificates": 0,
+          "default_actions": [
+            {
+              "type": "forward",
+              "target_group_arn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg-v2/7b63a6337a5c7a34"
+            }
+          ]
+        }
+      ],
+      "target_groups": [
+        {
+          "name": "multimodal-lib-prod-tg-v2",
+          "arn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg-v2/7b63a6337a5c7a34",
+          "protocol": "HTTP",
+          "port": 8000,
+          "vpc_id": "vpc-0b2186b38779e77f6",
+          "health_check_path": "/health/minimal",
+          "target_type": "ip",
+          "total_targets": 0,
+          "healthy_targets": 0,
+          "unhealthy_targets": 0,
+          "targets": []
+        }
+      ],
+      "tags": {
+        "CreatedDate": "2026-01-15",
+        "Environment": "production",
+        "Purpose": "ALB-connectivity-fix",
+        "Version": "v2",
+        "Application": "multimodal-librarian",
+        "Name": "multimodal-lib-prod-alb-v2"
+      },
+      "vpc_name": "multimodal-lib-prod-vpc"
+    },
+    "multimodal-lib-prod-alb": {
+      "name": "multimodal-lib-prod-alb",
+      "dns_name": "multimodal-lib-prod-alb-1465193604.us-east-1.elb.amazonaws.com",
+      "state": "active",
+      "vpc_id": "vpc-0b2186b38779e77f6",
+      "availability_zones": [
+        "us-east-1b",
+        "us-east-1c",
+        "us-east-1a"
+      ],
+      "subnets": [
+        "subnet-02f4d9ecb751beb27",
+        "subnet-02fe694f061238d5a",
+        "subnet-0c352188f5398a718"
+      ],
+      "scheme": "internet-facing",
+      "ip_address_type": "ipv4",
+      "created_time": "2026-01-22T08:10:31.955000+00:00",
+      "listeners": [],
+      "target_groups": [],
+      "tags": {
+        "Project": "multimodal-lib",
+        "Environment": "prod",
+        "Owner": "platform-team",
+        "CreatedBy": "aws-production-deployment-spec",
+        "ManagedBy": "terraform",
+        "CostCenter": "engineering"
+      },
+      "vpc_name": "multimodal-lib-prod-vpc"
+    }
+  },
+  "recommendations": [
+    {
+      "priority": "HIGH",
+      "action": "DELETE",
+      "resource": "multimodal-lib-prod-alb-v2",
+      "reason": "No targets registered - appears unused",
+      "cost_impact": "Save ~$16-22/month per ALB"
+    },
+    {
+      "priority": "HIGH",
+      "action": "DELETE",
+      "resource": "multimodal-lib-prod-alb",
+      "reason": "No targets registered - appears unused",
+      "cost_impact": "Save ~$16-22/month per ALB"
+    }
+  ]
+}

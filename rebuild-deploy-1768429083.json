@@ -1,0 +1,10 @@
+{
+  "timestamp": "2026-01-14T15:18:03.536983",
+  "action": "rebuild_and_deploy",
+  "docker_image": "591222106065.dkr.ecr.us-east-1.amazonaws.com/multimodal-lib-prod-app:20260114-135954",
+  "image_tag": "20260114-135954",
+  "task_definition": "multimodal-lib-prod-app:21",
+  "health_check_endpoint": "/health",
+  "health_check_start_period": 180,
+  "status": "deployed"
+}

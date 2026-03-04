@@ -1,0 +1,26 @@
+{
+  "document_sizes": [
+    1,
+    5,
+    10,
+    25,
+    50,
+    100
+  ],
+  "document_counts": [
+    1,
+    10,
+    50,
+    100,
+    500
+  ],
+  "concurrent_processing": [
+    1,
+    5,
+    10
+  ],
+  "storage_limits": {
+    "per_user_gb": 10,
+    "total_system_gb": 1000
+  }
+}

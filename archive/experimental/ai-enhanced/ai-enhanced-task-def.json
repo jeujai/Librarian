@@ -1,0 +1,132 @@
+{
+  "containerDefinitions": [
+    {
+      "name": "multimodal-librarian-web",
+      "image": "591222106065.dkr.ecr.us-east-1.amazonaws.com/multimodal-librarian-learning:ai-enhanced",
+      "cpu": 512,
+      "memory": 1024,
+      "portMappings": [
+        {
+          "containerPort": 8000,
+          "hostPort": 8000,
+          "protocol": "tcp",
+          "name": "http"
+        }
+      ],
+      "essential": true,
+      "environment": [
+        {
+          "name": "PYTHONPATH",
+          "value": "/app/src"
+        },
+        {
+          "name": "DEPLOYMENT_TYPE",
+          "value": "ai-enhanced"
+        },
+        {
+          "name": "ENVIRONMENT",
+          "value": "learning"
+        },
+        {
+          "name": "AWS_DEFAULT_REGION",
+          "value": "us-east-1"
+        },
+        {
+          "name": "AI_VERSION",
+          "value": "gemini-2.5-flash-multimodal"
+        },
+        {
+          "name": "AI_ENHANCED",
+          "value": "true"
+        },
+        {
+          "name": "LOG_LEVEL",
+          "value": "INFO"
+        },
+        {
+          "name": "PATCH_VERSION",
+          "value": "time-import-fix-v1"
+        },
+        {
+          "name": "AI_ENHANCED",
+          "value": "true"
+        },
+        {
+          "name": "DEPLOYMENT_TYPE",
+          "value": "ai-enhanced"
+        },
+        {
+          "name": "AI_VERSION",
+          "value": "gemini-2.5-flash-multimodal"
+        }
+      ],
+      "mountPoints": [],
+      "volumesFrom": [],
+      "secrets": [
+        {
+          "name": "DB_HOST",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:591222106065:secret:multimodal-librarian/learning/database-Ng6pPB:host::"
+        },
+        {
+          "name": "DB_PORT",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:591222106065:secret:multimodal-librarian/learning/database-Ng6pPB:port::"
+        },
+        {
+          "name": "DB_NAME",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:591222106065:secret:multimodal-librarian/learning/database-Ng6pPB:dbname::"
+        },
+        {
+          "name": "DB_USER",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:591222106065:secret:multimodal-librarian/learning/database-Ng6pPB:username::"
+        },
+        {
+          "name": "DB_PASSWORD",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:591222106065:secret:multimodal-librarian/learning/database-Ng6pPB:password::"
+        },
+        {
+          "name": "GEMINI_API_KEY",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:591222106065:secret:multimodal-librarian/learning/api-keys-CvOi0d:gemini_api_key::"
+        },
+        {
+          "name": "OPENAI_API_KEY",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:591222106065:secret:multimodal-librarian/learning/api-keys-CvOi0d:openai_api_key::"
+        },
+        {
+          "name": "GOOGLE_API_KEY",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:591222106065:secret:multimodal-librarian/learning/api-keys-CvOi0d:google_api_key::"
+        },
+        {
+          "name": "REDIS_HOST",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:591222106065:secret:multimodal-librarian/learning/redis-JtsHgc:host::"
+        },
+        {
+          "name": "REDIS_PORT",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:591222106065:secret:multimodal-librarian/learning/redis-JtsHgc:port::"
+        },
+        {
+          "name": "REDIS_AUTH_TOKEN",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:591222106065:secret:multimodal-librarian/learning/redis-JtsHgc:auth_token::"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/aws/ecs/multimodal-librarian-learning",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "web"
+        }
+      },
+      "systemControls": []
+    }
+  ],
+  "family": "multimodal-librarian-learning-web",
+  "taskRoleArn": "arn:aws:iam::591222106065:role/multimodal-librarian-learning-ecs-task-role",
+  "executionRoleArn": "arn:aws:iam::591222106065:role/multimodal-librarian-learning-ecs-execution-role",
+  "networkMode": "awsvpc",
+  "volumes": [],
+  "requiresCompatibilities": [
+    "FARGATE"
+  ],
+  "cpu": "512",
+  "memory": "1024"
+}

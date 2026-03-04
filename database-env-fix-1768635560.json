@@ -1,0 +1,13 @@
+{
+  "timestamp": "2026-01-17T00:39:20.729130",
+  "old_task_definition": "multimodal-lib-prod-app:46",
+  "new_task_definition": "multimodal-lib-prod-app:47",
+  "renamed_variables": [
+    "DATABASE_HOST \u2192 DB_HOST",
+    "DATABASE_NAME \u2192 DB_NAME",
+    "DATABASE_PORT \u2192 DB_PORT",
+    "DATABASE_USER \u2192 DB_USER"
+  ],
+  "cluster": "multimodal-lib-prod-cluster",
+  "service": "multimodal-lib-prod-service"
+}

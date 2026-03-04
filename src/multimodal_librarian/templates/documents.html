@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document Library - Multimodal Librarian</title>
+    <link rel="stylesheet" href="/static/css/chat.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <style>
+        .deprecation-notice {
+            max-width: 600px;
+            margin: 4rem auto;
+            padding: 2rem;
+            background: #fef3c7;
+            border: 1px solid #f59e0b;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .deprecation-notice h2 {
+            color: #92400e;
+            margin-bottom: 1rem;
+        }
+
+        .deprecation-notice p {
+            color: #78350f;
+            margin-bottom: 1.5rem;
+        }
+
+        .deprecation-notice .redirect-btn {
+            display: inline-block;
+            padding: 0.75rem 1.5rem;
+            background: #3b82f6;
+            color: white;
+            text-decoration: none;
+            border-radius: 6px;
+            font-weight: 500;
+            transition: background 0.2s;
+        }
+
+        .deprecation-notice .redirect-btn:hover {
+            background: #2563eb;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="chat-container" role="main" aria-label="Document library">
+        <!-- Header -->
+        <header class="chat-header">
+            <div class="header-content">
+                <div class="header-left">
+                    <h1>Document Library</h1>
+                </div>
+                <div class="header-right">
+                    <a href="/" class="header-btn" aria-label="Go to chat" title="Go to chat">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <path d="M19 12H5M12 19l-7-7 7-7" />
+                        </svg>
+                        <span class="btn-text">Go to Chat</span>
+                    </a>
+                </div>
+            </div>
+        </header>
+
+        <!-- Deprecation Notice -->
+        <main class="chat-messages" style="padding: 2rem;">
+            <div class="deprecation-notice">
+                <h2>📄 Document Management Has Moved</h2>
+                <p>
+                    Document upload and management is now integrated directly into the chat interface.
+                    You can upload PDFs by dragging and dropping them into the chat, or by clicking the
+                    upload button and selecting "Upload PDF" or "View Documents".
+                </p>
+                <a href="/" class="redirect-btn">Go to Chat Interface</a>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        // Auto-redirect after 5 seconds
+        setTimeout(() => {
+            window.location.href = '/';
+        }, 5000);
+    </script>
+</body>
+
+</html>

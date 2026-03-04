@@ -1,0 +1,20 @@
+{
+  "timestamp": "2026-01-17T20:30:28.693634",
+  "old_task_definition": "arn:aws:ecs:us-east-1:591222106065:task-definition/multimodal-lib-prod-app:58",
+  "new_task_definition": "arn:aws:ecs:us-east-1:591222106065:task-definition/multimodal-lib-prod-app:60",
+  "new_revision": 60,
+  "environment_variables_added": {
+    "ENABLE_VECTOR_SEARCH": "false",
+    "ENABLE_GRAPH_DB": "false",
+    "SKIP_OPENSEARCH_INIT": "true",
+    "SKIP_NEPTUNE_INIT": "true",
+    "OPENSEARCH_TIMEOUT": "5",
+    "HEALTH_CHECK_TIMEOUT": "2"
+  },
+  "service_status": {
+    "status": "ACTIVE",
+    "desired_count": 1,
+    "running_count": 1,
+    "pending_count": 0
+  }
+}

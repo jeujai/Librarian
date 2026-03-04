@@ -1,0 +1,206 @@
+{
+  "overall_status": false,
+  "timestamp": "2026-01-12T01:45:38.973192",
+  "total_checks": 5,
+  "passed_checks": 3,
+  "failed_checks": 2,
+  "deployment_config": {
+    "task_definition_arn": "arn:aws:ecs:us-east-1:591222106065:task-definition/multimodal-lib-prod-app:16",
+    "iam_role_arn": "arn:aws:iam::591222106065:role/ecsTaskRole",
+    "load_balancer_arn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:loadbalancer/app/ml-shared-vpc-alb/a135abb283798f15",
+    "target_environment": "production",
+    "ssl_certificate_arn": null,
+    "region": "us-east-1",
+    "additional_config": null,
+    "vpc_id": null,
+    "service_subnets": null,
+    "security_groups": null,
+    "cluster_name": null,
+    "service_name": null
+  },
+  "checks_performed": [
+    {
+      "check_name": "IAM Permissions Validation",
+      "status": "failed",
+      "message": "Cannot retrieve required secrets using role arn:aws:iam::591222106065:role/ecsTaskRole",
+      "remediation_steps": [
+        "Ensure the following secrets exist in AWS Secrets Manager:",
+        "  - api_keys: one of ['multimodal-librarian/api/keys', 'prod/api/keys', 'api-keys']",
+        "  - database_credentials: one of ['multimodal-librarian/database/credentials', 'prod/database/credentials', 'database-credentials']",
+        "Create missing secrets using AWS CLI or Console:",
+        "aws secretsmanager create-secret --name <secret-name> --secret-string <secret-value>",
+        "Verify IAM role can access the secrets after creation"
+      ],
+      "fix_scripts": [
+        "scripts/fix-iam-secrets-permissions.py"
+      ],
+      "details": {
+        "role_arn": "arn:aws:iam::591222106065:role/ecsTaskRole",
+        "test_secrets_attempted": [
+          {
+            "type": "database_credentials",
+            "name": "multimodal-librarian/database/credentials"
+          },
+          {
+            "type": "database_credentials",
+            "name": "prod/database/credentials"
+          },
+          {
+            "type": "database_credentials",
+            "name": "database-credentials"
+          },
+          {
+            "type": "api_keys",
+            "name": "multimodal-librarian/api/keys"
+          },
+          {
+            "type": "api_keys",
+            "name": "prod/api/keys"
+          },
+          {
+            "type": "api_keys",
+            "name": "api-keys"
+          }
+        ],
+        "successful_retrievals": [],
+        "failed_retrievals": [
+          {
+            "type": "database_credentials",
+            "name": "multimodal-librarian/database/credentials",
+            "error": "AWS error during describe secret multimodal-librarian/database/credentials: ResourceNotFoundException - Secrets Manager can't find the specified secret."
+          },
+          {
+            "type": "database_credentials",
+            "name": "prod/database/credentials",
+            "error": "AWS error during describe secret prod/database/credentials: ResourceNotFoundException - Secrets Manager can't find the specified secret."
+          },
+          {
+            "type": "database_credentials",
+            "name": "database-credentials",
+            "error": "AWS error during describe secret database-credentials: ResourceNotFoundException - Secrets Manager can't find the specified secret."
+          },
+          {
+            "type": "api_keys",
+            "name": "multimodal-librarian/api/keys",
+            "error": "AWS error during describe secret multimodal-librarian/api/keys: ResourceNotFoundException - Secrets Manager can't find the specified secret."
+          },
+          {
+            "type": "api_keys",
+            "name": "prod/api/keys",
+            "error": "AWS error during describe secret prod/api/keys: ResourceNotFoundException - Secrets Manager can't find the specified secret."
+          },
+          {
+            "type": "api_keys",
+            "name": "api-keys",
+            "error": "AWS error during describe secret api-keys: ResourceNotFoundException - Secrets Manager can't find the specified secret."
+          }
+        ],
+        "simulation_mode": true,
+        "note": "Actual secret retrieval testing requires STS assume role capability",
+        "missing_secret_types": [
+          "api_keys",
+          "database_credentials"
+        ]
+      },
+      "timestamp": "2026-01-12T01:45:36.785002",
+      "passed": false
+    },
+    {
+      "check_name": "Storage Configuration Validation",
+      "status": "passed",
+      "message": "Task definition has adequate ephemeral storage: 50GB (minimum: 30GB)",
+      "remediation_steps": null,
+      "fix_scripts": null,
+      "details": {
+        "task_definition_arn": "arn:aws:ecs:us-east-1:591222106065:task-definition/multimodal-lib-prod-app:16",
+        "current_storage_gb": 50,
+        "minimum_required_gb": 30,
+        "recommended_gb": 50,
+        "storage_validation": {
+          "valid": true,
+          "current_storage_gb": 50,
+          "minimum_required_gb": 30,
+          "recommended_gb": 50,
+          "has_ephemeral_storage_config": true,
+          "storage_config": {
+            "sizeInGiB": 50
+          },
+          "validation_details": [
+            "Ephemeral storage 50GB meets recommended size"
+          ]
+        },
+        "retrieval_details": {
+          "task_definition_arn": "arn:aws:ecs:us-east-1:591222106065:task-definition/multimodal-lib-prod-app:16",
+          "retrieval_attempted": true,
+          "retrieval_successful": true,
+          "family": "multimodal-lib-prod-app",
+          "revision": 16,
+          "status": "ACTIVE",
+          "cpu": "2048",
+          "memory": "4096",
+          "requires_compatibilities": [
+            "FARGATE"
+          ]
+        }
+      },
+      "timestamp": "2026-01-12T01:45:37.484833",
+      "passed": true
+    },
+    {
+      "check_name": "SSL Configuration Validation",
+      "status": "failed",
+      "message": "Load balancer does not have proper SSL/HTTPS configuration",
+      "remediation_steps": [
+        "Add an HTTPS listener to your load balancer",
+        "Configure SSL certificate for the HTTPS listener",
+        "Ensure the listener is on port 443 (standard HTTPS port)",
+        "Use AWS CLI to add HTTPS listener:",
+        "aws elbv2 create-listener --load-balancer-arn <LB_ARN> --protocol HTTPS --port 443 --certificates CertificateArn=<CERT_ARN>",
+        "Configure HTTP to HTTPS redirect on existing HTTP listener",
+        "Use the provided script to set up SSL configuration automatically"
+      ],
+      "fix_scripts": [
+        "scripts/add-https-ssl-support.py"
+      ],
+      "details": {
+        "has_ssl_listener": false,
+        "has_http_listener": true,
+        "certificate_configured": false,
+        "https_listeners": [],
+        "http_listeners": [
+          {
+            "port": 80,
+            "protocol": "HTTP",
+            "listener_arn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:listener/app/ml-shared-vpc-alb/a135abb283798f15/14e255b8ccee8885"
+          }
+        ],
+        "certificate_arns": [],
+        "redirect_configured": false,
+        "certificate_matches": true
+      },
+      "timestamp": "2026-01-12T01:45:38.366230",
+      "passed": false
+    },
+    {
+      "check_name": "Network Configuration",
+      "status": "passed",
+      "message": "Network configuration validation skipped (no network details provided)",
+      "remediation_steps": null,
+      "fix_scripts": null,
+      "details": null,
+      "timestamp": "2026-01-12T01:45:38.366394",
+      "passed": true
+    },
+    {
+      "check_name": "Task Definition Validation",
+      "status": "passed",
+      "message": "All task definition validations passed",
+      "remediation_steps": null,
+      "fix_scripts": null,
+      "details": null,
+      "timestamp": "2026-01-12T01:45:38.973123",
+      "passed": true
+    }
+  ],
+  "remediation_summary": "Found 2 failed validation(s). Remediation available through 0 fix script(s). See detailed remediation guide for step-by-step instructions."
+}

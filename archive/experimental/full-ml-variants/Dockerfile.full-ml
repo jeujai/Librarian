@@ -1,0 +1,91 @@
+# Full ML Configuration Dockerfile for Multimodal Librarian
+# Includes ALL advanced ML capabilities for comprehensive demos
+# Designed for large compute instances with 20GB+ disk space
+
+FROM python:3.11-slim
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app/src \
+    PIP_NO_CACHE_DIR=0 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    TORCH_HOME=/app/.cache/torch \
+    TRANSFORMERS_CACHE=/app/.cache/transformers \
+    HF_HOME=/app/.cache/huggingface \
+    DEBIAN_FRONTEND=noninteractive
+
+# Set work directory
+WORKDIR /app
+
+# Install system dependencies (full set for complete ML capabilities)
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    curl \
+    git \
+    wget \
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    libpq-dev \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libgomp1 \
+    ffmpeg \
+    espeak \
+    espeak-data \
+    libespeak1 \
+    libespeak-dev \
+    libasound2-dev \
+    portaudio19-dev \
+    libportaudio2 \
+    libportaudiocpp0 \
+    libavcodec-extra \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Copy full ML requirements
+COPY requirements-full-ml.txt ./
+
+# Install Python dependencies with extended timeout and retry for large ML packages
+# Using pip cache to speed up potential rebuilds
+RUN pip install --upgrade pip setuptools wheel && \
+    pip install --timeout=600 --retries=3 -r requirements-full-ml.txt
+
+# Download essential ML models and data
+RUN python -c "import spacy; spacy.cli.download('en_core_web_sm')" && \
+    python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')" && \
+    python -c "import nltk; nltk.download('punkt'); nltk.download('stopwords'); nltk.download('averaged_perceptron_tagger')" && \
+    python -c "import torch; print(f'PyTorch version: {torch.__version__}')" && \
+    python -c "import transformers; print(f'Transformers version: {transformers.__version__}')" && \
+    python -c "import cv2; print(f'OpenCV version: {cv2.__version__}')"
+
+# Copy project files
+COPY src/ ./src/
+COPY pyproject.toml ./
+
+# Install the package
+RUN pip install .
+
+# Create necessary directories with proper permissions
+RUN mkdir -p uploads media exports logs audit_logs \
+    .cache/torch .cache/transformers .cache/huggingface \
+    && chmod 755 uploads media exports logs audit_logs \
+    && chmod 755 .cache/torch .cache/transformers .cache/huggingface
+
+# Create non-root user for security
+RUN groupadd -r appuser && useradd -r -g appuser appuser \
+    && chown -R appuser:appuser /app
+
+USER appuser
+
+# Expose ports for API and WebSocket
+EXPOSE 8000
+
+# Health check with longer startup time for ML model loading
+HEALTHCHECK --interval=30s --timeout=15s --start-period=120s --retries=3 \
+    CMD curl -f http://localhost:8000/health/simple || exit 1
+
+# Run the full ML application with uvicorn for better compatibility
+CMD ["python", "-m", "uvicorn", "multimodal_librarian.main_learning:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]

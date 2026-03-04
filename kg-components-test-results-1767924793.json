@@ -1,0 +1,88 @@
+{
+  "timestamp": 1767924787.094839,
+  "tests": {
+    "imports": {
+      "status": "pass",
+      "details": "All knowledge graph components imported successfully"
+    },
+    "kg_builder_init": {
+      "status": "pass",
+      "has_concept_extractor": true,
+      "has_relationship_extractor": true,
+      "has_embedding_model": true,
+      "details": "Knowledge graph builder initialized with all components"
+    },
+    "concept_extraction": {
+      "status": "pass",
+      "ner_concepts": 7,
+      "llm_concepts": 1,
+      "total_concepts": 8,
+      "sample_concepts": [
+        "Machine learning is",
+        "subset of artificial intelligence that enables computers to learn without being explicitly programmed",
+        "Neural networks are computational models inspired by biological neural networks",
+        "Deep learning uses multiple layers of neural networks to model and understand complex patterns",
+        "Deep learning uses multiple layers of neural networks to model"
+      ],
+      "details": "Concept extraction working with multiple methods"
+    },
+    "relationship_extraction": {
+      "status": "pass",
+      "pattern_relationships": 1,
+      "llm_relationships": 13,
+      "total_relationships": 14,
+      "details": "Relationship extraction working with multiple methods"
+    },
+    "kg_query_engine": {
+      "status": "pass",
+      "has_result": true,
+      "has_explanation": true,
+      "reasoning_paths": 0,
+      "related_concepts": 0,
+      "details": "Knowledge graph query engine processes queries"
+    },
+    "kg_statistics": {
+      "status": "pass",
+      "has_stats": true,
+      "total_concepts": 0,
+      "total_relationships": 0,
+      "concept_types": 0,
+      "relationship_types": 0,
+      "details": "Knowledge graph statistics available"
+    },
+    "triple_extraction": {
+      "status": "pass",
+      "triples_extracted": 13,
+      "sample_triples": [
+        {
+          "subject": "entity_python_is",
+          "predicate": "RELATED_TO",
+          "object": "entity_programming_language",
+          "confidence": 0.6
+        },
+        {
+          "subject": "entity_python_is",
+          "predicate": "RELATED_TO",
+          "object": "process_programming",
+          "confidence": 0.6
+        },
+        {
+          "subject": "entity_python_is",
+          "predicate": "RELATED_TO",
+          "object": "entity_python",
+          "confidence": 0.6
+        }
+      ],
+      "details": "Knowledge triples can be extracted from content"
+    }
+  },
+  "overall_status": "success",
+  "summary": {
+    "total_tests": 7,
+    "passed_tests": 7,
+    "partial_tests": 0,
+    "skipped_tests": 0,
+    "failed_tests": 0,
+    "success_rate": 100.0
+  }
+}

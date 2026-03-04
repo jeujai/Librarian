@@ -1,0 +1,265 @@
+# Example Validation Configuration
+# This file demonstrates the configuration management capabilities
+# for the production deployment validation system
+
+# Default settings
+default_profile: "production"
+default_region: "us-east-1"
+config_version: "1.0"
+
+# Global validation thresholds (can be overridden by profiles)
+global_thresholds:
+  minimum_ephemeral_storage_gb: 30
+  recommended_ephemeral_storage_gb: 50
+  certificate_expiry_warning_days: 30
+  certificate_expiry_critical_days: 7
+  max_policy_size_kb: 10
+  max_inline_policies: 5
+  iam_validation_timeout: 30
+  storage_validation_timeout: 15
+  ssl_validation_timeout: 45
+  max_retry_attempts: 3
+  retry_delay_seconds: 1.0
+
+# Environment-specific validation profiles
+profiles:
+  development:
+    name: "development"
+    environment_type: "development"
+    description: "Development environment with relaxed validation thresholds"
+    
+    # Only run essential validations in development
+    enabled_validations:
+      - "iam_permissions"
+      - "storage_config"
+      # SSL validation disabled for development
+    
+    # Relaxed thresholds for development
+    thresholds:
+      minimum_ephemeral_storage_gb: 20
+      certificate_expiry_warning_days: 7
+      iam_validation_timeout: 15
+      max_retry_attempts: 2
+    
+    default_region: "us-west-2"
+    allowed_regions:
+      - "us-west-2"
+      - "us-east-1"
+    
+    # Development-specific configuration
+    additional_config:
+      skip_ssl_validation: true
+      allow_self_signed_certs: true
+      development_mode: true
+
+  staging:
+    name: "staging"
+    environment_type: "staging"
+    description: "Staging environment with production-like validation"
+    
+    # Run all validations in staging
+    enabled_validations:
+      - "iam_permissions"
+      - "storage_config"
+      - "ssl_config"
+    
+    # Moderate thresholds for staging
+    thresholds:
+      minimum_ephemeral_storage_gb: 25
+      certificate_expiry_warning_days: 14
+      ssl_validation_timeout: 30
+    
+    default_region: "us-east-1"
+    allowed_regions:
+      - "us-east-1"
+    
+    additional_config:
+      require_valid_ssl: true
+      staging_specific_checks: true
+
+  production:
+    name: "production"
+    environment_type: "production"
+    description: "Production environment with strict validation requirements"
+    
+    # All validations required for production
+    enabled_validations:
+      - "iam_permissions"
+      - "storage_config"
+      - "ssl_config"
+    
+    # Strict thresholds for production
+    thresholds:
+      minimum_ephemeral_storage_gb: 30
+      recommended_ephemeral_storage_gb: 50
+      certificate_expiry_warning_days: 30
+      certificate_expiry_critical_days: 7
+      max_retry_attempts: 3
+      ssl_validation_timeout: 60
+    
+    default_region: "us-east-1"
+    allowed_regions:
+      - "us-east-1"
+      - "us-west-2"
+    
+    additional_config:
+      require_valid_ssl: true
+      enforce_security_headers: true
+      production_specific_checks: true
+
+# Pipeline integration hooks
+pipeline_hooks:
+  # Slack notification for validation failures
+  slack_notification:
+    name: "slack_notification"
+    trigger_event: "validation_failed"
+    hook_type: "webhook"
+    endpoint_url: "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK"
+    enabled: true
+    timeout_seconds: 10
+    retry_on_failure: true
+    max_retries: 2
+    
+    headers:
+      Content-Type: "application/json"
+    
+    payload_template: |
+      {
+        "text": "🚨 Deployment validation failed for {{environment}}",
+        "attachments": [
+          {
+            "color": "danger",
+            "fields": [
+              {
+                "title": "Environment",
+                "value": "{{environment}}",
+                "short": true
+              },
+              {
+                "title": "Failed Checks",
+                "value": "{{failed_checks_list}}",
+                "short": true
+              },
+              {
+                "title": "Total Checks",
+                "value": "{{passed_checks}}/{{total_checks}} passed",
+                "short": true
+              },
+              {
+                "title": "Timestamp",
+                "value": "{{timestamp}}",
+                "short": true
+              }
+            ]
+          }
+        ]
+      }
+
+  # Teams notification for successful validations
+  teams_notification:
+    name: "teams_notification"
+    trigger_event: "validation_passed"
+    hook_type: "webhook"
+    endpoint_url: "https://outlook.office.com/webhook/YOUR/TEAMS/WEBHOOK"
+    enabled: false  # Disabled by default
+    timeout_seconds: 15
+    
+    payload_template: |
+      {
+        "@type": "MessageCard",
+        "@context": "http://schema.org/extensions",
+        "themeColor": "00FF00",
+        "summary": "Deployment validation passed",
+        "sections": [{
+          "activityTitle": "✅ Deployment Validation Passed",
+          "activitySubtitle": "Environment: {{environment}}",
+          "facts": [{
+            "name": "Checks Passed",
+            "value": "{{total_checks}}/{{total_checks}}"
+          }, {
+            "name": "Region",
+            "value": "{{region}}"
+          }, {
+            "name": "Timestamp",
+            "value": "{{timestamp}}"
+          }]
+        }]
+      }
+
+  # Script execution for deployment approval
+  deployment_approval:
+    name: "deployment_approval"
+    trigger_event: "validation_passed"
+    hook_type: "script"
+    script_path: "scripts/approve-deployment.sh"
+    enabled: true
+    timeout_seconds: 30
+    retry_on_failure: false
+    
+    environment_variables:
+      DEPLOYMENT_ENV: "{{environment}}"
+      VALIDATION_TIMESTAMP: "{{timestamp}}"
+      TASK_DEFINITION_ARN: "{{task_definition_arn}}"
+      REGION: "{{region}}"
+
+  # AWS Lambda function for advanced processing
+  lambda_processor:
+    name: "lambda_processor"
+    trigger_event: "post_validation"
+    hook_type: "aws_lambda"
+    lambda_function_arn: "arn:aws:lambda:us-east-1:123456789012:function:process-validation-results"
+    enabled: false  # Disabled by default
+    timeout_seconds: 30
+    retry_on_failure: true
+    max_retries: 2
+
+  # SNS notification for critical failures
+  sns_alert:
+    name: "sns_alert"
+    trigger_event: "validation_failed"
+    hook_type: "sns"
+    sns_topic_arn: "arn:aws:sns:us-east-1:123456789012:deployment-alerts"
+    enabled: false  # Disabled by default
+    timeout_seconds: 10
+    
+    payload_template: |
+      Deployment validation FAILED for {{environment}}
+      
+      Failed checks: {{failed_checks_list}}
+      Passed: {{passed_checks}}/{{total_checks}}
+      
+      Task Definition: {{task_definition_arn}}
+      Region: {{region}}
+      Timestamp: {{timestamp}}
+      
+      Remediation required before deployment can proceed.
+
+  # Email notification hook (using SNS)
+  email_notification:
+    name: "email_notification"
+    trigger_event: "validation_failed"
+    hook_type: "sns"
+    sns_topic_arn: "arn:aws:sns:us-east-1:123456789012:deployment-email-alerts"
+    enabled: false
+    
+    payload_template: |
+      Subject: Deployment Validation Failed - {{environment}}
+      
+      A deployment validation has failed for the {{environment}} environment.
+      
+      Details:
+      - Environment: {{environment}}
+      - Region: {{region}}
+      - Failed Checks: {{failed_checks_list}}
+      - Passed Checks: {{passed_checks}}/{{total_checks}}
+      - Timestamp: {{timestamp}}
+      
+      Task Configuration:
+      - Task Definition: {{task_definition_arn}}
+      - IAM Role: {{iam_role_arn}}
+      - Load Balancer: {{load_balancer_arn}}
+      
+      Please review the failed validations and apply the necessary fixes before proceeding with deployment.
+      
+      Remediation Summary:
+      {{remediation_summary}}

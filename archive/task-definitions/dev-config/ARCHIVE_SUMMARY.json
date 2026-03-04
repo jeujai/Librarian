@@ -1,0 +1,29 @@
+{
+  "archived_at": "2026-01-16T18:23:47.030097",
+  "reason": "Prevent accidental deployment of development configuration",
+  "archived_revisions": [
+    {
+      "revision": 41,
+      "arn": "arn:aws:ecs:us-east-1:591222106065:task-definition/multimodal-lib-prod-app:41",
+      "cpu": "4096",
+      "memory": "24576",
+      "image": "591222106065.dkr.ecr.us-east-1.amazonaws.com/multimodal-librarian:latest",
+      "archived_at": "2026-01-16T18:23:47.030089",
+      "archive_file": "archive/task-definitions/dev-config/task-definition-rev41.json",
+      "reason": "Development configuration (localhost services)",
+      "issues": [
+        "No AWS_NATIVE flag",
+        "Missing Neptune endpoint",
+        "Missing OpenSearch endpoint",
+        "Missing RDS host"
+      ]
+    }
+  ],
+  "aws_native_revision": 42,
+  "notes": [
+    "These task definitions used localhost services (PostgreSQL, Milvus, Redis, Neo4j)",
+    "They would fail in Fargate environment due to missing services",
+    "Use revision 42 or later for AWS-native configuration",
+    "Archived files can be found in archive/task-definitions/dev-config/"
+  ]
+}

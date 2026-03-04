@@ -1,0 +1,55 @@
+{
+  "title": "Multimodal Librarian Demo Feedback",
+  "sections": [
+    {
+      "name": "Overall Experience",
+      "questions": [
+        {
+          "id": "overall_satisfaction",
+          "type": "rating",
+          "scale": "1-5",
+          "question": "How satisfied are you with the overall system?",
+          "required": true
+        },
+        {
+          "id": "ease_of_use",
+          "type": "rating",
+          "scale": "1-5",
+          "question": "How easy was the system to use?",
+          "required": true
+        },
+        {
+          "id": "first_impression",
+          "type": "text",
+          "question": "What was your first impression of the system?",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "Feature Feedback",
+      "questions": [
+        {
+          "id": "document_upload_rating",
+          "type": "rating",
+          "scale": "1-5",
+          "question": "Rate the document upload experience",
+          "required": true
+        },
+        {
+          "id": "chat_quality_rating",
+          "type": "rating",
+          "scale": "1-5",
+          "question": "Rate the AI chat response quality",
+          "required": true
+        },
+        {
+          "id": "most_valuable_feature",
+          "type": "text",
+          "question": "Which feature did you find most valuable?",
+          "required": false
+        }
+      ]
+    }
+  ]
+}

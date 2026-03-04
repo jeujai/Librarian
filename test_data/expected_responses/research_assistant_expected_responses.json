@@ -1,0 +1,22 @@
+{
+  "What are the main topics covered in Machine Learning Fundamentals?": {
+    "response": "The Machine Learning Fundamentals document covers several key topics including supervised learning (linear regression, logistic regression, decision trees, random forest, support vector machines), unsupervised learning (k-means clustering, hierarchical clustering, PCA, association rules), reinforcement learning (Q-learning, policy gradient methods, actor-critic methods), overfitting and underfitting concepts, and model evaluation metrics for both classification and regression tasks.",
+    "sources": [
+      "Machine_Learning_Fundamentals.pdf"
+    ],
+    "confidence": 0.95,
+    "citations": [
+      "Machine Learning Fundamentals, Page 1-3"
+    ]
+  },
+  "How do the papers define overfitting?": {
+    "response": "According to the Machine Learning Fundamentals document, overfitting occurs when a model learns the training data too well, including noise and irrelevant patterns. Signs of overfitting include high training accuracy but low validation accuracy, complex models with many parameters, and poor generalization to new data. The document suggests prevention techniques such as cross-validation, regularization (L1, L2), early stopping, and dropout in neural networks.",
+    "sources": [
+      "Machine_Learning_Fundamentals.pdf"
+    ],
+    "confidence": 0.92,
+    "citations": [
+      "Machine Learning Fundamentals, Page 2"
+    ]
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "timestamp": "2026-01-15T23:08:19.008529",
+  "checks": {
+    "alb": {
+      "success": true,
+      "alb_name": "multimodal-lib-prod-alb-v2",
+      "alb_arn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:loadbalancer/app/multimodal-lib-prod-alb-v2/5964a1d711ab8dfe",
+      "dns_name": "multimodal-lib-prod-alb-v2-1090291461.us-east-1.elb.amazonaws.com",
+      "state": "active",
+      "is_active": true
+    },
+    "target_group": {
+      "success": true,
+      "target_group_name": "multimodal-lib-prod-tg-v2",
+      "target_group_arn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg-v2/7b63a6337a5c7a34",
+      "target_count": 0
+    },
+    "listener": {
+      "success": true,
+      "listener_arn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:listener/app/multimodal-lib-prod-alb-v2/5964a1d711ab8dfe/a312e4e0d1e0805e",
+      "protocol": "HTTP",
+      "port": 80
+    },
+    "connectivity": {
+      "success": true,
+      "dns_ok": true,
+      "http_ok": true
+    }
+  },
+  "overall_success": true
+}

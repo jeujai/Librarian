@@ -1,0 +1,10 @@
+{
+  "timestamp": "2026-01-22T10:42:35.948546",
+  "ecs_shutdown": true,
+  "opensearch_shutdown": true,
+  "rds_shutdown": true,
+  "load_balancer_shutdown": true,
+  "nat_gateway_shutdown": true,
+  "total_additional_monthly_savings": 197.76,
+  "errors": []
+}

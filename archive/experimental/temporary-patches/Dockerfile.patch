@@ -1,0 +1,14 @@
+# Patch Dockerfile - builds on existing image to apply the time import fix
+FROM 591222106065.dkr.ecr.us-east-1.amazonaws.com/multimodal-librarian-learning:latest
+
+# Copy the fixed file
+COPY src/multimodal_librarian/main_minimal.py /app/src/multimodal_librarian/main_minimal.py
+
+# Set environment variable to indicate this is a patched version
+ENV PATCH_VERSION=time-import-fix-v1
+
+# Expose port
+EXPOSE 8000
+
+# Use the same command as the original
+CMD ["python", "-m", "uvicorn", "src.multimodal_librarian.main_minimal:app", "--host", "0.0.0.0", "--port", "8000"]

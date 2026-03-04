@@ -1,0 +1,1951 @@
+/* Quality Indicators CSS
+ * Visual indicators for system capability levels and loading states
+ */
+
+/* Quality Indicator Container */
+.quality-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.25rem 0.75rem;
+    border-radius: 1rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    transition: all 0.3s ease;
+    border: 1px solid transparent;
+}
+
+/* Quality Levels */
+.quality-indicator.basic {
+    background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+    color: #92400e;
+    border-color: #f59e0b;
+}
+
+.quality-indicator.enhanced {
+    background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+    color: #1e40af;
+    border-color: #3b82f6;
+}
+
+.quality-indicator.full {
+    background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
+    color: #065f46;
+    border-color: #10b981;
+}
+
+/* Quality Indicator Icon */
+.quality-indicator .icon {
+    font-size: 1rem;
+    line-height: 1;
+    display: inline-block;
+}
+
+/* Animated Loading States */
+.quality-indicator.loading {
+    position: relative;
+    overflow: hidden;
+}
+
+.quality-indicator.loading::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+    animation: shimmer 2s infinite;
+}
+
+@keyframes shimmer {
+    0% { left: -100%; }
+    100% { left: 100%; }
+}
+
+/* Capability Status Display */
+.capability-status {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    padding: 1rem;
+    background: #f8fafc;
+    border-radius: 0.75rem;
+    border: 1px solid #e2e8f0;
+    margin: 1rem 0;
+}
+
+.capability-status-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.5rem;
+}
+
+.capability-status-title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: #1e293b;
+}
+
+.overall-progress {
+    font-size: 0.875rem;
+    color: #64748b;
+}
+
+/* Capability Categories */
+.capability-category {
+    margin-bottom: 1rem;
+}
+
+.capability-category-title {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #475569;
+    margin-bottom: 0.5rem;
+}
+
+.capability-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 0.75rem;
+}
+
+/* Capability Items */
+.capability-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    background: white;
+    border: 1px solid #e2e8f0;
+    border-radius: 0.5rem;
+    font-size: 0.8125rem;
+    transition: all 0.2s ease;
+    min-width: 200px;
+}
+
+.capability-item-header {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+}
+
+.capability-item.available {
+    border-color: #10b981;
+    background: #f0fdf4;
+    color: #065f46;
+}
+
+.capability-item.available .capability-item-header {
+    gap: 0.375rem;
+}
+
+.capability-item.loading {
+    border-color: #f59e0b;
+    background: #fffbeb;
+    color: #92400e;
+    position: relative;
+}
+
+.capability-item.unavailable {
+    border-color: #e5e7eb;
+    background: #f9fafb;
+    color: #6b7280;
+}
+
+/* Capability Progress Bars */
+.capability-progress-container {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    margin-top: 0.25rem;
+}
+
+.capability-progress-bar {
+    width: 100%;
+    height: 0.375rem;
+    background: rgba(245, 158, 11, 0.2);
+    border-radius: 0.1875rem;
+    overflow: hidden;
+}
+
+.capability-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #f59e0b, #d97706);
+    border-radius: 0.1875rem;
+    transition: width 0.5s ease;
+    position: relative;
+}
+
+.capability-progress-fill::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+    animation: progressShimmer 2s infinite;
+}
+
+.capability-progress-text {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.75rem;
+    color: #a16207;
+}
+
+.progress-label {
+    flex: 1;
+    font-weight: 500;
+}
+
+.progress-percent {
+    font-weight: 600;
+    color: #92400e;
+}
+
+/* ETA Display for capability items */
+.capability-item .eta-display {
+    font-size: 0.75rem;
+    color: #64748b;
+    font-weight: 500;
+    margin-left: auto;
+    background: rgba(255, 255, 255, 0.8);
+    padding: 0.125rem 0.375rem;
+    border-radius: 0.25rem;
+    border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+/* Capability Name */
+.capability-name {
+    flex: 1;
+    font-weight: 500;
+}
+
+/* Capability-Specific Indicators */
+.capability-specific-indicator {
+    font-size: 1rem;
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.8);
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    transition: all 0.2s ease;
+}
+
+.capability-item.available .capability-specific-indicator {
+    background: rgba(16, 185, 129, 0.1);
+    border-color: rgba(16, 185, 129, 0.3);
+    animation: pulse-success 2s infinite;
+}
+
+.capability-item.loading .capability-specific-indicator {
+    background: rgba(245, 158, 11, 0.1);
+    border-color: rgba(245, 158, 11, 0.3);
+    animation: pulse-loading 1.5s infinite;
+}
+
+.capability-item.unavailable .capability-specific-indicator {
+    background: rgba(156, 163, 175, 0.1);
+    border-color: rgba(156, 163, 175, 0.3);
+    opacity: 0.6;
+}
+
+/* Capability-specific animations */
+@keyframes pulse-success {
+    0%, 100% { 
+        transform: scale(1);
+        box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4);
+    }
+    50% { 
+        transform: scale(1.05);
+        box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.1);
+    }
+}
+
+@keyframes pulse-loading {
+    0%, 100% { 
+        transform: scale(1) rotate(0deg);
+        box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4);
+    }
+    50% { 
+        transform: scale(1.1) rotate(180deg);
+        box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.2);
+    }
+}
+
+/* Hover effects for capability items */
+.capability-item:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+.capability-item:hover .capability-specific-indicator {
+    transform: scale(1.1);
+}
+
+/* Loading state for capability items */
+.capability-item.loading::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(245, 158, 11, 0.2), transparent);
+    animation: shimmer-capability 2s infinite;
+    border-radius: 0.5rem;
+}
+
+@keyframes shimmer-capability {
+    0% { left: -100%; }
+    100% { left: 100%; }
+}
+
+/* ETA Display */
+.eta-display {
+    font-size: 0.75rem;
+    color: #64748b;
+    font-weight: 500;
+}
+
+/* Progress Bars */
+.progress-container {
+    margin: 0.75rem 0;
+}
+
+.progress-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.375rem;
+    font-size: 0.8125rem;
+    color: #475569;
+}
+
+.progress-bar {
+    width: 100%;
+    height: 0.5rem;
+    background: #e2e8f0;
+    border-radius: 0.25rem;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #3b82f6, #1d4ed8);
+    border-radius: 0.25rem;
+    transition: width 0.5s ease;
+    position: relative;
+}
+
+.progress-fill.loading {
+    background: linear-gradient(90deg, #f59e0b, #d97706);
+}
+
+.progress-fill.complete {
+    background: linear-gradient(90deg, #10b981, #059669);
+}
+
+/* Animated progress fill */
+.progress-fill::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+    animation: progressShimmer 2s infinite;
+}
+
+@keyframes progressShimmer {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+}
+
+/* Loading Messages */
+.loading-message {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 1rem;
+    background: #fef3c7;
+    border: 1px solid #f59e0b;
+    border-radius: 0.75rem;
+    margin: 1rem 0;
+}
+
+.loading-message.enhanced {
+    background: #dbeafe;
+    border-color: #3b82f6;
+}
+
+.loading-message.full {
+    background: #d1fae5;
+    border-color: #10b981;
+}
+
+.loading-spinner {
+    width: 1.25rem;
+    height: 1.25rem;
+    border: 2px solid #e5e7eb;
+    border-top: 2px solid #3b82f6;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.loading-text {
+    flex: 1;
+    font-size: 0.875rem;
+    color: #374151;
+}
+
+.loading-text .primary {
+    font-weight: 600;
+    display: block;
+    margin-bottom: 0.25rem;
+}
+
+.loading-text .secondary {
+    font-size: 0.8125rem;
+    color: #6b7280;
+}
+
+/* Expectation Management */
+.expectation-notice {
+    background: #f0f9ff;
+    border: 1px solid #0ea5e9;
+    border-radius: 0.75rem;
+    padding: 1rem;
+    margin: 1rem 0;
+}
+
+.expectation-notice-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+    font-weight: 600;
+    color: #0c4a6e;
+}
+
+.expectation-notice-content {
+    font-size: 0.875rem;
+    color: #075985;
+    line-height: 1.5;
+}
+
+/* Progress Info in Expectation Messages */
+.capability-indicators {
+    background: rgba(255, 255, 255, 0.5);
+    border-radius: 0.375rem;
+    padding: 0.5rem;
+    margin: 0.5rem 0;
+    font-size: 0.8125rem;
+    border: 1px solid rgba(14, 165, 233, 0.2);
+}
+
+.progress-info-container {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 0.375rem;
+    padding: 0.75rem;
+    margin: 0.75rem 0;
+    border: 1px solid rgba(14, 165, 233, 0.2);
+}
+
+.progress-info-item {
+    margin-bottom: 0.75rem;
+}
+
+.progress-info-item:last-child {
+    margin-bottom: 0;
+}
+
+.progress-info-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.375rem;
+    font-size: 0.8125rem;
+}
+
+.progress-info-name {
+    font-weight: 500;
+    color: #075985;
+}
+
+.progress-info-percent {
+    font-weight: 600;
+    color: #0c4a6e;
+}
+
+.progress-info-bar {
+    width: 100%;
+    height: 0.375rem;
+    background: rgba(14, 165, 233, 0.2);
+    border-radius: 0.1875rem;
+    overflow: hidden;
+    margin-bottom: 0.25rem;
+}
+
+.progress-info-fill {
+    height: 100%;
+    border-radius: 0.1875rem;
+    transition: width 0.5s ease;
+    position: relative;
+}
+
+.progress-info-fill.loading {
+    background: linear-gradient(90deg, #f59e0b, #d97706);
+}
+
+.progress-info-fill.ready {
+    background: linear-gradient(90deg, #10b981, #059669);
+}
+
+.progress-info-fill::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+    animation: progressShimmer 2s infinite;
+}
+
+.progress-info-eta {
+    font-size: 0.75rem;
+    color: #0369a1;
+    font-weight: 500;
+    text-align: right;
+}
+
+/* Enhanced Expectation Management Tooltips */
+.expectation-tooltip {
+    position: fixed;
+    background: #1f2937;
+    color: white;
+    padding: 0.75rem 1rem;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    line-height: 1.4;
+    max-width: 300px;
+    z-index: 10000;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    animation: tooltipFadeIn 0.2s ease;
+    pointer-events: none;
+}
+
+.expectation-tooltip.tooltip-above::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 6px solid transparent;
+    border-top-color: #1f2937;
+}
+
+.expectation-tooltip.tooltip-below::after {
+    content: '';
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 6px solid transparent;
+    border-bottom-color: #1f2937;
+}
+
+.expectation-tooltip small {
+    display: block;
+    margin-top: 0.5rem;
+    opacity: 0.9;
+    font-size: 0.8125rem;
+}
+
+.expectation-tooltip strong {
+    color: #fbbf24;
+    font-weight: 600;
+}
+
+@keyframes tooltipFadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(-4px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Enhanced Tooltip Styles for Different Elements */
+.tooltip.input-element {
+    position: relative;
+}
+
+.tooltip.input-element::before {
+    content: '💡';
+    position: absolute;
+    right: 0.75rem;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 0.875rem;
+    opacity: 0.6;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+}
+
+.tooltip.input-element:focus::before {
+    opacity: 1;
+}
+
+/* Capability-Specific Tooltip Indicators */
+.capability-item.tooltip::before {
+    content: '';
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    width: 0.5rem;
+    height: 0.5rem;
+    background: rgba(255, 255, 255, 0.3);
+    border-radius: 50%;
+    transition: all 0.2s ease;
+}
+
+.capability-item.tooltip:hover::before {
+    background: rgba(255, 255, 255, 0.6);
+    transform: scale(1.2);
+}
+
+/* Quality Indicator Tooltip Enhancement */
+.quality-indicator.tooltip {
+    cursor: help;
+    position: relative;
+}
+
+.quality-indicator.tooltip::after {
+    content: '?';
+    position: absolute;
+    top: -0.25rem;
+    right: -0.25rem;
+    width: 1rem;
+    height: 1rem;
+    background: rgba(0, 0, 0, 0.6);
+    color: white;
+    border-radius: 50%;
+    font-size: 0.75rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    pointer-events: none;
+}
+
+.quality-indicator.tooltip:hover::after {
+    opacity: 1;
+}
+
+/* Interactive Tooltip Triggers */
+.tooltip-trigger {
+    position: relative;
+    cursor: help;
+}
+
+.tooltip-trigger::after {
+    content: 'ℹ️';
+    position: absolute;
+    top: -0.25rem;
+    right: -0.25rem;
+    font-size: 0.75rem;
+    opacity: 0.7;
+    transition: opacity 0.2s ease;
+}
+
+.tooltip-trigger:hover::after {
+    opacity: 1;
+}
+
+/* Contextual Tooltip Styles */
+.contextual-tooltip {
+    background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+    border: 1px solid #0ea5e9;
+    color: #0c4a6e;
+    border-radius: 0.75rem;
+    padding: 1rem;
+    margin: 0.75rem 0;
+    position: relative;
+    animation: slideInFromTop 0.3s ease;
+}
+
+.contextual-tooltip.warning {
+    background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+    border-color: #f59e0b;
+    color: #92400e;
+}
+
+.contextual-tooltip.success {
+    background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
+    border-color: #10b981;
+    color: #065f46;
+}
+
+.contextual-tooltip-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+}
+
+.contextual-tooltip-content {
+    font-size: 0.875rem;
+    line-height: 1.5;
+}
+
+.contextual-tooltip-actions {
+    margin-top: 0.75rem;
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.contextual-tooltip-action {
+    background: rgba(255, 255, 255, 0.8);
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    color: inherit;
+    padding: 0.375rem 0.75rem;
+    border-radius: 0.375rem;
+    font-size: 0.8125rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-decoration: none;
+}
+
+.contextual-tooltip-action:hover {
+    background: rgba(255, 255, 255, 1);
+    transform: translateY(-1px);
+}
+
+@keyframes slideInFromTop {
+    from {
+        transform: translateY(-1rem);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+/* Progress Tooltip Enhancements */
+.progress-tooltip {
+    background: #374151;
+    color: #f3f4f6;
+    padding: 0.75rem;
+    border-radius: 0.5rem;
+    font-size: 0.8125rem;
+    max-width: 250px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.progress-tooltip-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+    font-weight: 600;
+}
+
+.progress-tooltip-body {
+    line-height: 1.4;
+}
+
+.progress-tooltip-eta {
+    margin-top: 0.5rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.2);
+    font-size: 0.75rem;
+    color: #d1d5db;
+}
+
+/* Mobile Tooltip Adaptations */
+@media (max-width: 768px) {
+    .expectation-tooltip {
+        max-width: 280px;
+        font-size: 0.8125rem;
+        padding: 0.625rem 0.875rem;
+    }
+    
+    .tooltip.input-element::before {
+        display: none; /* Hide hint icons on mobile */
+    }
+    
+    .quality-indicator.tooltip::after {
+        display: none; /* Hide question marks on mobile */
+    }
+    
+    .contextual-tooltip {
+        margin: 0.5rem 0;
+        padding: 0.75rem;
+    }
+    
+    .contextual-tooltip-actions {
+        margin-top: 0.5rem;
+    }
+    
+    .contextual-tooltip-action {
+        padding: 0.5rem 0.75rem;
+        font-size: 0.875rem;
+    }
+}
+
+/* High Contrast Mode for Tooltips */
+@media (prefers-contrast: high) {
+    .expectation-tooltip {
+        background: #000;
+        border: 2px solid #fff;
+        color: #fff;
+    }
+    
+    .expectation-tooltip.tooltip-above::after {
+        border-top-color: #000;
+    }
+    
+    .expectation-tooltip.tooltip-below::after {
+        border-bottom-color: #000;
+    }
+    
+    .contextual-tooltip {
+        border-width: 2px;
+    }
+    
+    .contextual-tooltip.warning {
+        background: #fbbf24;
+        color: #000;
+        border-color: #92400e;
+    }
+    
+    .contextual-tooltip.success {
+        background: #10b981;
+        color: #fff;
+        border-color: #065f46;
+    }
+}
+
+/* Dark Mode Support for Tooltips */
+@media (prefers-color-scheme: dark) {
+    .expectation-tooltip {
+        background: #111827;
+        border-color: rgba(255, 255, 255, 0.2);
+    }
+    
+    .contextual-tooltip {
+        background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%);
+        border-color: #3b82f6;
+        color: #bfdbfe;
+    }
+    
+    .contextual-tooltip.warning {
+        background: linear-gradient(135deg, #451a03 0%, #92400e 100%);
+        border-color: #d97706;
+        color: #fed7aa;
+    }
+    
+    .contextual-tooltip.success {
+        background: linear-gradient(135deg, #064e3b 0%, #059669 100%);
+        border-color: #10b981;
+        color: #a7f3d0;
+    }
+    
+    .contextual-tooltip-action {
+        background: rgba(0, 0, 0, 0.3);
+        border-color: rgba(255, 255, 255, 0.2);
+    }
+    
+    .contextual-tooltip-action:hover {
+        background: rgba(0, 0, 0, 0.5);
+    }
+    
+    .progress-tooltip {
+        background: #111827;
+        color: #f9fafb;
+    }
+    
+    .progress-tooltip-eta {
+        border-top-color: rgba(255, 255, 255, 0.1);
+        color: #d1d5db;
+    }
+}
+
+/* Reduced Motion Support for Tooltips */
+@media (prefers-reduced-motion: reduce) {
+    .expectation-tooltip,
+    .contextual-tooltip {
+        animation: none;
+    }
+    
+    .tooltip.input-element::before,
+    .quality-indicator.tooltip::after,
+    .tooltip-trigger::after,
+    .contextual-tooltip-action {
+        transition: none;
+    }
+}
+
+/* Print Styles for Tooltips */
+@media print {
+    .expectation-tooltip,
+    .contextual-tooltip {
+        display: none;
+    }
+}
+
+/* Responsive Design */
+@media (max-width: 640px) {
+    .quality-indicator {
+        font-size: 0.8125rem;
+        padding: 0.1875rem 0.625rem;
+    }
+    
+    .capability-status {
+        padding: 0.75rem;
+        margin: 0.75rem 0;
+    }
+    
+    .capability-list {
+        gap: 0.375rem;
+    }
+    
+    .capability-item {
+        font-size: 0.75rem;
+        padding: 0.25rem 0.5rem;
+    }
+    
+    .loading-message {
+        padding: 0.75rem;
+        margin: 0.75rem 0;
+    }
+}
+
+/* Dark Mode Support */
+@media (prefers-color-scheme: dark) {
+    .capability-status {
+        background: #1e293b;
+        border-color: #334155;
+    }
+    
+    .capability-status-title {
+        color: #f1f5f9;
+    }
+    
+    .overall-progress {
+        color: #94a3b8;
+    }
+    
+    .capability-category-title {
+        color: #cbd5e1;
+    }
+    
+    .capability-item {
+        background: #334155;
+        border-color: #475569;
+        color: #e2e8f0;
+    }
+    
+    .capability-item.available {
+        background: #064e3b;
+        border-color: #059669;
+        color: #a7f3d0;
+    }
+    
+    .capability-item.loading {
+        background: #451a03;
+        border-color: #d97706;
+        color: #fed7aa;
+    }
+    
+    .loading-message {
+        background: #451a03;
+        border-color: #d97706;
+    }
+    
+    .loading-message.enhanced {
+        background: #1e3a8a;
+        border-color: #3b82f6;
+    }
+    
+    .loading-message.full {
+        background: #064e3b;
+        border-color: #059669;
+    }
+    
+    .loading-text {
+        color: #e5e7eb;
+    }
+    
+    .loading-text .secondary {
+        color: #9ca3af;
+    }
+    
+    .expectation-notice {
+        background: #1e3a8a;
+        border-color: #3b82f6;
+    }
+    
+    .expectation-notice-header {
+        color: #bfdbfe;
+    }
+    
+    .expectation-notice-content {
+        color: #dbeafe;
+    }
+}
+
+/* High Contrast Mode */
+@media (prefers-contrast: high) {
+    .quality-indicator {
+        border-width: 2px;
+    }
+    
+    .quality-indicator.basic {
+        background: #fbbf24;
+        color: #000;
+        border-color: #92400e;
+    }
+    
+    .quality-indicator.enhanced {
+        background: #3b82f6;
+        color: #fff;
+        border-color: #1e40af;
+    }
+    
+    .quality-indicator.full {
+        background: #10b981;
+        color: #fff;
+        border-color: #065f46;
+    }
+}
+
+/* Capability Status Bar */
+.capability-status-bar {
+    background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+    border: 1px solid #f59e0b;
+    border-radius: 0.5rem;
+    padding: 0.75rem 1rem;
+    margin-bottom: 1rem;
+    animation: slideDown 0.3s ease;
+}
+
+.capability-status-bar-content {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.capability-status-bar-left {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.capability-status-bar-icon {
+    font-size: 1.25rem;
+    animation: spin 2s linear infinite;
+}
+
+.capability-status-bar-text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+}
+
+.capability-status-bar-text .primary-text {
+    font-weight: 600;
+    color: #92400e;
+    font-size: 0.875rem;
+}
+
+.capability-status-bar-text .secondary-text {
+    font-size: 0.75rem;
+    color: #a16207;
+}
+
+.capability-status-bar-right {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+/* Quick Indicators */
+.capability-quick-indicators {
+    display: flex;
+    gap: 0.375rem;
+}
+
+.quick-indicator {
+    width: 2rem;
+    height: 2rem;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.875rem;
+    border: 2px solid transparent;
+    transition: all 0.2s ease;
+    cursor: help;
+}
+
+.quick-indicator.ready {
+    background: #d1fae5;
+    border-color: #10b981;
+    color: #065f46;
+    animation: pulse-success 2s infinite;
+}
+
+.quick-indicator.loading {
+    background: #fef3c7;
+    border-color: #f59e0b;
+    color: #92400e;
+    animation: pulse-loading 1.5s infinite;
+}
+
+.quick-indicator.pending {
+    background: #f1f5f9;
+    border-color: #cbd5e1;
+    color: #64748b;
+    opacity: 0.7;
+}
+
+/* Capability Details Button */
+.capability-details-btn {
+    background: rgba(255, 255, 255, 0.8);
+    border: 1px solid #d97706;
+    color: #92400e;
+    padding: 0.375rem 0.75rem;
+    border-radius: 0.375rem;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.capability-details-btn:hover {
+    background: rgba(255, 255, 255, 1);
+    border-color: #f59e0b;
+    transform: translateY(-1px);
+}
+
+/* Animations */
+@keyframes slideDown {
+    from {
+        transform: translateY(-100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+/* Responsive Design */
+@media (max-width: 640px) {
+    .quality-indicator {
+        font-size: 0.8125rem;
+        padding: 0.1875rem 0.625rem;
+    }
+    
+    .capability-status {
+        padding: 0.75rem;
+        margin: 0.75rem 0;
+    }
+    
+    .capability-list {
+        gap: 0.375rem;
+    }
+    
+    .capability-item {
+        font-size: 0.75rem;
+        padding: 0.25rem 0.5rem;
+    }
+    
+    .loading-message {
+        padding: 0.75rem;
+        margin: 0.75rem 0;
+    }
+    
+    /* Status bar responsive */
+    .capability-status-bar {
+        padding: 0.5rem 0.75rem;
+    }
+    
+    .capability-status-bar-content {
+        flex-direction: column;
+        gap: 0.5rem;
+        align-items: flex-start;
+    }
+    
+    .capability-status-bar-right {
+        width: 100%;
+        justify-content: space-between;
+    }
+    
+    .quick-indicator {
+        width: 1.75rem;
+        height: 1.75rem;
+        font-size: 0.75rem;
+    }
+}
+
+/* Dark Mode Support */
+@media (prefers-color-scheme: dark) {
+    .capability-status {
+        background: #1e293b;
+        border-color: #334155;
+    }
+    
+    .capability-status-title {
+        color: #f1f5f9;
+    }
+    
+    .overall-progress {
+        color: #94a3b8;
+    }
+    
+    .capability-category-title {
+        color: #cbd5e1;
+    }
+    
+    .capability-item {
+        background: #334155;
+        border-color: #475569;
+        color: #e2e8f0;
+    }
+    
+    .capability-item.available {
+        background: #064e3b;
+        border-color: #059669;
+        color: #a7f3d0;
+    }
+    
+    .capability-item.loading {
+        background: #451a03;
+        border-color: #d97706;
+        color: #fed7aa;
+    }
+    
+    .loading-message {
+        background: #451a03;
+        border-color: #d97706;
+    }
+    
+    .loading-message.enhanced {
+        background: #1e3a8a;
+        border-color: #3b82f6;
+    }
+    
+    .loading-message.full {
+        background: #064e3b;
+        border-color: #059669;
+    }
+    
+    .loading-text {
+        color: #e5e7eb;
+    }
+    
+    .loading-text .secondary {
+        color: #9ca3af;
+    }
+    
+    .expectation-notice {
+        background: #1e3a8a;
+        border-color: #3b82f6;
+    }
+    
+    .expectation-notice-header {
+        color: #bfdbfe;
+    }
+    
+    .expectation-notice-content {
+        color: #dbeafe;
+    }
+    
+    /* Status bar dark mode */
+    .capability-status-bar {
+        background: linear-gradient(135deg, #451a03 0%, #92400e 100%);
+        border-color: #d97706;
+    }
+    
+    .capability-status-bar-text .primary-text {
+        color: #fed7aa;
+    }
+    
+    .capability-status-bar-text .secondary-text {
+        color: #fdba74;
+    }
+    
+    .capability-details-btn {
+        background: rgba(0, 0, 0, 0.3);
+        border-color: #f59e0b;
+        color: #fed7aa;
+    }
+    
+    .capability-details-btn:hover {
+        background: rgba(0, 0, 0, 0.5);
+    }
+}
+
+/* High Contrast Mode */
+@media (prefers-contrast: high) {
+    .quality-indicator {
+        border-width: 2px;
+    }
+    
+    .quality-indicator.basic {
+        background: #fbbf24;
+        color: #000;
+        border-color: #92400e;
+    }
+    
+    .quality-indicator.enhanced {
+        background: #3b82f6;
+        color: #fff;
+        border-color: #1e40af;
+    }
+    
+    .quality-indicator.full {
+        background: #10b981;
+        color: #fff;
+        border-color: #065f46;
+    }
+    
+    .capability-status-bar {
+        border-width: 2px;
+    }
+    
+    .quick-indicator {
+        border-width: 3px;
+    }
+}
+
+/* Reduced Motion */
+@media (prefers-reduced-motion: reduce) {
+    .quality-indicator,
+    .capability-item,
+    .progress-fill,
+    .tooltip::before,
+    .tooltip::after,
+    .quick-indicator,
+    .capability-details-btn {
+        transition: none;
+    }
+    
+    .quality-indicator.loading::before,
+    .progress-fill::after,
+    .loading-spinner,
+    .capability-status-bar-icon,
+    .pulse-success,
+    .pulse-loading,
+    .shimmer-capability {
+        animation: none;
+    }
+    
+    .capability-status-bar {
+        animation: none;
+    }
+}
+
+/* Limitation Messages Styles */
+.limitation-messages-container {
+    position: fixed;
+    top: 4rem;
+    right: 1rem;
+    max-width: 350px;
+    z-index: 9999;
+    pointer-events: none;
+}
+
+.limitation-message {
+    background: #fef3c7;
+    border: 1px solid #f59e0b;
+    border-radius: 0.75rem;
+    padding: 1rem;
+    margin-bottom: 0.75rem;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    pointer-events: auto;
+    animation: slideInRight 0.3s ease;
+    position: relative;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+.limitation-message.document {
+    background: #dbeafe;
+    border-color: #3b82f6;
+}
+
+.limitation-message.search {
+    background: #f0fdf4;
+    border-color: #10b981;
+}
+
+.limitation-message.analysis {
+    background: #fdf2f8;
+    border-color: #ec4899;
+}
+
+.limitation-message.system {
+    background: #f1f5f9;
+    border-color: #64748b;
+}
+
+.limitation-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.75rem;
+}
+
+.limitation-header .close-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: #92400e;
+    font-size: 1.25rem;
+    line-height: 1;
+    padding: 0;
+    transition: color 0.2s ease;
+}
+
+.limitation-header .close-btn:hover {
+    color: #78350f;
+}
+
+.limitation-content {
+    font-size: 0.875rem;
+    color: #92400e;
+    line-height: 1.4;
+}
+
+.limitation-content p {
+    margin: 0 0 0.75rem 0;
+}
+
+.limitations-section,
+.workarounds-section {
+    margin: 0.75rem 0;
+}
+
+.limitations-section strong,
+.workarounds-section strong {
+    display: block;
+    margin-bottom: 0.375rem;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.025em;
+}
+
+.limitations-section ul,
+.workarounds-section ul {
+    margin: 0.5rem 0;
+    padding-left: 1.25rem;
+    font-size: 0.875rem;
+}
+
+.limitations-section li {
+    margin-bottom: 0.25rem;
+    color: #b45309;
+}
+
+.workarounds-section li {
+    margin-bottom: 0.25rem;
+    color: #059669;
+}
+
+.eta-section {
+    background: rgba(245, 158, 11, 0.1);
+    border-radius: 0.375rem;
+    padding: 0.5rem;
+    margin-top: 0.75rem;
+    font-size: 0.8125rem;
+    border: 1px solid rgba(245, 158, 11, 0.2);
+}
+
+.eta-section strong {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    color: #92400e;
+}
+
+/* Animation keyframes */
+@keyframes slideInRight {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+@keyframes slideOutRight {
+    from {
+        transform: translateX(0);
+        opacity: 1;
+    }
+    to {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+}
+
+/* Contextual limitation messages */
+.contextual-limitation {
+    position: absolute;
+    bottom: 100%;
+    left: 0;
+    right: 0;
+    margin-bottom: 0.5rem;
+    background: #fef3c7;
+    border: 1px solid #f59e0b;
+    border-radius: 0.5rem;
+    padding: 0.75rem;
+    font-size: 0.8125rem;
+    color: #92400e;
+    z-index: 1000;
+    animation: fadeInUp 0.3s ease;
+}
+
+.contextual-limitation::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 1rem;
+    border: 6px solid transparent;
+    border-top-color: #f59e0b;
+}
+
+@keyframes fadeInUp {
+    from {
+        transform: translateY(0.5rem);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+/* Inline limitation indicators */
+.inline-limitation-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    background: rgba(245, 158, 11, 0.1);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    border-radius: 0.375rem;
+    padding: 0.25rem 0.5rem;
+    font-size: 0.75rem;
+    color: #92400e;
+    margin-left: 0.5rem;
+}
+
+.inline-limitation-indicator .icon {
+    font-size: 0.875rem;
+}
+
+/* Feature-specific limitation styles */
+.limitation-message[data-feature="chat"] {
+    border-left: 4px solid #3b82f6;
+}
+
+.limitation-message[data-feature="document"] {
+    border-left: 4px solid #10b981;
+}
+
+.limitation-message[data-feature="search"] {
+    border-left: 4px solid #f59e0b;
+}
+
+.limitation-message[data-feature="analysis"] {
+    border-left: 4px solid #ec4899;
+}
+
+/* Progress indicators within limitation messages */
+.limitation-progress {
+    margin: 0.75rem 0;
+}
+
+.limitation-progress-bar {
+    width: 100%;
+    height: 0.375rem;
+    background: rgba(245, 158, 11, 0.2);
+    border-radius: 0.1875rem;
+    overflow: hidden;
+}
+
+.limitation-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #f59e0b, #d97706);
+    border-radius: 0.1875rem;
+    transition: width 0.5s ease;
+    position: relative;
+}
+
+.limitation-progress-fill::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+    animation: progressShimmer 2s infinite;
+}
+
+.limitation-progress-text {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 0.375rem;
+    font-size: 0.75rem;
+    color: #a16207;
+}
+
+/* Limitation message variants */
+.limitation-message.warning {
+    background: #fef3c7;
+    border-color: #f59e0b;
+}
+
+.limitation-message.info {
+    background: #f0f9ff;
+    border-color: #0ea5e9;
+}
+
+.limitation-message.info .limitation-content {
+    color: #0c4a6e;
+}
+
+.limitation-message.info .eta-section {
+    background: rgba(14, 165, 233, 0.1);
+    border-color: rgba(14, 165, 233, 0.2);
+}
+
+.limitation-message.info .eta-section strong {
+    color: #0c4a6e;
+}
+
+.limitation-message.success {
+    background: #f0fdf4;
+    border-color: #10b981;
+}
+
+.limitation-message.success .limitation-content {
+    color: #065f46;
+}
+
+/* Responsive design for limitation messages */
+@media (max-width: 768px) {
+    .limitation-messages-container {
+        top: 3rem;
+        right: 0.5rem;
+        left: 0.5rem;
+        max-width: none;
+    }
+    
+    .limitation-message {
+        padding: 0.75rem;
+        margin-bottom: 0.5rem;
+    }
+    
+    .limitation-content {
+        font-size: 0.8125rem;
+    }
+    
+    .limitations-section ul,
+    .workarounds-section ul {
+        font-size: 0.8125rem;
+        padding-left: 1rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .limitation-message {
+        padding: 0.625rem;
+        border-radius: 0.5rem;
+    }
+    
+    .limitation-header {
+        margin-bottom: 0.5rem;
+    }
+    
+    .limitation-content {
+        font-size: 0.75rem;
+    }
+    
+    .eta-section {
+        padding: 0.375rem;
+        font-size: 0.75rem;
+    }
+}
+
+/* Dark mode support for limitation messages */
+@media (prefers-color-scheme: dark) {
+    .limitation-message {
+        background: #451a03;
+        border-color: #d97706;
+        color: #fed7aa;
+    }
+    
+    .limitation-message.document {
+        background: #1e3a8a;
+        border-color: #3b82f6;
+        color: #bfdbfe;
+    }
+    
+    .limitation-message.search {
+        background: #064e3b;
+        border-color: #059669;
+        color: #a7f3d0;
+    }
+    
+    .limitation-message.analysis {
+        background: #831843;
+        border-color: #ec4899;
+        color: #fbcfe8;
+    }
+    
+    .limitation-message.system {
+        background: #334155;
+        border-color: #64748b;
+        color: #cbd5e1;
+    }
+    
+    .limitation-content {
+        color: #fed7aa;
+    }
+    
+    .limitations-section li {
+        color: #fdba74;
+    }
+    
+    .workarounds-section li {
+        color: #6ee7b7;
+    }
+    
+    .eta-section {
+        background: rgba(217, 119, 6, 0.2);
+        border-color: rgba(217, 119, 6, 0.3);
+    }
+    
+    .eta-section strong {
+        color: #fed7aa;
+    }
+    
+    .limitation-message.info {
+        background: #1e3a8a;
+        border-color: #0ea5e9;
+    }
+    
+    .limitation-message.info .limitation-content {
+        color: #bfdbfe;
+    }
+    
+    .limitation-message.success {
+        background: #064e3b;
+        border-color: #10b981;
+    }
+    
+    .limitation-message.success .limitation-content {
+        color: #a7f3d0;
+    }
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+    .limitation-message {
+        border-width: 2px;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+    }
+    
+    .limitation-message.warning {
+        background: #fbbf24;
+        color: #000;
+        border-color: #92400e;
+    }
+    
+    .limitation-message.info {
+        background: #0ea5e9;
+        color: #fff;
+        border-color: #0c4a6e;
+    }
+    
+    .limitation-message.success {
+        background: #10b981;
+        color: #fff;
+        border-color: #065f46;
+    }
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+    .limitation-message,
+    .contextual-limitation {
+        animation: none;
+    }
+    
+    .limitation-progress-fill::after {
+        animation: none;
+    }
+    
+    .limitation-header .close-btn {
+        transition: none;
+    }
+}
+
+/* Print styles */
+@media print {
+    .limitation-messages-container {
+        display: none;
+    }
+}
+
+
+/* Confidence Indicators for Realistic ETAs */
+.eta-with-confidence {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-weight: 500;
+}
+
+.eta-with-confidence.high-confidence {
+    color: #059669;
+}
+
+.eta-with-confidence.medium-confidence {
+    color: #d97706;
+}
+
+.eta-with-confidence.low-confidence {
+    color: #dc2626;
+}
+
+.eta-range {
+    font-size: 0.7rem;
+    color: #9ca3af;
+    font-style: italic;
+    margin-left: 0.25rem;
+}
+
+.confidence-legend {
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid rgba(0, 0, 0, 0.1);
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.confidence-legend small {
+    font-size: 0.75rem;
+    color: #6b7280;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.confidence-legend .high-confidence {
+    color: #059669;
+    font-weight: 500;
+}
+
+.confidence-legend .medium-confidence {
+    color: #d97706;
+    font-weight: 500;
+}
+
+.confidence-legend .low-confidence {
+    color: #dc2626;
+    font-weight: 500;
+}
+
+/* Dark mode support for confidence indicators */
+@media (prefers-color-scheme: dark) {
+    .eta-with-confidence.high-confidence {
+        color: #6ee7b7;
+    }
+    
+    .eta-with-confidence.medium-confidence {
+        color: #fdba74;
+    }
+    
+    .eta-with-confidence.low-confidence {
+        color: #fca5a5;
+    }
+    
+    .eta-range {
+        color: #6b7280;
+    }
+    
+    .confidence-legend small {
+        color: #9ca3af;
+    }
+    
+    .confidence-legend .high-confidence {
+        color: #6ee7b7;
+    }
+    
+    .confidence-legend .medium-confidence {
+        color: #fdba74;
+    }
+    
+    .confidence-legend .low-confidence {
+        color: #fca5a5;
+    }
+    
+    .confidence-legend {
+        border-top-color: rgba(255, 255, 255, 0.1);
+    }
+}
+
+/* High contrast mode for confidence indicators */
+@media (prefers-contrast: high) {
+    .eta-with-confidence.high-confidence {
+        color: #047857;
+        font-weight: 700;
+    }
+    
+    .eta-with-confidence.medium-confidence {
+        color: #b45309;
+        font-weight: 700;
+    }
+    
+    .eta-with-confidence.low-confidence {
+        color: #b91c1c;
+        font-weight: 700;
+    }
+}

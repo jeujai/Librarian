@@ -1,0 +1,88 @@
+version: '3.8'
+
+# Production docker-compose override
+services:
+  app:
+    build:
+      context: .
+      target: production
+    environment:
+      # Production settings
+      - DEBUG=false
+      - LOG_LEVEL=WARNING
+      - API_WORKERS=4
+      - REQUIRE_AUTH=true
+      - RATE_LIMIT_PER_MINUTE=30
+      
+      # Security settings (use secrets in production)
+      - SECRET_KEY=${SECRET_KEY}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      
+      # External APIs
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      
+      # Database settings
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD}
+    volumes:
+      # Remove source code mount for production
+      - ./uploads:/app/uploads
+      - ./media:/app/media
+      - ./exports:/app/exports
+      - ./logs:/app/logs
+      - ./audit_logs:/app/audit_logs
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+    restart: always
+
+  postgres:
+    environment:
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+    restart: always
+
+  neo4j:
+    environment:
+      - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD}
+      - NEO4J_dbms_memory_heap_max__size=4G
+      - NEO4J_dbms_memory_pagecache_size=2G
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 6G
+        reservations:
+          cpus: '1.0'
+          memory: 3G
+    restart: always
+
+  milvus:
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+    restart: always
+
+  # Enable nginx for production
+  nginx:
+    profiles: []  # Remove profile to enable by default

@@ -1,0 +1,27 @@
+{
+  "timestamp": "2026-01-15T00:24:17.024154",
+  "old_revision": 34,
+  "new_revision": 35,
+  "old_health_check": {
+    "command": [
+      "CMD-SHELL",
+      "python -c \"import urllib.request; import sys; urllib.request.urlopen('http://localhost:8000/api/health/minimal', timeout=10); sys.exit(0)\" || exit 1"
+    ],
+    "interval": 30,
+    "timeout": 15,
+    "retries": 5,
+    "startPeriod": 300
+  },
+  "new_health_check": {
+    "command": [
+      "CMD-SHELL",
+      "python -c \"import urllib.request; import sys; urllib.request.urlopen('http://localhost:8000/api/health/minimal', timeout=10); sys.exit(0)\" || exit 1"
+    ],
+    "interval": 30,
+    "timeout": 15,
+    "retries": 5,
+    "startPeriod": 300
+  },
+  "deployment_time_seconds": 75,
+  "deployment_complete": true
+}

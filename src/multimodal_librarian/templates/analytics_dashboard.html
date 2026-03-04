@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analytics Dashboard - Multimodal Librarian</title>
+    <link rel="stylesheet" href="/static/css/analytics_dashboard.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/date-fns@2.29.3/index.min.js"></script>
+</head>
+<body>
+    <div class="dashboard-container">
+        <!-- Header -->
+        <header class="dashboard-header">
+            <div class="header-content">
+                <h1>📊 Analytics Dashboard</h1>
+                <div class="header-actions">
+                    <button id="refreshBtn" class="btn btn-primary">🔄 Refresh</button>
+                    <button id="exportBtn" class="btn btn-secondary">📥 Export</button>
+                    <a href="/app" class="btn btn-outline">← Back to App</a>
+                </div>
+            </div>
+        </header>
+
+        <!-- Loading State -->
+        <div id="loadingState" class="loading-state">
+            <div class="loading-spinner"></div>
+            <p>Loading analytics data...</p>
+        </div>
+
+        <!-- Main Dashboard Content -->
+        <main id="dashboardContent" class="dashboard-content" style="display: none;">
+            
+            <!-- Overview Cards -->
+            <section class="overview-section">
+                <h2>📈 Overview</h2>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon">📄</div>
+                        <div class="stat-content">
+                            <h3 id="totalDocs">0</h3>
+                            <p>Total Documents</p>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">💾</div>
+                        <div class="stat-content">
+                            <h3 id="totalSize">0 MB</h3>
+                            <p>Total Storage</p>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">💬</div>
+                        <div class="stat-content">
+                            <h3 id="chatSessions">0</h3>
+                            <p>Chat Sessions</p>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">🔗</div>
+                        <div class="stat-content">
+                            <h3 id="similarPairs">0</h3>
+                            <p>Similar Documents</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Charts Section -->
+            <section class="charts-section">
+                <div class="charts-grid">
+                    
+                    <!-- Upload Timeline Chart -->
+                    <div class="chart-card">
+                        <h3>📅 Upload Timeline (Last 30 Days)</h3>
+                        <canvas id="uploadTimelineChart"></canvas>
+                    </div>
+
+                    <!-- File Types Distribution -->
+                    <div class="chart-card">
+                        <h3>📁 File Types Distribution</h3>
+                        <canvas id="fileTypesChart"></canvas>
+                    </div>
+
+                    <!-- Daily Activity -->
+                    <div class="chart-card">
+                        <h3>⚡ Daily Activity (Last 7 Days)</h3>
+                        <canvas id="dailyActivityChart"></canvas>
+                    </div>
+
+                    <!-- Feature Usage -->
+                    <div class="chart-card">
+                        <h3>🎯 Feature Usage</h3>
+                        <canvas id="featureUsageChart"></canvas>
+                    </div>
+
+                </div>
+            </section>
+
+            <!-- Content Insights Section -->
+            <section class="insights-section">
+                <div class="insights-grid">
+                    
+                    <!-- Top Keywords -->
+                    <div class="insight-card">
+                        <h3>🔤 Top Keywords</h3>
+                        <div class="keywords-container">
+                            <div class="keyword-category">
+                                <h4>Titles</h4>
+                                <div id="titleKeywords" class="keywords-list"></div>
+                            </div>
+                            <div class="keyword-category">
+                                <h4>Descriptions</h4>
+                                <div id="descriptionKeywords" class="keywords-list"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Content Clusters -->
+                    <div class="insight-card">
+                        <h3>🗂️ Content Clusters</h3>
+                        <div id="contentClusters" class="clusters-container"></div>
+                    </div>
+
+                    <!-- Similar Documents -->
+                    <div class="insight-card">
+                        <h3>🔗 Similar Documents</h3>
+                        <div id="similarDocuments" class="similar-docs-container"></div>
+                    </div>
+
+                    <!-- Quality Metrics -->
+                    <div class="insight-card">
+                        <h3>⭐ Content Quality</h3>
+                        <div id="qualityMetrics" class="quality-metrics-container"></div>
+                    </div>
+
+                </div>
+            </section>
+
+            <!-- User Engagement Section -->
+            <section class="engagement-section">
+                <h2>👤 User Engagement</h2>
+                <div class="engagement-grid">
+                    
+                    <div class="engagement-card">
+                        <h3>📊 Engagement Score</h3>
+                        <div class="score-display">
+                            <div id="engagementScore" class="score-circle">0</div>
+                            <p>Overall engagement level</p>
+                        </div>
+                    </div>
+
+                    <div class="engagement-card">
+                        <h3>🎯 Preferred Features</h3>
+                        <div id="preferredFeatures" class="features-list"></div>
+                    </div>
+
+                    <div class="engagement-card">
+                        <h3>📈 Activity Trends</h3>
+                        <div id="activityTrends" class="trends-container"></div>
+                    </div>
+
+                </div>
+            </section>
+
+        </main>
+
+        <!-- Error State -->
+        <div id="errorState" class="error-state" style="display: none;">
+            <div class="error-content">
+                <h2>❌ Error Loading Analytics</h2>
+                <p id="errorMessage">Failed to load analytics data. Please try again.</p>
+                <button id="retryBtn" class="btn btn-primary">🔄 Retry</button>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Footer -->
+    <footer class="dashboard-footer">
+        <p>Last updated: <span id="lastUpdated">Never</span></p>
+        <p>Multimodal Librarian Analytics Dashboard v1.0</p>
+    </footer>
+
+    <script src="/static/js/analytics_dashboard.js"></script>
+</body>
+</html>

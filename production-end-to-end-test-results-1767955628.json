@@ -1,0 +1,87 @@
+{
+  "Production System Health": {
+    "success": false,
+    "tests": {
+      "main_health_endpoint": false,
+      "chat_service_health": false,
+      "document_service_health": false,
+      "features_endpoint": false,
+      "ssl_certificate": false
+    },
+    "services": {}
+  },
+  "Document Upload Workflow": {
+    "success": false,
+    "tests": {
+      "document_upload": false,
+      "document_listing": false
+    },
+    "uploaded_documents": []
+  },
+  "WebSocket Chat Protocol": {
+    "success": false,
+    "tests": {
+      "websocket_connection": false
+    },
+    "protocol_validation": {}
+  },
+  "RAG Integration Workflow": {
+    "success": true,
+    "tests": {
+      "skipped": true
+    },
+    "rag_analysis": {}
+  },
+  "Complete User Journey": {
+    "success": false,
+    "tests": {
+      "journey_error": "Cannot connect to host multimodal-librarian-full-ml-249704554.us-east-1.elb.amazonaws.com:443 ssl:default [Connection reset by peer]"
+    },
+    "journey_metrics": {}
+  },
+  "Error Handling & Recovery": {
+    "success": true,
+    "tests": {
+      "invalid_file_rejection": false,
+      "nonexistent_document_handling": false,
+      "websocket_error_handling": false
+    },
+    "error_scenarios": {}
+  },
+  "Performance Under Load": {
+    "success": false,
+    "tests": {
+      "concurrent_api_performance": false
+    },
+    "performance_metrics": {
+      "concurrent_health_checks": {
+        "total_requests": 10,
+        "successful_requests": 0,
+        "total_time_ms": 180.1307201385498,
+        "avg_response_time_ms": 18.01307201385498,
+        "requests_per_second": 55.515239112508816
+      }
+    }
+  },
+  "Security & Privacy Controls": {
+    "success": true,
+    "tests": {
+      "https_enforcement": true,
+      "file_upload_security": false
+    },
+    "security_analysis": {}
+  },
+  "overall_success": false,
+  "test_timestamp": 1767955628.22448,
+  "production_ready": {
+    "ready_for_production": false,
+    "critical_phases_passed": false,
+    "recommended_actions": [
+      "Fix issues in Production System Health (success rate: 0.0%)",
+      "Fix issues in Document Upload Workflow (success rate: 0.0%)",
+      "Fix issues in WebSocket Chat Protocol (success rate: 0.0%)",
+      "Fix issues in Complete User Journey (success rate: 0.0%)",
+      "Fix issues in Performance Under Load (success rate: 0.0%)"
+    ]
+  }
+}

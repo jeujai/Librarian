@@ -1,0 +1,9 @@
+{
+  "instance_id": "i-0255d25fd1950ed2d",
+  "public_ip": "54.164.30.244",
+  "private_ip": "10.0.1.47",
+  "security_group_id": "sg-046d0c09acd59d83d",
+  "vpc_id": "vpc-0bc85162dcdbcc986",
+  "subnet_id": "subnet-043a481c9298b710d",
+  "created_at": "2026-01-06T23:25:12Z"
+}

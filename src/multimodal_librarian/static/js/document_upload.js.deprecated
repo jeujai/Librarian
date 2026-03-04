@@ -1,0 +1,46 @@
+/**
+ * DEPRECATED: Document Upload and Management Component
+ * 
+ * This file has been deprecated as of the unified-chat-document-upload feature.
+ * Document management is now integrated directly into the chat interface via:
+ * - ChatUploadHandler (chat-upload-handler.js) - handles file uploads in chat
+ * - DocumentListPanel (document-list-panel.js) - provides document list/management UI
+ * 
+ * The separate Document Library panel has been removed in favor of the unified
+ * chat-integrated experience per Requirement 7.1.
+ * 
+ * This file is kept for reference only and is no longer loaded by the application.
+ * 
+ * @deprecated Use ChatUploadHandler and DocumentListPanel instead
+ * @see chat-upload-handler.js
+ * @see document-list-panel.js
+ */
+
+// Original DocumentManager class code preserved below for reference
+// DO NOT USE - This code is no longer active
+
+/*
+class DocumentManager {
+    constructor() {
+        this.documents = [];
+        this.uploadQueue = [];
+        this.isUploading = false;
+        
+        this.initializeElements();
+        this.setupEventListeners();
+        this.loadDocuments();
+        
+        // Polling interval for document status updates
+        this.statusPollingInterval = null;
+        this.startStatusPolling();
+    }
+    
+    // ... rest of the original code ...
+}
+*/
+
+console.warn(
+    'document_upload.js is deprecated. ' +
+    'Document management is now integrated into the chat interface. ' +
+    'Use ChatUploadHandler and DocumentListPanel instead.'
+);

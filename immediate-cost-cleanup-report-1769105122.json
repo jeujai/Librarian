@@ -1,0 +1,25 @@
+{
+  "cleanup_timestamp": "2026-01-22T11:05:22.835696",
+  "estimated_monthly_savings": 24.80999999999996,
+  "savings_breakdown": {
+    "CloudFront": 0,
+    "Secrets_Manager": 0,
+    "ECR": 12.399999999999972,
+    "CloudWatch_Logs": 12.399999999999986,
+    "Security_Groups": 0.01
+  },
+  "actions_completed": [
+    "Disabled CloudFront distributions",
+    "Cleaned up test/dev secrets",
+    "Removed old ECR images",
+    "Set CloudWatch log retention policies",
+    "Deleted unused security groups",
+    "Deleted VPC endpoints (done earlier)"
+  ],
+  "next_steps": [
+    "Wait for Neptune cluster to start, then delete it (~$115/month savings)",
+    "Check for any remaining ECS tasks or services",
+    "Consider canceling CloudFront flat-rate plans manually",
+    "Monitor billing console for actual cost reductions"
+  ]
+}

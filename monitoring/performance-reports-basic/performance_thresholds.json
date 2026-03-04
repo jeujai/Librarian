@@ -1,0 +1,312 @@
+{
+  "performance_thresholds": {
+    "description": "Performance thresholds and targets for AWS learning deployment",
+    "last_updated": "2024-01-01T00:00:00Z",
+    "environment": "learning",
+    "cost_optimization_level": "high",
+    
+    "response_time_thresholds": {
+      "health_check": {
+        "target_ms": 50,
+        "warning_ms": 100,
+        "critical_ms": 200,
+        "p95_target_ms": 100,
+        "p99_target_ms": 150
+      },
+      "api_endpoints": {
+        "target_ms": 200,
+        "warning_ms": 500,
+        "critical_ms": 1000,
+        "p95_target_ms": 500,
+        "p99_target_ms": 800
+      },
+      "chat_messages": {
+        "target_ms": 100,
+        "warning_ms": 200,
+        "critical_ms": 500,
+        "p95_target_ms": 200,
+        "p99_target_ms": 300
+      },
+      "document_processing": {
+        "target_ms": 2000,
+        "warning_ms": 5000,
+        "critical_ms": 10000,
+        "p95_target_ms": 5000,
+        "p99_target_ms": 8000
+      },
+      "ml_training_operations": {
+        "target_ms": 5000,
+        "warning_ms": 10000,
+        "critical_ms": 20000,
+        "p95_target_ms": 10000,
+        "p99_target_ms": 15000
+      },
+      "vector_search": {
+        "target_ms": 500,
+        "warning_ms": 1000,
+        "critical_ms": 2000,
+        "p95_target_ms": 1000,
+        "p99_target_ms": 1500
+      },
+      "knowledge_graph_query": {
+        "target_ms": 1000,
+        "warning_ms": 2000,
+        "critical_ms": 5000,
+        "p95_target_ms": 2000,
+        "p99_target_ms": 3000
+      }
+    },
+    
+    "throughput_thresholds": {
+      "concurrent_users": {
+        "target": 15,
+        "warning_below": 10,
+        "critical_below": 5,
+        "maximum_supported": 25
+      },
+      "requests_per_second": {
+        "target": 75,
+        "warning_below": 50,
+        "critical_below": 25,
+        "maximum_supported": 150
+      },
+      "websocket_connections": {
+        "target": 30,
+        "warning_below": 20,
+        "critical_below": 10,
+        "maximum_supported": 50
+      },
+      "document_processing_per_minute": {
+        "target": 8,
+        "warning_below": 5,
+        "critical_below": 2,
+        "maximum_supported": 15
+      },
+      "ml_operations_per_minute": {
+        "target": 4,
+        "warning_below": 2,
+        "critical_below": 1,
+        "maximum_supported": 8
+      }
+    },
+    
+    "success_rate_thresholds": {
+      "api_endpoints": {
+        "target_percent": 98,
+        "warning_below_percent": 95,
+        "critical_below_percent": 90
+      },
+      "websocket_connections": {
+        "target_percent": 95,
+        "warning_below_percent": 90,
+        "critical_below_percent": 80
+      },
+      "message_delivery": {
+        "target_percent": 98,
+        "warning_below_percent": 95,
+        "critical_below_percent": 90
+      },
+      "document_processing": {
+        "target_percent": 95,
+        "warning_below_percent": 90,
+        "critical_below_percent": 80
+      },
+      "ml_training": {
+        "target_percent": 90,
+        "warning_below_percent": 85,
+        "critical_below_percent": 75
+      },
+      "vector_search": {
+        "target_percent": 98,
+        "warning_below_percent": 95,
+        "critical_below_percent": 90
+      },
+      "knowledge_graph_operations": {
+        "target_percent": 95,
+        "warning_below_percent": 90,
+        "critical_below_percent": 85
+      }
+    },
+    
+    "resource_utilization_thresholds": {
+      "cpu_usage": {
+        "target_percent": 50,
+        "warning_above_percent": 70,
+        "critical_above_percent": 85,
+        "peak_acceptable_percent": 90
+      },
+      "memory_usage": {
+        "target_percent": 60,
+        "warning_above_percent": 80,
+        "critical_above_percent": 90,
+        "peak_acceptable_percent": 95
+      },
+      "database_connections": {
+        "target_percent_of_pool": 60,
+        "warning_above_percent": 80,
+        "critical_above_percent": 90,
+        "pool_size": 20
+      },
+      "redis_memory": {
+        "target_mb": 100,
+        "warning_above_mb": 200,
+        "critical_above_mb": 400,
+        "maximum_mb": 512
+      },
+      "disk_usage": {
+        "target_percent": 50,
+        "warning_above_percent": 75,
+        "critical_above_percent": 85,
+        "cleanup_threshold_percent": 80
+      }
+    },
+    
+    "cost_optimization_thresholds": {
+      "monthly_budget": {
+        "target_usd": 75,
+        "warning_above_usd": 90,
+        "critical_above_usd": 100,
+        "absolute_limit_usd": 120
+      },
+      "cost_per_request": {
+        "target_cents": 0.01,
+        "warning_above_cents": 0.02,
+        "critical_above_cents": 0.05
+      },
+      "cost_per_user_session": {
+        "target_cents": 0.5,
+        "warning_above_cents": 1.0,
+        "critical_above_cents": 2.0
+      },
+      "cost_per_document_processed": {
+        "target_cents": 2.0,
+        "warning_above_cents": 5.0,
+        "critical_above_cents": 10.0
+      }
+    },
+    
+    "load_test_configurations": {
+      "basic_load_test": {
+        "concurrent_users": 10,
+        "test_duration_seconds": 30,
+        "ramp_up_seconds": 5,
+        "think_time_seconds": 0.1,
+        "max_requests_per_user": 100
+      },
+      "chat_load_test": {
+        "concurrent_users": 10,
+        "test_duration_seconds": 60,
+        "messages_per_user": 10,
+        "connection_timeout_seconds": 10
+      },
+      "ml_performance_test": {
+        "concurrent_operations": 5,
+        "operations_per_test": 10,
+        "test_duration_seconds": 120,
+        "operation_timeout_seconds": 60
+      },
+      "stress_test": {
+        "concurrent_users": 20,
+        "test_duration_seconds": 300,
+        "ramp_up_seconds": 30,
+        "sustained_load_minutes": 5
+      }
+    },
+    
+    "monitoring_intervals": {
+      "real_time_metrics_seconds": 30,
+      "performance_check_minutes": 5,
+      "health_check_minutes": 1,
+      "cost_check_hours": 6,
+      "daily_report_hour": 23,
+      "weekly_report_day": "sunday"
+    },
+    
+    "alerting_configuration": {
+      "response_time_degradation": {
+        "threshold_multiplier": 2.0,
+        "evaluation_periods": 3,
+        "datapoints_to_alarm": 2
+      },
+      "error_rate_spike": {
+        "threshold_percent": 5.0,
+        "evaluation_periods": 2,
+        "datapoints_to_alarm": 2
+      },
+      "throughput_drop": {
+        "threshold_percent": 50.0,
+        "evaluation_periods": 3,
+        "datapoints_to_alarm": 2
+      },
+      "resource_exhaustion": {
+        "cpu_threshold_percent": 85,
+        "memory_threshold_percent": 90,
+        "evaluation_periods": 2,
+        "datapoints_to_alarm": 2
+      },
+      "cost_overrun": {
+        "daily_threshold_usd": 5.0,
+        "monthly_projection_threshold_usd": 100.0,
+        "evaluation_periods": 1,
+        "datapoints_to_alarm": 1
+      }
+    },
+    
+    "performance_optimization_triggers": {
+      "database_optimization": {
+        "slow_query_threshold_ms": 1000,
+        "connection_pool_utilization_percent": 80,
+        "query_frequency_threshold": 100
+      },
+      "caching_optimization": {
+        "cache_hit_rate_below_percent": 70,
+        "response_time_improvement_threshold_ms": 200,
+        "memory_usage_acceptable_percent": 80
+      },
+      "scaling_optimization": {
+        "cpu_sustained_above_percent": 70,
+        "memory_sustained_above_percent": 75,
+        "response_time_degradation_percent": 50
+      },
+      "cost_optimization": {
+        "cost_per_request_above_cents": 0.02,
+        "resource_utilization_below_percent": 30,
+        "idle_time_threshold_minutes": 60
+      }
+    },
+    
+    "test_data_specifications": {
+      "document_sizes": {
+        "small_kb": 10,
+        "medium_kb": 100,
+        "large_kb": 1000,
+        "extra_large_kb": 5000
+      },
+      "message_sizes": {
+        "short_chars": 50,
+        "medium_chars": 200,
+        "long_chars": 1000
+      },
+      "batch_sizes": {
+        "small_batch": 5,
+        "medium_batch": 20,
+        "large_batch": 50
+      }
+    },
+    
+    "baseline_performance": {
+      "description": "Baseline performance metrics for comparison",
+      "measurement_date": "2024-01-01",
+      "system_configuration": "t3.micro ECS, db.t3.micro RDS, single AZ",
+      "metrics": {
+        "avg_response_time_ms": 150,
+        "p95_response_time_ms": 300,
+        "max_throughput_rps": 100,
+        "max_concurrent_users": 20,
+        "avg_cpu_percent": 45,
+        "avg_memory_percent": 60,
+        "cost_per_hour_usd": 0.15
+      }
+    }
+  }
+}

@@ -1,0 +1,774 @@
+{
+  "timestamp": "2026-01-11T01:56:07.427556",
+  "test_name": "end_to_end_validation_integration",
+  "test_phases": {
+    "infrastructure_setup": {
+      "phase_name": "infrastructure_setup",
+      "success": true,
+      "tests": {
+        "core_components": {
+          "success": true
+        },
+        "aws_connectivity": {
+          "success": true,
+          "account": "591222106065"
+        },
+        "fix_scripts": {
+          "success": true,
+          "available_scripts": [
+            "scripts/fix-iam-secrets-permissions.py",
+            "scripts/fix-iam-secrets-permissions-correct.py",
+            "scripts/add-https-ssl-support.py",
+            "task-definition-update.json"
+          ],
+          "missing_scripts": []
+        },
+        "config_files": {
+          "success": true,
+          "files": {
+            "task-definition-update.json": {
+              "exists": true,
+              "valid_format": true
+            },
+            "src/multimodal_librarian/validation/example-config.json": {
+              "exists": true,
+              "valid_format": true
+            },
+            "src/multimodal_librarian/validation/example-validation-config.yaml": {
+              "exists": true,
+              "valid_format": true
+            }
+          }
+        }
+      },
+      "errors": []
+    },
+    "complete_validation_workflow": {
+      "phase_name": "complete_validation_workflow",
+      "success": true,
+      "tests": {
+        "valid_deployment": {
+          "success": true,
+          "validation_status": "failed",
+          "validation_passed": false,
+          "execution_time": 1.6277148723602295,
+          "checks_performed": 3,
+          "checks_passed": 0,
+          "checks_failed": 3,
+          "has_remediation": true,
+          "has_fix_scripts": true,
+          "expected_behavior": true
+        },
+        "invalid_iam_deployment": {
+          "success": true,
+          "validation_status": "failed",
+          "validation_passed": false,
+          "execution_time": 0.370161771774292,
+          "checks_performed": 3,
+          "checks_passed": 0,
+          "checks_failed": 3,
+          "has_remediation": true,
+          "has_fix_scripts": true,
+          "expected_behavior": true
+        },
+        "missing_ssl_deployment": {
+          "success": true,
+          "validation_status": "failed",
+          "validation_passed": false,
+          "execution_time": 0.6358258724212646,
+          "checks_performed": 3,
+          "checks_passed": 0,
+          "checks_failed": 3,
+          "has_remediation": true,
+          "has_fix_scripts": true,
+          "expected_behavior": true
+        }
+      },
+      "errors": []
+    },
+    "remediation_script_execution": {
+      "phase_name": "remediation_script_execution",
+      "success": true,
+      "tests": {
+        "guide_generation": {
+          "success": true,
+          "script_references": 5,
+          "instructions": 25,
+          "failed_checks_handled": 3
+        },
+        "script_execution": {
+          "scripts/fix-iam-secrets-permissions.py": {
+            "syntax_valid": true,
+            "has_help": true,
+            "executable": true
+          },
+          "scripts/fix-iam-secrets-permissions-correct.py": {
+            "syntax_valid": true,
+            "has_help": true,
+            "executable": true
+          },
+          "scripts/add-https-ssl-support.py": {
+            "syntax_valid": true,
+            "has_help": true,
+            "executable": true
+          },
+          "task-definition-update.json": {
+            "json_valid": true,
+            "readable": true
+          }
+        },
+        "remediation_simulation": {
+          "success": true,
+          "initial_validation_failed": true,
+          "remediation_provided": true,
+          "remediation_steps": 18,
+          "fix_scripts": 2
+        }
+      },
+      "errors": []
+    },
+    "audit_logging_and_reporting": {
+      "phase_name": "audit_logging_and_reporting",
+      "success": true,
+      "tests": {
+        "audit_log_generation": {
+          "success": true,
+          "log_file_exists": true,
+          "log_entries": 4,
+          "log_file_path": "audit_logs/validation_audit_1768121767.log"
+        },
+        "report_formatting": {
+          "success": true,
+          "console_report_length": 1722,
+          "json_report_valid": true,
+          "json_report_keys": [
+            "overall_status",
+            "timestamp",
+            "total_checks",
+            "passed_checks",
+            "failed_checks",
+            "deployment_config",
+            "checks_performed",
+            "remediation_summary"
+          ]
+        },
+        "report_persistence": {
+          "success": true,
+          "report_file_created": true,
+          "report_file_readable": true,
+          "report_keys": [
+            "overall_status",
+            "timestamp",
+            "total_checks",
+            "passed_checks",
+            "failed_checks",
+            "deployment_config",
+            "checks_performed",
+            "remediation_summary"
+          ]
+        }
+      },
+      "errors": []
+    },
+    "deployment_blocking_functionality": {
+      "phase_name": "deployment_blocking_functionality",
+      "success": true,
+      "tests": {
+        "blocking_on_failure": {
+          "success": true,
+          "deployment_blocked": true,
+          "has_remediation": true,
+          "has_clear_blocking_message": true,
+          "validation_status": "failed"
+        },
+        "deployment_readiness": {
+          "success": true,
+          "deployment_ready": false,
+          "failed_checks_count": 3,
+          "failed_checks": [
+            "IAM Permissions Validation",
+            "Storage Configuration Validation",
+            "SSL Configuration Validation"
+          ]
+        },
+        "individual_component_validation": {
+          "success": true,
+          "components_tested": {
+            "iam": {
+              "success": true,
+              "status": "failed",
+              "passed": false
+            },
+            "storage": {
+              "success": true,
+              "status": "failed",
+              "passed": false
+            },
+            "ssl": {
+              "success": true,
+              "status": "failed",
+              "passed": false
+            }
+          }
+        }
+      },
+      "errors": []
+    },
+    "cli_integration_and_hooks": {
+      "phase_name": "cli_integration_and_hooks",
+      "success": true,
+      "tests": {
+        "cli_help": {
+          "success": true,
+          "help_works": true,
+          "help_length": 3899,
+          "features_documented": [
+            "--interactive",
+            "--config",
+            "--profile",
+            "--output-format"
+          ],
+          "all_features_documented": true
+        },
+        "cli_config_file": {
+          "success": false,
+          "unexpected_success": true,
+          "exit_code": 0
+        },
+        "pipeline_hooks": {
+          "success": true,
+          "hooks_summary_generated": true,
+          "total_hooks": 2,
+          "hooks_by_event": {
+            "validation_failed": [
+              "slack_notification"
+            ],
+            "validation_passed": [
+              "deployment_gate"
+            ]
+          },
+          "enabled_hooks": 0
+        }
+      },
+      "errors": []
+    },
+    "configuration_management": {
+      "phase_name": "configuration_management",
+      "success": true,
+      "tests": {
+        "config_manager": {
+          "success": true,
+          "instantiated": true,
+          "profiles_available": 3,
+          "profile_names": [
+            "development",
+            "staging",
+            "production"
+          ]
+        },
+        "profile_management": {
+          "success": true,
+          "profile_summaries_generated": true,
+          "profiles_count": 3,
+          "sample_profile": {
+            "name": "development",
+            "has_description": true,
+            "has_environment_type": true
+          }
+        },
+        "deployment_summary": {
+          "success": true,
+          "summary_generated": true,
+          "summary_keys": [
+            "deployment_configuration",
+            "validation_checks_available",
+            "critical_checks",
+            "validation_region",
+            "last_validation_status",
+            "last_validation_timestamp"
+          ],
+          "has_required_keys": true,
+          "validation_checks_available": 3
+        }
+      },
+      "errors": []
+    },
+    "error_recovery_and_resilience": {
+      "phase_name": "error_recovery_and_resilience",
+      "success": true,
+      "tests": {
+        "invalid_input_handling": {
+          "success": true,
+          "handled_gracefully": true,
+          "status": "failed",
+          "has_error_message": true,
+          "message_length": 73
+        },
+        "network_error_handling": {
+          "success": true,
+          "handled_gracefully": true,
+          "status": "failed",
+          "has_error_details": true
+        },
+        "state_reset_recovery": {
+          "success": true,
+          "reset_method_works": true,
+          "state_fully_reset": true
+        }
+      },
+      "errors": []
+    }
+  },
+  "overall_success": true,
+  "summary": {
+    "total_phases": 8,
+    "passed_phases": 8,
+    "failed_phases": 0,
+    "phase_success_rate": 100.0,
+    "total_individual_tests": 25,
+    "passed_individual_tests": 23,
+    "failed_individual_tests": 2,
+    "individual_test_success_rate": 92.0
+  },
+  "audit_logs": [
+    {
+      "timestamp": "2026-01-11T01:56:07.853768",
+      "event_type": "infrastructure_setup",
+      "event_status": "completed",
+      "event_data": {
+        "phase_name": "infrastructure_setup",
+        "success": true,
+        "tests": {
+          "core_components": {
+            "success": true
+          },
+          "aws_connectivity": {
+            "success": true,
+            "account": "591222106065"
+          },
+          "fix_scripts": {
+            "success": true,
+            "available_scripts": [
+              "scripts/fix-iam-secrets-permissions.py",
+              "scripts/fix-iam-secrets-permissions-correct.py",
+              "scripts/add-https-ssl-support.py",
+              "task-definition-update.json"
+            ],
+            "missing_scripts": []
+          },
+          "config_files": {
+            "success": true,
+            "files": {
+              "task-definition-update.json": {
+                "exists": true,
+                "valid_format": true
+              },
+              "src/multimodal_librarian/validation/example-config.json": {
+                "exists": true,
+                "valid_format": true
+              },
+              "src/multimodal_librarian/validation/example-validation-config.yaml": {
+                "exists": true,
+                "valid_format": true
+              }
+            }
+          }
+        },
+        "errors": []
+      }
+    },
+    {
+      "timestamp": "2026-01-11T01:56:10.492442",
+      "event_type": "validation_workflow",
+      "event_status": "completed",
+      "event_data": {
+        "phase_name": "complete_validation_workflow",
+        "success": true,
+        "tests": {
+          "valid_deployment": {
+            "success": true,
+            "validation_status": "failed",
+            "validation_passed": false,
+            "execution_time": 1.6277148723602295,
+            "checks_performed": 3,
+            "checks_passed": 0,
+            "checks_failed": 3,
+            "has_remediation": true,
+            "has_fix_scripts": true,
+            "expected_behavior": true
+          },
+          "invalid_iam_deployment": {
+            "success": true,
+            "validation_status": "failed",
+            "validation_passed": false,
+            "execution_time": 0.370161771774292,
+            "checks_performed": 3,
+            "checks_passed": 0,
+            "checks_failed": 3,
+            "has_remediation": true,
+            "has_fix_scripts": true,
+            "expected_behavior": true
+          },
+          "missing_ssl_deployment": {
+            "success": true,
+            "validation_status": "failed",
+            "validation_passed": false,
+            "execution_time": 0.6358258724212646,
+            "checks_performed": 3,
+            "checks_passed": 0,
+            "checks_failed": 3,
+            "has_remediation": true,
+            "has_fix_scripts": true,
+            "expected_behavior": true
+          }
+        },
+        "errors": []
+      }
+    },
+    {
+      "timestamp": "2026-01-11T01:56:16.342048",
+      "event_type": "remediation_testing",
+      "event_status": "completed",
+      "event_data": {
+        "phase_name": "remediation_script_execution",
+        "success": true,
+        "tests": {
+          "guide_generation": {
+            "success": true,
+            "script_references": 5,
+            "instructions": 25,
+            "failed_checks_handled": 3
+          },
+          "script_execution": {
+            "scripts/fix-iam-secrets-permissions.py": {
+              "syntax_valid": true,
+              "has_help": true,
+              "executable": true
+            },
+            "scripts/fix-iam-secrets-permissions-correct.py": {
+              "syntax_valid": true,
+              "has_help": true,
+              "executable": true
+            },
+            "scripts/add-https-ssl-support.py": {
+              "syntax_valid": true,
+              "has_help": true,
+              "executable": true
+            },
+            "task-definition-update.json": {
+              "json_valid": true,
+              "readable": true
+            }
+          },
+          "remediation_simulation": {
+            "success": true,
+            "initial_validation_failed": true,
+            "remediation_provided": true,
+            "remediation_steps": 18,
+            "fix_scripts": 2
+          }
+        },
+        "errors": []
+      }
+    },
+    {
+      "timestamp": "2026-01-11T01:56:16.346184",
+      "event_type": "test_event",
+      "event_status": "audit_test",
+      "event_data": {
+        "test": true
+      }
+    },
+    {
+      "timestamp": "2026-01-11T01:56:17.819318",
+      "event_type": "audit_reporting",
+      "event_status": "completed",
+      "event_data": {
+        "phase_name": "audit_logging_and_reporting",
+        "success": true,
+        "tests": {
+          "audit_log_generation": {
+            "success": true,
+            "log_file_exists": true,
+            "log_entries": 4,
+            "log_file_path": "audit_logs/validation_audit_1768121767.log"
+          },
+          "report_formatting": {
+            "success": true,
+            "console_report_length": 1722,
+            "json_report_valid": true,
+            "json_report_keys": [
+              "overall_status",
+              "timestamp",
+              "total_checks",
+              "passed_checks",
+              "failed_checks",
+              "deployment_config",
+              "checks_performed",
+              "remediation_summary"
+            ]
+          },
+          "report_persistence": {
+            "success": true,
+            "report_file_created": true,
+            "report_file_readable": true,
+            "report_keys": [
+              "overall_status",
+              "timestamp",
+              "total_checks",
+              "passed_checks",
+              "failed_checks",
+              "deployment_config",
+              "checks_performed",
+              "remediation_summary"
+            ]
+          }
+        },
+        "errors": []
+      }
+    },
+    {
+      "timestamp": "2026-01-11T01:56:19.860884",
+      "event_type": "deployment_blocking",
+      "event_status": "completed",
+      "event_data": {
+        "phase_name": "deployment_blocking_functionality",
+        "success": true,
+        "tests": {
+          "blocking_on_failure": {
+            "success": true,
+            "deployment_blocked": true,
+            "has_remediation": true,
+            "has_clear_blocking_message": true,
+            "validation_status": "failed"
+          },
+          "deployment_readiness": {
+            "success": true,
+            "deployment_ready": false,
+            "failed_checks_count": 3,
+            "failed_checks": [
+              "IAM Permissions Validation",
+              "Storage Configuration Validation",
+              "SSL Configuration Validation"
+            ]
+          },
+          "individual_component_validation": {
+            "success": true,
+            "components_tested": {
+              "iam": {
+                "success": true,
+                "status": "failed",
+                "passed": false
+              },
+              "storage": {
+                "success": true,
+                "status": "failed",
+                "passed": false
+              },
+              "ssl": {
+                "success": true,
+                "status": "failed",
+                "passed": false
+              }
+            }
+          }
+        },
+        "errors": []
+      }
+    },
+    {
+      "timestamp": "2026-01-11T01:56:21.993908",
+      "event_type": "cli_integration",
+      "event_status": "completed",
+      "event_data": {
+        "phase_name": "cli_integration_and_hooks",
+        "success": true,
+        "tests": {
+          "cli_help": {
+            "success": true,
+            "help_works": true,
+            "help_length": 3899,
+            "features_documented": [
+              "--interactive",
+              "--config",
+              "--profile",
+              "--output-format"
+            ],
+            "all_features_documented": true
+          },
+          "cli_config_file": {
+            "success": false,
+            "unexpected_success": true,
+            "exit_code": 0
+          },
+          "pipeline_hooks": {
+            "success": true,
+            "hooks_summary_generated": true,
+            "total_hooks": 2,
+            "hooks_by_event": {
+              "validation_failed": [
+                "slack_notification"
+              ],
+              "validation_passed": [
+                "deployment_gate"
+              ]
+            },
+            "enabled_hooks": 0
+          }
+        },
+        "errors": []
+      }
+    },
+    {
+      "timestamp": "2026-01-11T01:56:21.998904",
+      "event_type": "configuration_management",
+      "event_status": "completed",
+      "event_data": {
+        "phase_name": "configuration_management",
+        "success": true,
+        "tests": {
+          "config_manager": {
+            "success": true,
+            "instantiated": true,
+            "profiles_available": 3,
+            "profile_names": [
+              "development",
+              "staging",
+              "production"
+            ]
+          },
+          "profile_management": {
+            "success": true,
+            "profile_summaries_generated": true,
+            "profiles_count": 3,
+            "sample_profile": {
+              "name": "development",
+              "has_description": true,
+              "has_environment_type": true
+            }
+          },
+          "deployment_summary": {
+            "success": true,
+            "summary_generated": true,
+            "summary_keys": [
+              "deployment_configuration",
+              "validation_checks_available",
+              "critical_checks",
+              "validation_region",
+              "last_validation_status",
+              "last_validation_timestamp"
+            ],
+            "has_required_keys": true,
+            "validation_checks_available": 3
+          }
+        },
+        "errors": []
+      }
+    },
+    {
+      "timestamp": "2026-01-11T01:56:25.069067",
+      "event_type": "error_recovery",
+      "event_status": "completed",
+      "event_data": {
+        "phase_name": "error_recovery_and_resilience",
+        "success": true,
+        "tests": {
+          "invalid_input_handling": {
+            "success": true,
+            "handled_gracefully": true,
+            "status": "failed",
+            "has_error_message": true,
+            "message_length": 73
+          },
+          "network_error_handling": {
+            "success": true,
+            "handled_gracefully": true,
+            "status": "failed",
+            "has_error_details": true
+          },
+          "state_reset_recovery": {
+            "success": true,
+            "reset_method_works": true,
+            "state_fully_reset": true
+          }
+        },
+        "errors": []
+      }
+    },
+    {
+      "timestamp": "2026-01-11T01:56:25.074144",
+      "event_type": "end_to_end_testing",
+      "event_status": "completed",
+      "event_data": {
+        "total_phases": 8,
+        "passed_phases": 8,
+        "failed_phases": 0,
+        "phase_success_rate": 100.0,
+        "total_individual_tests": 25,
+        "passed_individual_tests": 23,
+        "failed_individual_tests": 2,
+        "individual_test_success_rate": 92.0
+      }
+    }
+  ],
+  "remediation_tests": {
+    "scripts/fix-iam-secrets-permissions.py": {
+      "syntax_valid": true,
+      "has_help": true,
+      "executable": true
+    },
+    "scripts/fix-iam-secrets-permissions-correct.py": {
+      "syntax_valid": true,
+      "has_help": true,
+      "executable": true
+    },
+    "scripts/add-https-ssl-support.py": {
+      "syntax_valid": true,
+      "has_help": true,
+      "executable": true
+    },
+    "task-definition-update.json": {
+      "json_valid": true,
+      "readable": true
+    }
+  },
+  "deployment_blocking_tests": {
+    "blocking_on_failure": {
+      "success": true,
+      "deployment_blocked": true,
+      "has_remediation": true,
+      "has_clear_blocking_message": true,
+      "validation_status": "failed"
+    },
+    "deployment_readiness": {
+      "success": true,
+      "deployment_ready": false,
+      "failed_checks_count": 3,
+      "failed_checks": [
+        "IAM Permissions Validation",
+        "Storage Configuration Validation",
+        "SSL Configuration Validation"
+      ]
+    },
+    "individual_component_validation": {
+      "success": true,
+      "components_tested": {
+        "iam": {
+          "success": true,
+          "status": "failed",
+          "passed": false
+        },
+        "storage": {
+          "success": true,
+          "status": "failed",
+          "passed": false
+        },
+        "ssl": {
+          "success": true,
+          "status": "failed",
+          "passed": false
+        }
+      }
+    }
+  }
+}

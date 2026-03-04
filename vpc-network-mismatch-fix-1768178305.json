@@ -1,0 +1,108 @@
+{
+  "timestamp": "2026-01-11T17:28:14.954660",
+  "script_name": "VPC Network Mismatch Fix",
+  "steps_completed": [
+    {
+      "step": "Load balancer network analysis completed",
+      "status": "completed",
+      "timestamp": "2026-01-11T17:28:16.205744",
+      "details": {
+        "VPC ID": "vpc-0bc85162dcdbcc986",
+        "Subnets": 2,
+        "Security Groups": 1
+      }
+    },
+    {
+      "step": "ECS service network analysis completed",
+      "status": "completed",
+      "timestamp": "2026-01-11T17:28:16.907378",
+      "details": {
+        "Current VPC ID": "vpc-0b2186b38779e77f6",
+        "Subnets": 3,
+        "Security Groups": 1
+      }
+    },
+    {
+      "step": "Compatible subnets identified",
+      "status": "completed",
+      "timestamp": "2026-01-11T17:28:17.723595",
+      "details": {
+        "Target VPC": "vpc-0bc85162dcdbcc986",
+        "Selected Subnets": 2,
+        "Availability Zones": 2
+      }
+    },
+    {
+      "step": "Compatible security groups found",
+      "status": "completed",
+      "timestamp": "2026-01-11T17:28:18.005526",
+      "details": {
+        "Security Groups": 1,
+        "Selected": "sg-07efd393129cae5d7"
+      }
+    },
+    {
+      "step": "ECS service network configuration updated",
+      "status": "completed",
+      "timestamp": "2026-01-11T17:28:18.875599",
+      "details": {
+        "New VPC": "vpc-0bc85162dcdbcc986",
+        "New Subnets": 2,
+        "New Security Groups": 1
+      }
+    }
+  ],
+  "errors": [
+    {
+      "error": "Service failed to stabilize: Waiter ServicesStable failed: Max attempts exceeded",
+      "timestamp": "2026-01-11T17:38:25.307027"
+    },
+    {
+      "error": "VPC mismatch fix failed: Waiter ServicesStable failed: Max attempts exceeded",
+      "timestamp": "2026-01-11T17:38:25.307051"
+    }
+  ],
+  "network_config": {
+    "load_balancer": {
+      "vpc_id": "vpc-0bc85162dcdbcc986",
+      "subnet_ids": [
+        "subnet-043a481c9298b710d",
+        "subnet-06fc184d3356f9703"
+      ],
+      "availability_zones": [
+        "us-east-1b",
+        "us-east-1a"
+      ],
+      "security_groups": [
+        "sg-092142f4a9aec28a0"
+      ],
+      "subnets_details": [
+        {
+          "subnet_id": "subnet-043a481c9298b710d",
+          "availability_zone": "us-east-1b",
+          "cidr_block": "10.0.1.0/24",
+          "is_public": true
+        },
+        {
+          "subnet_id": "subnet-06fc184d3356f9703",
+          "availability_zone": "us-east-1a",
+          "cidr_block": "10.0.0.0/24",
+          "is_public": true
+        }
+      ]
+    },
+    "ecs_service": {
+      "vpc_id": "vpc-0b2186b38779e77f6",
+      "subnets": [
+        "subnet-02a84a72425ffa550",
+        "subnet-068219ec235688a19",
+        "subnet-0379e49e44be48905"
+      ],
+      "security_groups": [
+        "sg-08ce8eacc94169e0a"
+      ],
+      "assign_public_ip": "DISABLED",
+      "task_definition": "arn:aws:ecs:us-east-1:591222106065:task-definition/multimodal-lib-prod-app:16"
+    }
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "analysis_date": "2026-01-11T03:35:18.672895",
+  "current_costs": {
+    "multimodal_librarian": {
+      "ecs_cluster": 0,
+      "ecs_tasks": 50,
+      "load_balancer": 16.2,
+      "nat_gateway": 32.4,
+      "cloudfront": 1.0,
+      "security_groups": 0,
+      "iam_roles": 0,
+      "cloudwatch_logs": 5,
+      "secrets_manager": 2,
+      "kms": 1,
+      "waf": 5,
+      "total": 112.6
+    },
+    "collaborative_editor": {
+      "ecs_cluster": 0,
+      "ecs_tasks": 25,
+      "load_balancer": 16.2,
+      "nat_gateway": 32.4,
+      "cloudfront": 1.0,
+      "security_groups": 0,
+      "iam_roles": 0,
+      "cloudwatch_logs": 3,
+      "secrets_manager": 1,
+      "kms": 1,
+      "waf": 5,
+      "total": 84.6
+    }
+  },
+  "shared_costs": {
+    "shared_infrastructure": {
+      "ecs_cluster": 0,
+      "ecs_tasks": 75,
+      "load_balancer": 16.2,
+      "nat_gateway": 32.4,
+      "cloudfront": 2.0,
+      "security_groups": 0,
+      "iam_roles": 0,
+      "cloudwatch_logs": 6,
+      "secrets_manager": 2.5,
+      "kms": 1,
+      "waf": 5,
+      "total": 140.1
+    }
+  },
+  "savings": {
+    "monthly": 57.099999999999994,
+    "annual": 685.1999999999999,
+    "percentage": 28.955375253549693
+  },
+  "savings_breakdown": {
+    "Load Balancer": 16.2,
+    "CloudWatch Logs": 2.0,
+    "Secrets Manager": 0.5,
+    "Management Overhead": 1.0
+  }
+}

@@ -1,0 +1,86 @@
+{
+  "timestamp": "2026-01-10T20:18:28.858284",
+  "summary": {
+    "total_phases": 7,
+    "successful_phases": 7,
+    "failed_phases": 0,
+    "success_rate": 100.0,
+    "total_time": 11.92842721939087
+  },
+  "detailed_results": {
+    "\ud83d\udccb Phase 1: Disaster Recovery Status Assessment": {
+      "success": true,
+      "duration": 3.0716230869293213,
+      "result": {
+        "overall_status": "ready",
+        "components_monitored": 2,
+        "issues_count": 0,
+        "recommendations_count": 0
+      }
+    },
+    "\ud83d\udd0d Phase 2: Backup Procedures Testing": {
+      "success": true,
+      "duration": 2.7956857681274414,
+      "result": {
+        "backup_tests_passed": 1,
+        "backup_tests_total": 5,
+        "validation_success": false,
+        "issues_count": 3
+      }
+    },
+    "\ud83d\udd04 Phase 3: Restore Procedures Testing": {
+      "success": true,
+      "duration": 2.16877818107605,
+      "result": {
+        "restore_tests_passed": 6,
+        "restore_tests_total": 10,
+        "success_rate": 60.0
+      }
+    },
+    "\u2705 Phase 4: Data Consistency Validation": {
+      "success": true,
+      "duration": 0.9799861907958984,
+      "result": {
+        "consistency_tests_passed": 5,
+        "consistency_tests_total": 6,
+        "database_consistency": true,
+        "filesystem_consistency": false
+      }
+    },
+    "\u23f1\ufe0f  Phase 5: Recovery Time Objectives Testing": {
+      "success": true,
+      "duration": 0.2432398796081543,
+      "result": {
+        "rto_met": true,
+        "actual_rto_hours": 1.5833333333333333,
+        "component_times": {
+          "infrastructure_recovery": 30.0,
+          "database_recovery": 40.0,
+          "application_recovery": 15.0,
+          "validation_time": 10.0
+        }
+      }
+    },
+    "\ud83c\udfaf Phase 6: End-to-End Recovery Testing": {
+      "success": true,
+      "duration": 0.7084763050079346,
+      "result": {
+        "end_to_end_duration": 0.7083520889282227,
+        "successful_steps": 6,
+        "total_steps": 6,
+        "success_rate": 100.0
+      }
+    },
+    "\ud83d\udcca Phase 7: Comprehensive Reporting": {
+      "success": true,
+      "duration": 1.9606378078460693,
+      "result": {
+        "report_generated": true,
+        "overall_status": "ready",
+        "test_success_rate": 47.5,
+        "total_issues": 0,
+        "total_recommendations": 0
+      }
+    }
+  }
+}

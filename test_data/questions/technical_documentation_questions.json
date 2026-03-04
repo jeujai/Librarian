@@ -1,0 +1,42 @@
+{
+  "scenario": "technical_documentation",
+  "documents": [
+    "API_Reference_Manual.pdf",
+    "Developer_Guide.pdf",
+    "Best_Practices_Guide.pdf"
+  ],
+  "predefined_questions": [
+    "How do I authenticate with the API?",
+    "What are the rate limits mentioned?",
+    "Show me examples of API calls from the documentation",
+    "What does error code 401 mean according to the docs?",
+    "How do I handle rate limiting?"
+  ],
+  "generated_questions": {
+    "factual": [
+      "What is machine learning according to the document?",
+      "How is neural networks defined in the paper?",
+      "What are the key components of {system}?"
+    ],
+    "analytical": [
+      "Compare {concept1} and {concept2} mentioned in the documents.",
+      "What are the advantages and disadvantages of {approach}?",
+      "How do the different papers approach {problem}?"
+    ],
+    "summary": [
+      "Summarize the main points about machine learning.",
+      "Provide an overview of neural networks from all documents.",
+      "What are the key takeaways regarding {subject}?"
+    ],
+    "application": [
+      "How would you apply neural networks in practice?",
+      "What are the real-world implications of {finding}?",
+      "How can {method} be used to solve {problem}?"
+    ],
+    "evaluation": [
+      "What evidence supports {claim} in the documents?",
+      "How reliable are the findings about machine learning?",
+      "What limitations are mentioned regarding {approach}?"
+    ]
+  }
+}

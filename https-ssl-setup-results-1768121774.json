@@ -1,0 +1,16 @@
+{
+  "timestamp": "2026-01-11T01:56:14.050049",
+  "operation": "https_ssl_setup",
+  "steps": {
+    "find_load_balancer": {
+      "success": true,
+      "lb_arn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:loadbalancer/app/multimodal-librarian-full-ml/39e45609ae99d010",
+      "lb_dns_name": "multimodal-librarian-full-ml-249704554.us-east-1.elb.amazonaws.com"
+    },
+    "request_certificate": {
+      "success": false,
+      "error": "An error occurred (InvalidDomainValidationOptionsException) when calling the RequestCertificate operation: The first domain name can be no longer than 64 characters."
+    }
+  },
+  "success": false
+}

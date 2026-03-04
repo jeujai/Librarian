@@ -1,0 +1,8 @@
+{
+  "timestamp": "2026-01-17T10:53:27.293928",
+  "cluster": "multimodal-lib-prod-cluster",
+  "service": "multimodal-lib-prod-service-alb",
+  "new_task_definition": "arn:aws:ecs:us-east-1:591222106065:task-definition/multimodal-lib-prod-app:50",
+  "postgres_host": "ml-librarian-postgres-prod.cq1iiac2gfkf.us-east-1.rds.amazonaws.com",
+  "postgres_port": "5432"
+}

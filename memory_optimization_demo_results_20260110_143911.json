@@ -1,0 +1,150 @@
+{
+  "demo_timestamp": "2026-01-10T14:39:09.473185",
+  "tests_performed": [
+    "memory_status_monitoring",
+    "memory_optimization",
+    "gc_optimization",
+    "leak_detection",
+    "memory_profiling",
+    "memory_health",
+    "memory_report"
+  ],
+  "results": {
+    "memory_status": {
+      "success": true,
+      "system_memory_percent": 54.8,
+      "process_memory_mb": 152.67,
+      "monitoring_active": false,
+      "total_gc_objects": 17
+    },
+    "memory_optimization": {
+      "success": true,
+      "optimizations_count": 4,
+      "memory_saved_mb": -0.02,
+      "optimization_time_ms": 18.99,
+      "system_improvement_percent": 0.0,
+      "memory_before_mb": 152.671875,
+      "memory_after_mb": 152.6875
+    },
+    "gc_optimization": {
+      "success": true,
+      "generations_optimized": 3,
+      "total_objects_collected": 1227,
+      "total_memory_freed_mb": 0,
+      "total_time_ms": 17.235994338989258,
+      "initial_objects": 197,
+      "final_objects": 23
+    },
+    "leak_detection": {
+      "success": true,
+      "total_leaks": 0,
+      "leak_counts": {
+        "critical": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 0
+      },
+      "detected_leaks": []
+    },
+    "memory_profiling": {
+      "success": true,
+      "snapshot_taken": true,
+      "top_consumers_count": 5,
+      "top_consumers": [
+        {
+          "filename": "  File \"/Users/jeujaiwu/librarian/src/multimodal_librarian/monitoring/memory_optimizer.py\", line 180",
+          "line_number": 180,
+          "size_mb": 0.50970458984375,
+          "count": 2261
+        },
+        {
+          "filename": "  File \"/Users/jeujaiwu/librarian/src/multimodal_librarian/monitoring/memory_optimizer.py\", line 207",
+          "line_number": 207,
+          "size_mb": 0.30890655517578125,
+          "count": 3383
+        },
+        {
+          "filename": "  File \"/Users/jeujaiwu/librarian/venv/lib/python3.13/site-packages/pytz/lazy.py\", line 155",
+          "line_number": 155,
+          "size_mb": 0.0625,
+          "count": 2
+        }
+      ],
+      "comparison_available": false,
+      "comparison_data": null
+    },
+    "memory_health": {
+      "success": true,
+      "health_score": 100,
+      "health_status": "excellent",
+      "health_factors": [],
+      "recommendations_count": 0,
+      "critical_recommendations": 0,
+      "recommendations": []
+    },
+    "memory_report": {
+      "success": true,
+      "report_timestamp": "2026-01-10T14:39:10.960105",
+      "historical_data_points": 2,
+      "recommendations_count": 0,
+      "health_status": "excellent",
+      "health_score": 100,
+      "system_memory_percent": 54.8,
+      "process_memory_mb": 154.72
+    }
+  },
+  "optimization_cycle": {
+    "success": true,
+    "cycle_summary": {
+      "baseline_memory_mb": 154.72,
+      "loaded_memory_mb": 154.72,
+      "final_memory_mb": 154.72,
+      "memory_increase_mb": 0.0,
+      "memory_reduction_mb": 0.0,
+      "optimization_effectiveness": 0,
+      "optimization_details": {
+        "timestamp": "2026-01-10T14:39:10.967754",
+        "optimizations_applied": [
+          {
+            "type": "garbage_collection",
+            "generation": 0,
+            "objects_collected": 0,
+            "memory_freed_mb": 0,
+            "time_taken_ms": 0.010967254638671875
+          },
+          {
+            "type": "garbage_collection",
+            "generation": 1,
+            "objects_collected": 0,
+            "memory_freed_mb": 0,
+            "time_taken_ms": 0.2601146697998047
+          },
+          {
+            "type": "garbage_collection",
+            "generation": 2,
+            "objects_collected": 0,
+            "memory_freed_mb": 0,
+            "time_taken_ms": 18.700122833251953
+          },
+          {
+            "type": "import_cache",
+            "description": "Invalidated import caches safely"
+          }
+        ],
+        "memory_before": {
+          "system_percent": 55.2,
+          "process_mb": 256.265625
+        },
+        "memory_after": {
+          "system_percent": 55.2,
+          "process_mb": 256.265625
+        },
+        "performance_impact": {
+          "total_time_ms": 28.65,
+          "memory_saved_mb": 0.0,
+          "system_memory_improvement_percent": 0.0
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,235 @@
+# Service Discovery Configuration for Local Development
+# This file defines service discovery settings and health check configurations
+
+network:
+  name: "multimodal-librarian-local"
+  subnet: "172.21.0.0/16"
+  gateway: "172.21.0.1"
+  driver: "bridge"
+  
+services:
+  multimodal-librarian:
+    container_name: "multimodal-librarian"
+    health_check:
+      type: "http"
+      url: "http://localhost:8000/health/simple"
+      timeout: 10
+      retries: 3
+      interval: 30
+    ports:
+      http: 8000
+    dependencies:
+      - postgres
+      - neo4j
+      - milvus
+      - redis
+    startup_order: 10
+    
+  postgres:
+    container_name: "postgres"
+    health_check:
+      type: "command"
+      command: "pg_isready -U ml_user -d multimodal_librarian"
+      timeout: 10
+      retries: 5
+      interval: 30
+    ports:
+      postgres: 5432
+    dependencies: []
+    startup_order: 1
+    
+  neo4j:
+    container_name: "neo4j"
+    health_check:
+      type: "command"
+      command: "cypher-shell -u neo4j -p ml_password 'RETURN 1'"
+      timeout: 15
+      retries: 5
+      interval: 30
+    ports:
+      http: 7474
+      bolt: 7687
+    dependencies: []
+    startup_order: 2
+    
+  redis:
+    container_name: "redis"
+    health_check:
+      type: "command"
+      command: "redis-cli ping"
+      timeout: 5
+      retries: 3
+      interval: 10
+    ports:
+      redis: 6379
+    dependencies: []
+    startup_order: 1
+    
+  etcd:
+    container_name: "etcd"
+    health_check:
+      type: "http"
+      url: "http://localhost:2379/health"
+      timeout: 10
+      retries: 3
+      interval: 30
+    ports:
+      client: 2379
+    dependencies: []
+    startup_order: 3
+    
+  minio:
+    container_name: "minio"
+    health_check:
+      type: "http"
+      url: "http://localhost:9000/minio/health/live"
+      timeout: 20
+      retries: 3
+      interval: 30
+    ports:
+      api: 9000
+      console: 9001
+    dependencies: []
+    startup_order: 3
+    
+  milvus:
+    container_name: "milvus"
+    health_check:
+      type: "http"
+      url: "http://localhost:9091/healthz"
+      timeout: 20
+      retries: 3
+      interval: 30
+    ports:
+      grpc: 19530
+      http: 9091
+    dependencies:
+      - etcd
+      - minio
+    startup_order: 5
+
+# Admin tools (optional services)
+admin_tools:
+  pgadmin:
+    container_name: "pgadmin"
+    health_check:
+      type: "http"
+      url: "http://localhost:5050"
+      timeout: 10
+      retries: 3
+      interval: 60
+    ports:
+      http: 5050
+    dependencies:
+      - postgres
+    profile: "admin-tools"
+    
+  attu:
+    container_name: "attu"
+    health_check:
+      type: "http"
+      url: "http://localhost:3000"
+      timeout: 10
+      retries: 3
+      interval: 60
+    ports:
+      http: 3000
+    dependencies:
+      - milvus
+    profile: "admin-tools"
+    
+  redis-commander:
+    container_name: "redis-commander"
+    health_check:
+      type: "http"
+      url: "http://localhost:8081"
+      timeout: 10
+      retries: 3
+      interval: 60
+    ports:
+      http: 8081
+    dependencies:
+      - redis
+    profile: "admin-tools"
+
+# Monitoring tools (optional services)
+monitoring:
+  log-viewer:
+    container_name: "log-viewer"
+    health_check:
+      type: "http"
+      url: "http://localhost:8080"
+      timeout: 10
+      retries: 3
+      interval: 60
+    ports:
+      http: 8080
+    dependencies: []
+    profile: "monitoring"
+
+# Health check settings
+health_checks:
+  global_timeout: 300  # seconds
+  check_interval: 30   # seconds
+  max_retries: 5
+  parallel_checks: true
+  
+  # Alert thresholds
+  alerts:
+    consecutive_failures: 3
+    failure_rate_window: 300  # 5 minutes
+    max_failure_rate: 0.5     # 50%
+
+# Network troubleshooting settings
+troubleshooting:
+  ping_timeout: 2      # seconds
+  port_timeout: 5      # seconds
+  dns_timeout: 5       # seconds
+  
+  # Test connectivity between these service pairs
+  connectivity_tests:
+    - from: "multimodal-librarian"
+      to: "postgres"
+      port: 5432
+    - from: "multimodal-librarian"
+      to: "neo4j"
+      port: 7687
+    - from: "multimodal-librarian"
+      to: "redis"
+      port: 6379
+    - from: "multimodal-librarian"
+      to: "milvus"
+      port: 19530
+    - from: "milvus"
+      to: "etcd"
+      port: 2379
+    - from: "milvus"
+      to: "minio"
+      port: 9000
+
+# Service URLs for easy access
+service_urls:
+  application: "http://localhost:8000"
+  api_docs: "http://localhost:8000/docs"
+  neo4j_browser: "http://localhost:7474"
+  minio_console: "http://localhost:9001"
+  pgadmin: "http://localhost:5050"
+  milvus_admin: "http://localhost:3000"
+  redis_commander: "http://localhost:8081"
+  log_viewer: "http://localhost:8080"
+
+# Default credentials (for development only)
+default_credentials:
+  neo4j:
+    username: "neo4j"
+    password: "ml_password"
+  postgres:
+    username: "ml_user"
+    password: "ml_password"
+    database: "multimodal_librarian"
+  minio:
+    access_key: "minioadmin"
+    secret_key: "minioadmin"
+  pgadmin:
+    email: "admin@multimodal-librarian.local"
+    password: "admin"

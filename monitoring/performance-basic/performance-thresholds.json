@@ -1,0 +1,114 @@
+{
+  "performance_thresholds": {
+    "response_time": {
+      "warning_ms": 1000,
+      "critical_ms": 5000,
+      "description": "API response time thresholds"
+    },
+    "error_rate": {
+      "warning_percent": 5.0,
+      "critical_percent": 15.0,
+      "description": "Application error rate thresholds"
+    },
+    "cpu_utilization": {
+      "warning_percent": 80.0,
+      "critical_percent": 95.0,
+      "description": "CPU utilization thresholds"
+    },
+    "memory_utilization": {
+      "warning_percent": 85.0,
+      "critical_percent": 95.0,
+      "description": "Memory utilization thresholds"
+    },
+    "disk_utilization": {
+      "warning_percent": 85.0,
+      "critical_percent": 95.0,
+      "description": "Disk utilization thresholds"
+    },
+    "database_connections": {
+      "warning_percent": 80.0,
+      "critical_percent": 95.0,
+      "description": "Database connection pool utilization thresholds"
+    },
+    "cache_hit_rate": {
+      "warning_percent": 50.0,
+      "critical_percent": 30.0,
+      "comparison": "less_than",
+      "description": "Cache hit rate thresholds (lower is worse)"
+    },
+    "request_rate": {
+      "warning_per_minute": 1000,
+      "critical_per_minute": 2000,
+      "description": "Request rate thresholds"
+    }
+  },
+  "cost_thresholds": {
+    "monthly_budget": {
+      "warning_dollars": 80.0,
+      "critical_dollars": 100.0,
+      "description": "Monthly cost budget thresholds"
+    },
+    "resource_efficiency": {
+      "warning_percent": 30.0,
+      "critical_percent": 20.0,
+      "comparison": "less_than",
+      "description": "Resource utilization efficiency thresholds"
+    }
+  },
+  "learning_objectives": {
+    "understanding_thresholds": [
+      "Learn how to set appropriate performance thresholds",
+      "Understand the trade-offs between performance and cost",
+      "Practice monitoring and alerting configuration"
+    ],
+    "optimization_targets": [
+      "Maintain response times under 1 second for good user experience",
+      "Keep error rates below 5% for system reliability",
+      "Optimize resource utilization between 50-70% for cost efficiency",
+      "Achieve cache hit rates above 70% for performance"
+    ]
+  },
+  "threshold_explanations": {
+    "response_time": {
+      "why_1000ms": "1 second is generally considered the threshold for good user experience",
+      "why_5000ms": "5 seconds is when users typically abandon requests"
+    },
+    "error_rate": {
+      "why_5_percent": "5% error rate indicates system instability that needs attention",
+      "why_15_percent": "15% error rate is critical and requires immediate intervention"
+    },
+    "resource_utilization": {
+      "why_80_percent": "80% utilization allows headroom for traffic spikes",
+      "why_95_percent": "95% utilization risks system instability"
+    },
+    "cache_hit_rate": {
+      "why_50_percent": "Below 50% hit rate indicates caching strategy needs review",
+      "why_30_percent": "Below 30% hit rate means caching is ineffective"
+    }
+  },
+  "monitoring_intervals": {
+    "real_time_metrics": "1 minute",
+    "performance_analysis": "5 minutes",
+    "trend_analysis": "1 hour",
+    "cost_analysis": "1 day",
+    "optimization_review": "1 week"
+  },
+  "alert_configurations": {
+    "immediate_alerts": [
+      "critical_response_time",
+      "critical_error_rate",
+      "critical_resource_utilization"
+    ],
+    "warning_alerts": [
+      "warning_response_time",
+      "warning_error_rate",
+      "warning_resource_utilization",
+      "low_cache_hit_rate"
+    ],
+    "cost_alerts": [
+      "monthly_budget_warning",
+      "monthly_budget_critical",
+      "resource_inefficiency"
+    ]
+  }
+}

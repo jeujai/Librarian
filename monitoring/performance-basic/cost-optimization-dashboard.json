@@ -1,0 +1,197 @@
+{
+  "widgets": [
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 0,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "AWS/Billing", "EstimatedCharges", "Currency", "USD" ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "Estimated Monthly Charges",
+        "period": 86400,
+        "stat": "Maximum"
+      }
+    },
+    {
+      "type": "metric",
+      "x": 12,
+      "y": 0,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "AWS/ECS", "CPUUtilization", "ServiceName", "multimodal-librarian-learning-service", "ClusterName", "multimodal-librarian-learning" ],
+          [ ".", "MemoryUtilization", ".", ".", ".", "." ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "Resource Utilization Efficiency",
+        "period": 3600,
+        "stat": "Average",
+        "annotations": {
+          "horizontal": [
+            {
+              "label": "Optimal CPU Range",
+              "value": 70
+            },
+            {
+              "label": "Underutilized",
+              "value": 30
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 6,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "AWS/RDS", "CPUUtilization", "DBInstanceIdentifier", "multimodal-librarian-learning-db" ],
+          [ ".", "DatabaseConnections", ".", "." ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "Database Utilization",
+        "period": 3600,
+        "stat": "Average",
+        "annotations": {
+          "horizontal": [
+            {
+              "label": "Right-sized",
+              "value": 60
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 8,
+      "y": 6,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "AWS/ElastiCache", "CPUUtilization", "CacheClusterId", "multimodal-librarian-learning-redis" ],
+          [ ".", "NetworkBytesIn", ".", "." ],
+          [ ".", "NetworkBytesOut", ".", "." ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "Cache Utilization",
+        "period": 3600,
+        "stat": "Average"
+      }
+    },
+    {
+      "type": "metric",
+      "x": 16,
+      "y": 6,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "AWS/CloudFront", "Requests", "DistributionId", "DISTRIBUTION_ID_PLACEHOLDER" ],
+          [ ".", "BytesDownloaded", ".", "." ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "CDN Usage and Bandwidth Savings",
+        "period": 3600,
+        "stat": "Sum"
+      }
+    },
+    {
+      "type": "text",
+      "x": 0,
+      "y": 12,
+      "width": 24,
+      "height": 3,
+      "properties": {
+        "markdown": "## Cost Optimization Recommendations\n\n### Current Status\n- **Target Budget**: $100/month\n- **Optimization Level**: Learning-focused with cost efficiency\n- **Resource Strategy**: Right-sized for educational workloads\n\n### Key Metrics to Monitor\n1. **Resource Utilization**: Keep CPU/Memory between 30-70% for optimal cost-efficiency\n2. **Cache Hit Rate**: Maintain >70% to reduce origin requests and costs\n3. **Database Connections**: Monitor for connection pooling efficiency\n4. **CDN Usage**: Track bandwidth savings from CloudFront caching\n\n### Automated Optimizations\n- Connection pooling for database efficiency\n- Aggressive caching policies for static content\n- Lifecycle policies for S3 storage cost reduction\n- Single-AZ deployment for learning cost optimization"
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 15,
+      "width": 6,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "AWS/ApplicationELB", "RequestCount", "LoadBalancer", "multimodal-librarian-learning-alb" ]
+        ],
+        "view": "singleValue",
+        "region": "us-east-1",
+        "title": "Daily Requests",
+        "period": 86400,
+        "stat": "Sum"
+      }
+    },
+    {
+      "type": "metric",
+      "x": 6,
+      "y": 15,
+      "width": 6,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "AWS/S3", "BucketSizeBytes", "BucketName", "multimodal-librarian-learning-storage", "StorageType", "StandardStorage" ]
+        ],
+        "view": "singleValue",
+        "region": "us-east-1",
+        "title": "Storage Used (GB)",
+        "period": 86400,
+        "stat": "Average"
+      }
+    },
+    {
+      "type": "metric",
+      "x": 12,
+      "y": 15,
+      "width": 6,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "AWS/CloudFront", "CacheHitRate", "DistributionId", "DISTRIBUTION_ID_PLACEHOLDER" ]
+        ],
+        "view": "singleValue",
+        "region": "us-east-1",
+        "title": "CDN Cache Hit Rate (%)",
+        "period": 86400,
+        "stat": "Average"
+      }
+    },
+    {
+      "type": "metric",
+      "x": 18,
+      "y": 15,
+      "width": 6,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "AWS/ECS", "RunningTaskCount", "ServiceName", "multimodal-librarian-learning-service", "ClusterName", "multimodal-librarian-learning" ]
+        ],
+        "view": "singleValue",
+        "region": "us-east-1",
+        "title": "Active Tasks",
+        "period": 300,
+        "stat": "Average"
+      }
+    }
+  ]
+}

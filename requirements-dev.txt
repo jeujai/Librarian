@@ -1,0 +1,46 @@
+# Development-only requirements for local development
+# These are installed in the development Docker stage but not in production
+
+# Development and testing tools
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.1.0
+pytest-mock>=3.11.0
+pytest-xdist>=3.3.0  # For parallel test execution
+
+# Code quality and formatting
+black>=23.0.0
+isort>=5.12.0
+flake8>=6.0.0
+mypy>=1.5.0
+pre-commit>=3.4.0
+
+# Development utilities
+ipython>=8.14.0
+jupyter>=1.0.0
+notebook>=7.0.0
+
+# Hot reload and file watching
+watchdog>=3.0.0
+
+# Database development and debugging tools
+pgcli>=3.5.0  # PostgreSQL CLI with autocomplete
+# Note: redis-cli is installed via system packages, not pip
+
+# API development and testing
+httpie>=3.2.0  # HTTP client for API testing
+requests-toolbelt>=1.0.0  # Additional HTTP utilities
+
+# Documentation tools
+mkdocs>=1.5.0
+mkdocs-material>=9.4.0
+mkdocs-mermaid2-plugin>=1.1.0
+
+# Performance profiling
+py-spy>=0.3.14
+memory-profiler>=0.61.0
+line-profiler>=4.1.0
+
+# Local development utilities
+python-dotenv>=1.0.0  # Already in main requirements but ensuring it's available
+jinja2>=3.1.0

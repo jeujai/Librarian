@@ -1,0 +1,203 @@
+{
+  "eip_analysis": {
+    "total_eips": 9,
+    "associated_eips": 8,
+    "unassociated_eips": 1,
+    "eip_details": [
+      {
+        "allocation_id": "eipalloc-014f48a09669604d6",
+        "public_ip": "18.213.251.34",
+        "domain": "vpc",
+        "associated": false,
+        "instance_id": null,
+        "network_interface_id": null,
+        "tags": []
+      },
+      {
+        "allocation_id": "eipalloc-0b0cb2486d155f18d",
+        "public_ip": "23.23.223.211",
+        "domain": "vpc",
+        "associated": true,
+        "instance_id": null,
+        "network_interface_id": "eni-04c4ddb3d5414f84f",
+        "tags": []
+      },
+      {
+        "allocation_id": "eipalloc-09b80a65d01553bd7",
+        "public_ip": "3.224.10.96",
+        "domain": "vpc",
+        "associated": true,
+        "instance_id": null,
+        "network_interface_id": "eni-094615db6b9c09943",
+        "tags": []
+      },
+      {
+        "allocation_id": "eipalloc-0fd37f4434708cc32",
+        "public_ip": "3.224.8.100",
+        "domain": "vpc",
+        "associated": true,
+        "instance_id": null,
+        "network_interface_id": "eni-0d3730ab2ddc1609c",
+        "tags": [
+          {
+            "Key": "Environment",
+            "Value": "production"
+          },
+          {
+            "Key": "aws:cloudformation:stack-name",
+            "Value": "CollaborativeEditorProdStack"
+          },
+          {
+            "Key": "Name",
+            "Value": "CollaborativeEditorProdStack/EditorVPC/PublicSubnet1"
+          },
+          {
+            "Key": "aws:cloudformation:stack-id",
+            "Value": "arn:aws:cloudformation:us-east-1:591222106065:stack/CollaborativeEditorProdStack/2c32aec0-e695-11f0-a00b-0e06cbd79b19"
+          },
+          {
+            "Key": "Project",
+            "Value": "collaborative-editor"
+          },
+          {
+            "Key": "HighAvailability",
+            "Value": "true"
+          },
+          {
+            "Key": "aws:cloudformation:logical-id",
+            "Value": "EditorVPCPublicSubnet1EIPD99A20AA"
+          }
+        ]
+      },
+      {
+        "allocation_id": "eipalloc-058e2e2938d98e99e",
+        "public_ip": "34.233.175.98",
+        "domain": "vpc",
+        "associated": true,
+        "instance_id": null,
+        "network_interface_id": "eni-038b1514cd6d7438f",
+        "tags": []
+      },
+      {
+        "allocation_id": "eipalloc-074bf387b83e1100c",
+        "public_ip": "52.2.227.65",
+        "domain": "vpc",
+        "associated": true,
+        "instance_id": null,
+        "network_interface_id": "eni-0e8603e71399c4836",
+        "tags": []
+      },
+      {
+        "allocation_id": "eipalloc-09393f37296c16112",
+        "public_ip": "52.71.109.128",
+        "domain": "vpc",
+        "associated": true,
+        "instance_id": null,
+        "network_interface_id": "eni-0baf73ef5004c07c7",
+        "tags": []
+      },
+      {
+        "allocation_id": "eipalloc-0d29c1ef5ae3fdf40",
+        "public_ip": "54.225.8.1",
+        "domain": "vpc",
+        "associated": true,
+        "instance_id": null,
+        "network_interface_id": "eni-061648717d46b9248",
+        "tags": []
+      },
+      {
+        "allocation_id": "eipalloc-03816059a39633348",
+        "public_ip": "98.94.152.147",
+        "domain": "vpc",
+        "associated": true,
+        "instance_id": null,
+        "network_interface_id": "eni-02e8b366e05da0fff",
+        "tags": []
+      }
+    ],
+    "unused_eips": [
+      {
+        "allocation_id": "eipalloc-014f48a09669604d6",
+        "public_ip": "18.213.251.34",
+        "domain": "vpc",
+        "associated": false,
+        "instance_id": null,
+        "network_interface_id": null,
+        "tags": []
+      }
+    ]
+  },
+  "eip_cleanup": {
+    "eips_released": [
+      {
+        "allocation_id": "eipalloc-014f48a09669604d6",
+        "public_ip": "18.213.251.34"
+      }
+    ],
+    "release_errors": [],
+    "space_created": 1
+  },
+  "nat_gateway_creation": {
+    "success": true,
+    "nat_gateway_id": "nat-0eb31d7f5e7efdaba",
+    "subnet_id": "subnet-02fe694f061238d5a",
+    "allocation_id": "eipalloc-014f1a24f39eef5cb",
+    "public_ip": "52.202.142.217",
+    "state": "pending"
+  },
+  "route_table_updates": {
+    "private_route_tables": [
+      "rtb-076be301291d22519",
+      "rtb-0f735608e77b8da54",
+      "rtb-0edcf8e68de300574",
+      "rtb-08015017be3a8021a"
+    ],
+    "routes_added": [
+      {
+        "route_table_id": "rtb-076be301291d22519",
+        "destination": "0.0.0.0/0",
+        "nat_gateway_id": "nat-0eb31d7f5e7efdaba",
+        "action": "created"
+      },
+      {
+        "route_table_id": "rtb-0f735608e77b8da54",
+        "destination": "0.0.0.0/0",
+        "nat_gateway_id": "nat-0eb31d7f5e7efdaba",
+        "action": "replaced"
+      },
+      {
+        "route_table_id": "rtb-0edcf8e68de300574",
+        "destination": "0.0.0.0/0",
+        "nat_gateway_id": "nat-0eb31d7f5e7efdaba",
+        "action": "replaced"
+      },
+      {
+        "route_table_id": "rtb-08015017be3a8021a",
+        "destination": "0.0.0.0/0",
+        "nat_gateway_id": "nat-0eb31d7f5e7efdaba",
+        "action": "replaced"
+      }
+    ],
+    "update_errors": []
+  },
+  "summary": {
+    "eips_released": 1,
+    "nat_gateway_created": true,
+    "route_tables_updated": 4,
+    "connectivity_restored": true,
+    "cost_impact": {
+      "nat_gateway_monthly": 45.6,
+      "data_processing": "Variable based on usage",
+      "eip_savings_monthly": 3.65,
+      "net_monthly_cost": 41.95
+    },
+    "next_steps": [
+      "\u2705 NAT Gateway created and routes configured",
+      "\ud83d\udd04 ECS tasks should now have outbound internet connectivity",
+      "\ud83e\uddea Run end-to-end tests to validate functionality",
+      "\ud83d\udcca Monitor service health and performance",
+      "\ud83d\udcb0 Monitor costs and optimize as needed",
+      "\ud83d\udd12 Validate security groups allow required traffic"
+    ]
+  }
+}

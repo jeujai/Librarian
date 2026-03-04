@@ -1,0 +1,102 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "multimodal-librarian"
+version = "0.1.0"
+description = "A conversational web-based knowledge management system with multimodal content processing"
+authors = [{name = "Multimodal Librarian Team"}]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.9"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+]
+
+[project.urls]
+Homepage = "https://github.com/multimodal-librarian/multimodal-librarian"
+Repository = "https://github.com/multimodal-librarian/multimodal-librarian"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.black]
+line-length = 88
+target-version = ['py39']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+line_length = 88
+known_first_party = ["multimodal_librarian"]
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+
+[tool.pytest.ini_options]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short --strict-markers"
+markers = [
+    "unit: Unit tests that don't require external services",
+    "integration: Integration tests that require local services",
+    "local_services: Tests that require Docker Compose services to be running",
+    "aws_services: Tests that require AWS services (skipped in local development)",
+    "slow: Tests that take a long time to run",
+    "database: Tests that interact with databases",
+    "network: Tests that require network connectivity",
+]
+# Test environment configuration
+env = [
+    "ML_ENVIRONMENT=test",
+    "ML_DATABASE_TYPE=local",
+    "DEBUG=true",
+    "LOG_LEVEL=DEBUG",
+    "VALIDATE_CONFIG_ON_STARTUP=false",
+    "STRICT_CONFIG_VALIDATION=false",
+]
+# Minimum version requirements
+minversion = "6.0"
+# Test discovery patterns
+testpaths = ["tests"]
+# Async test configuration
+asyncio_mode = "auto"
+# Timeout for tests (in seconds)
+timeout = 300
+# Fail on first failure for faster feedback during development
+# Remove this for CI/CD where you want to see all failures
+# addopts = "-x"

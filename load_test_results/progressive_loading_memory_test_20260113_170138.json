@@ -1,0 +1,25 @@
+{
+  "start_time": "2026-01-13T17:01:28.096430",
+  "max_memory_threshold_mb": 2000.0,
+  "test_type": "progressive_loading_memory",
+  "tests": {
+    "baseline": {
+      "test_name": "baseline_memory_usage",
+      "passed": true,
+      "baseline_memory_mb": 59.546875,
+      "peak_memory_mb": 59.546875,
+      "final_memory_mb": 59.546875,
+      "memory_growth_mb": 0.0,
+      "memory_growth_percent": 0.0,
+      "max_memory_threshold_mb": 2000.0,
+      "memory_leak_detected": false,
+      "memory_leak_rate_mb_per_min": 0.0,
+      "phase_memory_usage": {
+        "baseline": 59.546875
+      },
+      "memory_efficiency_score": 100.0,
+      "violations": [],
+      "warnings": [],
+      "snapshots": [
+        {
+          "timestamp": 

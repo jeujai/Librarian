@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Health Check Dashboard - Multimodal Librarian</title>
+    <link rel="stylesheet" href="/static/css/health_dashboard.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/date-fns@2.29.3/index.min.js"></script>
+</head>
+
+<body>
+    <div class="dashboard-container">
+        <header class="dashboard-header">
+            <h1>🏥 Health Check Dashboard</h1>
+            <div class="header-controls">
+                <div class="overall-status">
+                    <span id="overall-status-indicator" class="status-indicator"></span>
+                    <span id="overall-status-text">System Status</span>
+                </div>
+                <button id="start-monitoring-btn" class="btn btn-primary">Start Real-time Monitoring</button>
+                <button id="stop-monitoring-btn" class="btn btn-secondary" style="display: none;">Stop
+                    Monitoring</button>
+                <button id="refresh-btn" class="btn btn-outline">🔄 Refresh</button>
+            </div>
+        </header>
+
+        <nav class="dashboard-nav">
+            <button class="nav-btn active" data-dashboard="overview">Overview</button>
+            <button class="nav-btn" data-dashboard="services">Service Health</button>
+            <button class="nav-btn" data-dashboard="connectivity">Connectivity</button>
+            <button class="nav-btn" data-dashboard="performance">Performance</button>
+            <button class="nav-btn" data-dashboard="dependencies">Dependencies</button>
+        </nav>
+
+        <div class="dashboard-content">
+            <!-- Overview Dashboard -->
+            <div id="overview" class="dashboard-panel active">
+                <div class="dashboard-grid">
+                    <!-- Overall Health Status -->
+                    <div class="health-overview-card">
+                        <h3>System Health Overview</h3>
+                        <div class="health-status-circle">
+                            <canvas id="health-overview-chart"></canvas>
+                            <div class="health-status-text">
+                                <span id="health-percentage">--</span>
+                                <span id="health-grade">--</span>
+                            </div>
+                        </div>
+                        <div class="health-summary">
+                            <div class="summary-item">
+                                <span class="summary-label">Healthy Services:</span>
+                                <span id="healthy-count" class="summary-value">--</span>
+                            </div>
+                            <div class="summary-item">
+                                <span class="summary-label">Total Services:</span>
+                                <span id="total-services" class="summary-value">--</span>
+                            </div>
+                            <div class="summary-item">
+                                <span class="summary-label">Last Check:</span>
+                                <span id="last-check-time" class="summary-value">--</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Service Status Cards -->
+                    <div class="service-cards-container">
+                        <h3>Service Status</h3>
+                        <div class="service-cards">
+                            <div class="service-card" data-service="postgres">
+                                <div class="service-header">
+                                    <span class="service-icon">🐘</span>
+                                    <span class="service-name">PostgreSQL</span>
+                                    <span class="service-status-badge" id="postgres-status">--</span>
+                                </div>
+                                <div class="service-metrics">
+                                    <div class="metric">
+                                        <span class="metric-label">Response Time:</span>
+                                        <span class="metric-value" id="postgres-response-time">--</span>
+                                    </div>
+                                    <div class="metric">
+                                        <span class="metric-label">Connections:</span>
+                                        <span class="metric-value" id="postgres-connections">--</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="service-card" data-service="neo4j">
+                                <div class="service-header">
+                                    <span class="service-icon">🕸️</span>
+                                    <span class="service-name">Neo4j</span>
+                                    <span class="service-status-badge" id="neo4j-status">--</span>
+                                </div>
+                                <div class="service-metrics">
+                                    <div class="metric">
+                                        <span class="metric-label">Response Time:</span>
+                                        <span class="metric-value" id="neo4j-response-time">--</span>
+                                    </div>
+                                    <div class="metric">
+                                        <span class="metric-label">Nodes:</span>
+                                        <span class="metric-value" id="neo4j-nodes">--</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="service-card" data-service="milvus">
+                                <div class="service-header">
+                                    <span class="service-icon">🔍</span>
+                                    <span class="service-name">Milvus</span>
+                                    <span class="service-status-badge" id="milvus-status">--</span>
+                                </div>
+                                <div class="service-metrics">
+                                    <div class="metric">
+                                        <span class="metric-label">Response Time:</span>
+                                        <span class="metric-value" id="milvus-response-time">--</span>
+                                    </div>
+                                    <div class="metric">
+                                        <span class="metric-label">Collections:</span>
+                                        <span class="metric-value" id="milvus-collections">--</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="service-card" data-service="redis">
+                                <div class="service-header">
+                                    <span class="service-icon">⚡</span>
+                                    <span class="service-name">Redis</span>
+                                    <span class="service-status-badge" id="redis-status">--</span>
+                                </div>
+                                <div class="service-metrics">
+                                    <div class="metric">
+                                        <span class="metric-label">Response Time:</span>
+                                        <span class="metric-value" id="redis-response-time">--</span>
+                                    </div>
+                                    <div class="metric">
+                                        <span class="metric-label">Memory:</span>
+                                        <span class="metric-value" id="redis-memory">--</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Alerts and Issues -->
+                    <div class="alerts-container">
+                        <h3>Health Alerts</h3>
+                        <div id="health-alerts-list" class="alerts-list">
+                            <div class="no-alerts">No active health alerts</div>
+                        </div>
+                    </div>
+
+                    <!-- Recommendations -->
+                    <div class="recommendations-container">
+                        <h3>Health Recommendations</h3>
+                        <div id="recommendations-list" class="recommendations-list">
+                            <div class="no-recommendations">No recommendations available</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Service Health Dashboard -->
+            <div id="services" class="dashboard-panel">
+                <div class="dashboard-grid">
+                    <div class="service-details-container full-width">
+                        <h3>Detailed Service Health</h3>
+                        <div class="service-tabs">
+                            <button class="service-tab active" data-service="postgres">PostgreSQL</button>
+                            <button class="service-tab" data-service="neo4j">Neo4j</button>
+                            <button class="service-tab" data-service="milvus">Milvus</button>
+                            <button class="service-tab" data-service="redis">Redis</button>
+                        </div>
+                        <div class="service-details" id="service-details">
+                            <div class="loading-message">Select a service to view details</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Connectivity Dashboard -->
+            <div id="connectivity" class="dashboard-panel">
+                <div class="dashboard-grid">
+                    <div class="connectivity-overview">
+                        <h3>Connectivity Overview</h3>
+                        <div class="connectivity-stats">
+                            <div class="stat-item">
+                                <span class="stat-value" id="connectivity-percentage">--</span>
+                                <span class="stat-label">Overall Connectivity</span>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-value" id="avg-response-time">--</span>
+                                <span class="stat-label">Avg Response Time</span>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-value" id="total-connections">--</span>
+                                <span class="stat-label">Total Connections</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="connectivity-chart-container">
+                        <h3>Response Time Trends</h3>
+                        <canvas id="response-time-chart"></canvas>
+                    </div>
+
+                    <div class="connection-pools-container">
+                        <h3>Connection Pool Status</h3>
+                        <div id="connection-pools-table" class="pools-table">
+                            <div class="no-data">No connection pool data available</div>
+                        </div>
+                    </div>
+
+                    <div class="realtime-monitoring-container">
+                        <h3>Real-time Connectivity</h3>
+                        <div class="monitoring-controls">
+                            <button id="start-realtime-btn" class="btn btn-primary">Start Real-time Test</button>
+                            <button id="stop-realtime-btn" class="btn btn-secondary" style="display: none;">Stop
+                                Test</button>
+                            <select id="monitoring-interval">
+                                <option value="1">1 second</option>
+                                <option value="5" selected>5 seconds</option>
+                                <option value="10">10 seconds</option>
+                            </select>
+                        </div>
+                        <div id="realtime-results" class="realtime-results">
+                            <div class="no-data">Start real-time monitoring to see results</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Performance Dashboard -->
+            <div id="performance" class="dashboard-panel">
+                <div class="dashboard-grid">
+                    <div class="performance-overview">
+                        <h3>Performance Overview</h3>
+                        <div class="performance-score">
+                            <canvas id="performance-score-chart"></canvas>
+                            <div class="score-text">
+                                <span id="performance-score">--</span>
+                                <span>Performance Score</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="response-times-container">
+                        <h3>Service Response Times</h3>
+                        <canvas id="service-response-chart"></canvas>
+                    </div>
+
+                    <div class="throughput-container">
+                        <h3>Database Throughput</h3>
+                        <canvas id="throughput-chart"></canvas>
+                    </div>
+
+                    <div class="performance-metrics-table">
+                        <h3>Performance Metrics</h3>
+                        <div id="performance-table" class="metrics-table">
+                            <div class="no-data">No performance data available</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Dependencies Dashboard -->
+            <div id="dependencies" class="dashboard-panel">
+                <div class="dashboard-grid">
+                    <div class="dependency-chain-container full-width">
+                        <h3>Service Dependency Chain</h3>
+                        <div id="dependency-chain" class="dependency-chain">
+                            <div class="no-data">Loading dependency information...</div>
+                        </div>
+                    </div>
+
+                    <div class="docker-status-container">
+                        <h3>Docker Container Status</h3>
+                        <div id="docker-containers" class="docker-containers">
+                            <div class="no-data">Loading Docker information...</div>
+                        </div>
+                    </div>
+
+                    <div class="startup-order-container">
+                        <h3>Service Startup Order</h3>
+                        <div id="startup-order" class="startup-order">
+                            <div class="no-data">Loading startup order...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Status Bar -->
+        <div class="status-bar">
+            <div class="status-item">
+                <span>Environment:</span>
+                <span id="environment-status">Local Development</span>
+            </div>
+            <div class="status-item">
+                <span>Last Updated:</span>
+                <span id="last-updated">--</span>
+            </div>
+            <div class="status-item">
+                <span>Monitoring:</span>
+                <span id="monitoring-status">Inactive</span>
+            </div>
+            <div class="status-item">
+                <span>Auto-refresh:</span>
+                <span id="auto-refresh-status">Disabled</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div id="loading-overlay" class="loading-overlay">
+        <div class="loading-spinner"></div>
+        <div class="loading-text">Loading health data...</div>
+    </div>
+
+    <!-- Error Modal -->
+    <div id="error-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Health Check Error</h3>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p id="error-message">An error occurred while checking system health</p>
+                <div id="error-details" class="error-details" style="display: none;">
+                    <h4>Error Details:</h4>
+                    <pre id="error-stack"></pre>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="toggleErrorDetails()">Show Details</button>
+                <button class="btn btn-primary" onclick="closeErrorModal()">OK</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/health_dashboard.js"></script>
+</body>
+
+</html>

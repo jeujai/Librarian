@@ -1,0 +1,28 @@
+{
+  "timestamp": "20260118_212345",
+  "results": [
+    {
+      "target_group": "multimodal-lib-prod-alb-tg",
+      "status": "updated",
+      "old_path": "/health/minimal",
+      "new_path": "/api/health/simple"
+    },
+    {
+      "target_group": "multimodal-lib-prod-nlb-tg",
+      "status": "failed",
+      "path": "N/A"
+    },
+    {
+      "target_group": "multimodal-lib-prod-tg",
+      "status": "updated",
+      "old_path": "/health/simple",
+      "new_path": "/api/health/simple"
+    },
+    {
+      "target_group": "multimodal-lib-prod-tg-v2",
+      "status": "updated",
+      "old_path": "/health/simple",
+      "new_path": "/api/health/simple"
+    }
+  ]
+}

@@ -1,0 +1,218 @@
+{
+  "optimization_rules": {
+    "database_optimizations": {
+      "connection_pooling": {
+        "enabled": true,
+        "trigger_condition": "pool_utilization > 80%",
+        "action": "increase_pool_size",
+        "parameters": {
+          "max_increase": 5,
+          "increment": 2
+        },
+        "description": "Automatically increase connection pool size when utilization is high"
+      },
+      "slow_query_detection": {
+        "enabled": true,
+        "trigger_condition": "query_time > 1000ms",
+        "action": "log_and_analyze",
+        "parameters": {
+          "threshold_ms": 1000,
+          "max_queries_to_log": 10
+        },
+        "description": "Detect and log slow queries for analysis"
+      },
+      "index_creation": {
+        "enabled": true,
+        "trigger_condition": "manual_trigger",
+        "action": "create_performance_indexes",
+        "parameters": {
+          "tables": ["conversations", "messages", "documents"],
+          "concurrent": true
+        },
+        "description": "Create performance indexes on frequently queried tables"
+      }
+    },
+    "caching_optimizations": {
+      "cache_warming": {
+        "enabled": true,
+        "trigger_condition": "cache_hit_rate < 50%",
+        "action": "warm_frequently_accessed_data",
+        "parameters": {
+          "warm_percentage": 20,
+          "ttl_seconds": 3600
+        },
+        "description": "Pre-load frequently accessed data into cache"
+      },
+      "ttl_optimization": {
+        "enabled": true,
+        "trigger_condition": "cache_hit_rate > 90%",
+        "action": "increase_ttl",
+        "parameters": {
+          "increase_factor": 1.5,
+          "max_ttl_seconds": 86400
+        },
+        "description": "Increase TTL for highly cached content"
+      },
+      "cache_cleanup": {
+        "enabled": true,
+        "trigger_condition": "memory_usage > 85%",
+        "action": "clear_expired_entries",
+        "parameters": {
+          "cleanup_percentage": 10
+        },
+        "description": "Clean up expired cache entries when memory is high"
+      }
+    },
+    "system_optimizations": {
+      "resource_scaling": {
+        "enabled": false,
+        "trigger_condition": "cpu_usage > 80% for 10 minutes",
+        "action": "recommend_scaling",
+        "parameters": {
+          "scale_type": "horizontal",
+          "recommendation_only": true
+        },
+        "description": "Recommend scaling when resources are consistently high (learning mode)"
+      },
+      "memory_optimization": {
+        "enabled": true,
+        "trigger_condition": "memory_usage > 85%",
+        "action": "garbage_collection",
+        "parameters": {
+          "force_gc": false,
+          "log_memory_usage": true
+        },
+        "description": "Monitor and log memory usage patterns"
+      }
+    },
+    "cost_optimizations": {
+      "resource_rightsizing": {
+        "enabled": true,
+        "trigger_condition": "resource_utilization < 30% for 24 hours",
+        "action": "recommend_downsizing",
+        "parameters": {
+          "utilization_threshold": 30,
+          "observation_period_hours": 24,
+          "recommendation_only": true
+        },
+        "description": "Recommend downsizing underutilized resources"
+      },
+      "idle_resource_detection": {
+        "enabled": true,
+        "trigger_condition": "no_requests for 2 hours",
+        "action": "log_idle_resources",
+        "parameters": {
+          "idle_threshold_hours": 2,
+          "exclude_maintenance_windows": true
+        },
+        "description": "Detect and log idle resources for cost optimization"
+      },
+      "storage_lifecycle": {
+        "enabled": true,
+        "trigger_condition": "file_age > 30 days",
+        "action": "transition_to_ia",
+        "parameters": {
+          "age_threshold_days": 30,
+          "storage_class": "STANDARD_IA"
+        },
+        "description": "Transition old files to cheaper storage classes"
+      }
+    }
+  },
+  "optimization_schedules": {
+    "real_time": [
+      "connection_pooling",
+      "cache_cleanup",
+      "memory_optimization"
+    ],
+    "hourly": [
+      "slow_query_detection",
+      "cache_warming",
+      "ttl_optimization"
+    ],
+    "daily": [
+      "index_creation",
+      "resource_rightsizing",
+      "idle_resource_detection"
+    ],
+    "weekly": [
+      "storage_lifecycle",
+      "comprehensive_analysis"
+    ]
+  },
+  "safety_limits": {
+    "max_pool_size": 50,
+    "max_cache_memory_mb": 512,
+    "max_ttl_seconds": 86400,
+    "min_utilization_percent": 10,
+    "max_optimization_frequency_per_hour": 5
+  },
+  "learning_configurations": {
+    "dry_run_mode": {
+      "enabled": true,
+      "description": "Run optimizations in simulation mode for learning",
+      "log_actions": true,
+      "apply_changes": false
+    },
+    "explanation_mode": {
+      "enabled": true,
+      "description": "Provide detailed explanations for each optimization",
+      "include_reasoning": true,
+      "include_expected_impact": true
+    },
+    "cost_impact_analysis": {
+      "enabled": true,
+      "description": "Analyze cost impact of each optimization",
+      "estimate_savings": true,
+      "track_actual_impact": true
+    }
+  },
+  "notification_rules": {
+    "optimization_applied": {
+      "enabled": true,
+      "channels": ["log", "metrics"],
+      "include_details": true
+    },
+    "optimization_recommended": {
+      "enabled": true,
+      "channels": ["log", "dashboard"],
+      "include_reasoning": true
+    },
+    "optimization_failed": {
+      "enabled": true,
+      "channels": ["log", "alert"],
+      "include_error_details": true
+    }
+  },
+  "performance_targets": {
+    "response_time_ms": {
+      "target": 500,
+      "acceptable": 1000,
+      "critical": 5000
+    },
+    "cache_hit_rate_percent": {
+      "target": 80,
+      "acceptable": 70,
+      "critical": 50
+    },
+    "resource_utilization_percent": {
+      "target": 60,
+      "acceptable_range": [40, 80],
+      "critical": 90
+    },
+    "error_rate_percent": {
+      "target": 1,
+      "acceptable": 5,
+      "critical": 15
+    }
+  },
+  "optimization_history": {
+    "track_optimizations": true,
+    "retention_days": 30,
+    "include_metrics": {
+      "before_optimization": true,
+      "after_optimization": true,
+      "impact_measurement": true
+    }
+  }
+}

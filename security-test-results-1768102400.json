@@ -1,0 +1,374 @@
+{
+  "summary": {
+    "security_status": "CRITICAL_VULNERABILITIES",
+    "total_tests": 12,
+    "passed_tests": 11,
+    "failed_tests": 1,
+    "overall_success_rate": 91.66666666666666,
+    "critical_failures": 1,
+    "warnings": 0,
+    "duration_seconds": 0.7242789268493652,
+    "timestamp": "2026-01-11T03:33:20.210454"
+  },
+  "category_results": {
+    "Authentication Mechanisms": {
+      "passed": 3,
+      "total": 4,
+      "success_rate": 75.0
+    },
+    "Data Encryption": {
+      "passed": 4,
+      "total": 4,
+      "success_rate": 100.0
+    },
+    "Access Controls": {
+      "passed": 4,
+      "total": 4,
+      "success_rate": 100.0
+    }
+  },
+  "detailed_results": [
+    {
+      "test": "Password Security (simple123...)",
+      "success": true,
+      "message": "Password hashing and verification working correctly",
+      "severity": "INFO",
+      "timestamp": "2026-01-11T03:33:19.626943",
+      "details": {
+        "password_length": 9
+      }
+    },
+    {
+      "test": "Password Security (Complex!Pa...)",
+      "success": true,
+      "message": "Password hashing and verification working correctly",
+      "severity": "INFO",
+      "timestamp": "2026-01-11T03:33:19.768994",
+      "details": {
+        "password_length": 21
+      }
+    },
+    {
+      "test": "Password Security (VeryLongPa...)",
+      "success": true,
+      "message": "Password hashing and verification working correctly",
+      "severity": "INFO",
+      "timestamp": "2026-01-11T03:33:19.909543",
+      "details": {
+        "password_length": 47
+      }
+    },
+    {
+      "test": "Password Security (\u77ed\u5bc6\u7801...)",
+      "success": true,
+      "message": "Password hashing and verification working correctly",
+      "severity": "INFO",
+      "timestamp": "2026-01-11T03:33:20.051166",
+      "details": {
+        "password_length": 3
+      }
+    },
+    {
+      "test": "Password Security (password w...)",
+      "success": true,
+      "message": "Password hashing and verification working correctly",
+      "severity": "INFO",
+      "timestamp": "2026-01-11T03:33:20.193294",
+      "details": {
+        "password_length": 38
+      }
+    },
+    {
+      "test": "JWT Token Expiration",
+      "success": true,
+      "message": "Expired token correctly rejected",
+      "severity": "INFO",
+      "timestamp": "2026-01-11T03:33:20.193590",
+      "details": {}
+    },
+    {
+      "test": "JWT Token Security",
+      "success": false,
+      "message": "JWT token security test failed: module 'jwt' has no attribute 'JWTError'",
+      "severity": "CRITICAL",
+      "timestamp": "2026-01-11T03:33:20.193621",
+      "details": {
+        "error": "module 'jwt' has no attribute 'JWTError'"
+      }
+    },
+    {
+      "test": "Brute Force Protection",
+      "success": true,
+      "message": "All 10 brute force attempts correctly rejected",
+      "severity": "INFO",
+      "timestamp": "2026-01-11T03:33:20.194529",
+      "details": {
+        "failed_attempts": 10
+      }
+    },
+    {
+      "test": "Session Management",
+      "success": true,
+      "message": "All 3 concurrent sessions are valid",
+      "severity": "INFO",
+      "timestamp": "2026-01-11T03:33:20.194726",
+      "details": {
+        "valid_tokens": 3,
+        "total_tokens": 3
+      }
+    },
+    {
+      "test": "Data Encryption/Decryption (personal_info)",
+      "success": true,
+      "message": "Data encryption and decryption working correctly",
+      "severity": "INFO",
+      "timestamp": "2026-01-11T03:33:20.198197",
+      "details": {
+        "data_type": "personal_info",
+        "original_length": 26,
+        "encrypted_length": 160
+      }
+    },
+    {
+      "test": "Data Encryption/Decryption (credit_card)",
+      "success": true,
+      "message": "Data encryption and decryption working correctly",
+      "severity": "INFO",
+      "timestamp": "2026-01-11T03:33:20.198406",
+      "details": {
+        "data_type": "credit_card",
+        "original_length": 19,
+        "encrypted_length": 160
+      }
+    },
+    {
+      "test": "Data Encryption/Decryption (medical_record)",
+      "success": true,
+      "message": "Data encryption and decryption working correctly",
+      "severity": "INFO",
+      "timestamp": "2026-01-11T03:33:20.198518",
+      "details": {
+        "data_type": "medical_record",
+        "original_length": 27,
+        "encrypted_length": 160
+      }
+    },
+    {
+      "test": "Data Encryption/Decryption (confidential_note)",
+      "success": true,
+      "message": "Data encryption and decryption working correctly",
+      "severity": "INFO",
+      "timestamp": "2026-01-11T03:33:20.198600",
+      "details": {
+        "data_type": "confidential_note",
+        "original_length": 39,
+        "encrypted_length": 188
+      }
+    },
+    {
+      "test": "Sensitive Field Encryption",
+      "success": true,
+      "message": "All 3 sensitive fields encrypted/decrypted correctly",
+      "severity": "INFO",
+      "timestamp": "2026-01-11T03:33:20.198762",
+      "details": {
+        "sensitive_fields": [
+          "ssn",
+          "credit_card",
+          "notes"
+        ],
+        "total_fields": 7
+      }
+    },
+    {
+      "test": "File Encryption/Decryption",
+      "success": true,
+      "message": "File encryption and decryption working correctly",
+      "severity": "INFO",
+      "timestamp": "2026-01-11T03:33:20.199613",
+      "details": {
+        "original_file": "test_security_file.txt",
+        "encrypted_file": "test_security_file.txt.encrypted",
+        "decrypted_file": "test_security_file.txt",
+        "file_size": 144
+      }
+    },
+    {
+      "test": "Encryption Key Security",
+      "success": true,
+      "message": "Secure token generation working for all 4 lengths",
+      "severity": "INFO",
+      "timestamp": "2026-01-11T03:33:20.199883",
+      "details": {
+        "tested_lengths": [
+          16,
+          32,
+          64,
+          128
+        ]
+      }
+    },
+    {
+      "test": "RBAC Test (admin -> admin_access)",
+      "success": true,
+      "message": "Role admin correctly has admin_access",
+      "severity": "INFO",
+      "timestamp": "2026-01-11T03:33:20.199931",
+      "details": {
+        "role": "admin",
+        "permission": "admin_access",
+        "result": true
+      }
+    },
+    {
+      "test": "RBAC Test (admin -> delete_books)",
+      "success": true,
+      "message": "Role admin correctly has delete_books",
+      "severity": "INFO",
+      "timestamp": "2026-01-11T03:33:20.199957",
+      "details": {
+        "role": "admin",
+        "permission": "delete_books",
+        "result": true
+      }
+    },
+    {
+      "test": "RBAC Test (user -> read_books)",
+      "success": true,
+      "message": "Role user correctly has read_books",
+      "severity": "INFO",
+      "timestamp": "2026-01-11T03:33:20.199979",
+      "details": {
+        "role": "user",
+        "permission": "read_books",
+        "result": true
+      }
+    },
+    {
+      "test": "RBAC Test (user -> admin_access)",
+      "success": true,
+      "message": "Role user correctly lacks admin_access",
+      "severity": "INFO",
+      "timestamp": "2026-01-11T03:33:20.200000",
+      "details": {
+        "role": "user",
+        "permission": "admin_access",
+        "result": false
+      }
+    },
+    {
+      "test": "RBAC Test (read_only -> read_books)",
+      "success": true,
+      "message": "Role read_only correctly has read_books",
+      "severity": "INFO",
+      "timestamp": "2026-01-11T03:33:20.200021",
+      "details": {
+        "role": "read_only",
+        "permission": "read_books",
+        "result": true
+      }
+    },
+    {
+      "test": "RBAC Test (read_only -> upload_books)",
+      "success": true,
+      "message": "Role read_only correctly lacks upload_books",
+      "severity": "INFO",
+      "timestamp": "2026-01-11T03:33:20.200042",
+      "details": {
+        "role": "read_only",
+        "permission": "upload_books",
+        "result": false
+      }
+    },
+    {
+      "test": "RBAC Test (ml_researcher -> access_ml_api)",
+      "success": true,
+      "message": "Role ml_researcher correctly has access_ml_api",
+      "severity": "INFO",
+      "timestamp": "2026-01-11T03:33:20.200063",
+      "details": {
+        "role": "ml_researcher",
+        "permission": "access_ml_api",
+        "result": true
+      }
+    },
+    {
+      "test": "RBAC Test (ml_researcher -> delete_books)",
+      "success": true,
+      "message": "Role ml_researcher correctly lacks delete_books",
+      "severity": "INFO",
+      "timestamp": "2026-01-11T03:33:20.200082",
+      "details": {
+        "role": "ml_researcher",
+        "permission": "delete_books",
+        "result": false
+      }
+    },
+    {
+      "test": "Resource Access Control",
+      "success": true,
+      "message": "Resource access control working correctly",
+      "severity": "INFO",
+      "timestamp": "2026-01-11T03:33:20.200111",
+      "details": {
+        "own_resource_access": true,
+        "other_resource_access": false,
+        "admin_resource_access": true
+      }
+    },
+    {
+      "test": "API Security (/auth/me)",
+      "success": true,
+      "message": "Cannot test endpoint (server not available): HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /auth/me (Caused by NewConnectionError(\"HTTPConnection(host='localhost', port=8000): Failed to establish a new connection: [Errno 61] Connection refused\"))",
+      "severity": "INFO",
+      "timestamp": "2026-01-11T03:33:20.207377",
+      "details": {
+        "endpoint": "/auth/me",
+        "error": "HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /auth/me (Caused by NewConnectionError(\"HTTPConnection(host='localhost', port=8000): Failed to establish a new connection: [Errno 61] Connection refused\"))"
+      }
+    },
+    {
+      "test": "API Security (/auth/users)",
+      "success": true,
+      "message": "Cannot test endpoint (server not available): HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /auth/users (Caused by NewConnectionError(\"HTTPConnection(host='localhost', port=8000): Failed to establish a new connection: [Errno 61] Connection refused\"))",
+      "severity": "INFO",
+      "timestamp": "2026-01-11T03:33:20.208896",
+      "details": {
+        "endpoint": "/auth/users",
+        "error": "HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /auth/users (Caused by NewConnectionError(\"HTTPConnection(host='localhost', port=8000): Failed to establish a new connection: [Errno 61] Connection refused\"))"
+      }
+    },
+    {
+      "test": "API Security (/health)",
+      "success": true,
+      "message": "Cannot test endpoint (server not available): HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /health (Caused by NewConnectionError(\"HTTPConnection(host='localhost', port=8000): Failed to establish a new connection: [Errno 61] Connection refused\"))",
+      "severity": "INFO",
+      "timestamp": "2026-01-11T03:33:20.210280",
+      "details": {
+        "endpoint": "/health",
+        "error": "HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /health (Caused by NewConnectionError(\"HTTPConnection(host='localhost', port=8000): Failed to establish a new connection: [Errno 61] Connection refused\"))"
+      }
+    },
+    {
+      "test": "Permission Escalation Prevention",
+      "success": true,
+      "message": "All 3 privilege escalation attempts correctly prevented",
+      "severity": "INFO",
+      "timestamp": "2026-01-11T03:33:20.210369",
+      "details": {
+        "escalation_attempts": 3,
+        "successful_escalations": 0,
+        "user_role": "read_only"
+      }
+    }
+  ],
+  "security_recommendations": [
+    "URGENT: 1 critical security vulnerabilities found. Address immediately before production deployment.",
+    "Security implementation is mostly adequate but has room for improvement.",
+    "Implement regular security testing in CI/CD pipeline",
+    "Consider penetration testing for production systems",
+    "Keep security dependencies updated",
+    "Monitor security logs and implement alerting",
+    "Conduct regular security training for development team"
+  ]
+}

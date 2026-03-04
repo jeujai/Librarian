@@ -1,0 +1,983 @@
+name: CI/CD with Local and AWS Testing
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'infrastructure/**'
+      - 'docker-compose*.yml'
+      - 'Dockerfile*'
+      - 'requirements*.txt'
+      - 'pyproject.toml'
+      - '.github/workflows/ci-cd-local-aws.yml'
+  
+  pull_request:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'infrastructure/**'
+      - 'docker-compose*.yml'
+      - 'Dockerfile*'
+      - 'requirements*.txt'
+      - 'pyproject.toml'
+  
+  workflow_dispatch:
+    inputs:
+      test_environment:
+        description: 'Test environment to use'
+        required: true
+        default: 'local'
+        type: choice
+        options:
+          - local
+          - aws
+          - both
+      deploy_environment:
+        description: 'Deployment environment'
+        required: false
+        default: 'none'
+        type: choice
+        options:
+          - none
+          - staging
+          - production
+      skip_tests:
+        description: 'Skip tests (emergency only)'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  AWS_REGION: us-east-1
+  PROJECT_NAME: multimodal-librarian
+  PYTHON_VERSION: '3.11'
+  DOCKER_COMPOSE_VERSION: '2.21.0'
+
+jobs:
+  # =============================================================================
+  # Environment Detection and Setup
+  # =============================================================================
+  
+  detect-environment:
+    name: Detect Test Environment
+    runs-on: ubuntu-latest
+    outputs:
+      test-local: ${{ steps.detect.outputs.test-local }}
+      test-aws: ${{ steps.detect.outputs.test-aws }}
+      deploy: ${{ steps.detect.outputs.deploy }}
+      environment: ${{ steps.detect.outputs.environment }}
+    
+    steps:
+      - name: Detect test environment
+        id: detect
+        run: |
+          # Determine test environment based on inputs or defaults
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TEST_ENV="${{ github.event.inputs.test_environment }}"
+            DEPLOY_ENV="${{ github.event.inputs.deploy_environment }}"
+          else
+            # Default behavior for push/PR
+            if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+              TEST_ENV="both"
+              DEPLOY_ENV="staging"
+            else
+              TEST_ENV="local"
+              DEPLOY_ENV="none"
+            fi
+          fi
+          
+          echo "Detected test environment: $TEST_ENV"
+          echo "Detected deploy environment: $DEPLOY_ENV"
+          
+          # Set outputs
+          case "$TEST_ENV" in
+            "local")
+              echo "test-local=true" >> $GITHUB_OUTPUT
+              echo "test-aws=false" >> $GITHUB_OUTPUT
+              ;;
+            "aws")
+              echo "test-local=false" >> $GITHUB_OUTPUT
+              echo "test-aws=true" >> $GITHUB_OUTPUT
+              ;;
+            "both")
+              echo "test-local=true" >> $GITHUB_OUTPUT
+              echo "test-aws=true" >> $GITHUB_OUTPUT
+              ;;
+            *)
+              echo "test-local=true" >> $GITHUB_OUTPUT
+              echo "test-aws=false" >> $GITHUB_OUTPUT
+              ;;
+          esac
+          
+          echo "deploy=$([[ '$DEPLOY_ENV' != 'none' ]] && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
+          echo "environment=$DEPLOY_ENV" >> $GITHUB_OUTPUT
+
+  # =============================================================================
+  # Local Environment Testing
+  # =============================================================================
+  
+  test-local:
+    name: Test with Local Services
+    runs-on: ubuntu-latest
+    needs: detect-environment
+    if: needs.detect-environment.outputs.test-local == 'true' && github.event.inputs.skip_tests != 'true'
+    
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: multimodal_librarian_test
+          POSTGRES_USER: ml_user
+          POSTGRES_PASSWORD: ml_password
+          POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
+        options: >-
+          --health-cmd "pg_isready -U ml_user -d multimodal_librarian_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      
+      neo4j:
+        image: neo4j:5.15-community
+        env:
+          NEO4J_AUTH: neo4j/ml_password
+          NEO4J_PLUGINS: '["gds", "apoc"]'
+          NEO4J_dbms_security_procedures_unrestricted: gds.*,apoc.*
+          NEO4J_dbms_memory_heap_initial__size: 256m
+          NEO4J_dbms_memory_heap_max__size: 512m
+        options: >-
+          --health-cmd "cypher-shell -u neo4j -p ml_password 'RETURN 1'"
+          --health-interval 30s
+          --health-timeout 10s
+          --health-retries 5
+        ports:
+          - 7474:7474
+          - 7687:7687
+      
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            libpq-dev \
+            curl \
+            netcat-openbsd
+      
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+          pip install pytest pytest-cov pytest-asyncio pytest-xdist
+      
+      - name: Set up Milvus (standalone)
+        run: |
+          # Download and start Milvus standalone
+          curl -sfL https://raw.githubusercontent.com/milvus-io/milvus/master/scripts/standalone_embed.sh -o standalone_embed.sh
+          bash standalone_embed.sh start
+          
+          # Wait for Milvus to be ready
+          echo "Waiting for Milvus to start..."
+          for i in {1..30}; do
+            if curl -f http://localhost:9091/healthz >/dev/null 2>&1; then
+              echo "Milvus is ready"
+              break
+            fi
+            echo "Waiting for Milvus... ($i/30)"
+            sleep 10
+          done
+      
+      - name: Verify service connectivity
+        run: |
+          echo "🔍 Verifying service connectivity..."
+          
+          # PostgreSQL
+          echo "Testing PostgreSQL..."
+          PGPASSWORD=ml_password psql -h localhost -U ml_user -d multimodal_librarian_test -c "SELECT version();"
+          
+          # Neo4j
+          echo "Testing Neo4j..."
+          curl -f http://localhost:7474/db/data/ || echo "Neo4j HTTP not ready yet"
+          
+          # Redis
+          echo "Testing Redis..."
+          redis-cli -h localhost ping
+          
+          # Milvus
+          echo "Testing Milvus..."
+          curl -f http://localhost:9091/healthz
+          
+          echo "✅ All services are accessible"
+      
+      - name: Set up test environment
+        run: |
+          # Create local test environment file
+          cat > .env.test << EOF
+          # Test Environment Configuration
+          ML_ENVIRONMENT=test
+          ML_DATABASE_TYPE=local
+          DATABASE_TYPE=local
+          DEBUG=true
+          LOG_LEVEL=DEBUG
+          
+          # Local Database Configuration
+          POSTGRES_HOST=localhost
+          POSTGRES_PORT=5432
+          POSTGRES_DB=multimodal_librarian_test
+          POSTGRES_USER=ml_user
+          POSTGRES_PASSWORD=ml_password
+          
+          NEO4J_HOST=localhost
+          NEO4J_PORT=7687
+          NEO4J_USER=neo4j
+          NEO4J_PASSWORD=ml_password
+          
+          MILVUS_HOST=localhost
+          MILVUS_PORT=19530
+          MILVUS_COLLECTION_NAME=test_knowledge_chunks
+          
+          REDIS_HOST=localhost
+          REDIS_PORT=6379
+          REDIS_DB=1
+          
+          # Disable external services for testing
+          OPENAI_API_KEY=test-key
+          GOOGLE_API_KEY=test-key
+          ANTHROPIC_API_KEY=test-key
+          
+          # Test optimizations
+          ENABLE_HEALTH_CHECKS=false
+          VALIDATE_CONFIG_ON_STARTUP=false
+          STRICT_CONFIG_VALIDATION=false
+          CONNECTION_TIMEOUT=10
+          QUERY_TIMEOUT=5
+          MAX_RETRIES=1
+          EOF
+          
+          echo "✅ Test environment configured"
+      
+      - name: Initialize test databases
+        env:
+          ML_ENVIRONMENT: test
+          ML_DATABASE_TYPE: local
+        run: |
+          echo "🗄️ Initializing test databases..."
+          
+          # Initialize PostgreSQL schema
+          if [ -f "database/postgresql/init_db.sql" ]; then
+            PGPASSWORD=ml_password psql -h localhost -U ml_user -d multimodal_librarian_test -f database/postgresql/init_db.sql
+          fi
+          
+          # Initialize Neo4j schema
+          if [ -f "database/neo4j/init_schema.sh" ]; then
+            bash database/neo4j/init_schema.sh
+          fi
+          
+          echo "✅ Test databases initialized"
+      
+      - name: Run unit tests
+        env:
+          ML_ENVIRONMENT: test
+          ML_DATABASE_TYPE: local
+        run: |
+          echo "🧪 Running unit tests with local services..."
+          
+          # Run tests with coverage
+          pytest tests/ \
+            --cov=src/multimodal_librarian \
+            --cov-report=xml \
+            --cov-report=html \
+            --cov-report=term-missing \
+            --junit-xml=test-results-local.xml \
+            -v \
+            --tb=short \
+            -x \
+            --maxfail=5
+          
+          echo "✅ Unit tests completed"
+      
+      - name: Run integration tests
+        env:
+          ML_ENVIRONMENT: test
+          ML_DATABASE_TYPE: local
+        run: |
+          echo "🔗 Running integration tests with local services..."
+          
+          # Run integration tests
+          pytest tests/integration/ \
+            --junit-xml=integration-results-local.xml \
+            -v \
+            --tb=short \
+            -x \
+            --maxfail=3
+          
+          echo "✅ Integration tests completed"
+      
+      - name: Run local-specific tests
+        env:
+          ML_ENVIRONMENT: test
+          ML_DATABASE_TYPE: local
+        run: |
+          echo "🏠 Running local development specific tests..."
+          
+          # Test local configuration
+          pytest tests/config/test_local_config.py -v
+          
+          # Test local database clients
+          pytest tests/clients/ -k "local" -v
+          
+          # Test Docker Compose integration
+          pytest tests/integration/test_local_docker_integration.py -v
+          
+          # Test environment switching
+          pytest tests/integration/test_local_environment_switching.py -v
+          
+          echo "✅ Local-specific tests completed"
+      
+      - name: Test database client factory
+        env:
+          ML_ENVIRONMENT: test
+          ML_DATABASE_TYPE: local
+        run: |
+          echo "🏭 Testing database client factory with local services..."
+          
+          pytest tests/clients/test_database_client_factory.py -v
+          pytest tests/integration/test_database_factory_integration.py -v
+          
+          echo "✅ Database factory tests completed"
+      
+      - name: Upload local test results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: local-test-results
+          path: |
+            test-results-local.xml
+            integration-results-local.xml
+            htmlcov/
+            .coverage
+      
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        if: always()
+        with:
+          file: ./coverage.xml
+          flags: local-tests
+          name: local-coverage
+          fail_ci_if_error: false
+
+  # =============================================================================
+  # AWS Environment Testing
+  # =============================================================================
+  
+  test-aws:
+    name: Test with AWS Services
+    runs-on: ubuntu-latest
+    needs: detect-environment
+    if: needs.detect-environment.outputs.test-aws == 'true' && github.event.inputs.skip_tests != 'true'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+          pip install pytest pytest-cov pytest-asyncio
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Set up AWS test environment
+        run: |
+          # Create AWS test environment file
+          cat > .env.test << EOF
+          # AWS Test Environment Configuration
+          ML_ENVIRONMENT=test
+          ML_DATABASE_TYPE=aws
+          DATABASE_TYPE=aws
+          DEBUG=true
+          LOG_LEVEL=DEBUG
+          
+          # AWS Configuration
+          AWS_REGION=${{ env.AWS_REGION }}
+          
+          # AWS Database Configuration (use test instances)
+          NEPTUNE_ENDPOINT=${{ secrets.TEST_NEPTUNE_ENDPOINT }}
+          OPENSEARCH_ENDPOINT=${{ secrets.TEST_OPENSEARCH_ENDPOINT }}
+          RDS_ENDPOINT=${{ secrets.TEST_RDS_ENDPOINT }}
+          
+          # AWS Credentials (handled by IAM role)
+          
+          # Test optimizations
+          ENABLE_HEALTH_CHECKS=false
+          VALIDATE_CONFIG_ON_STARTUP=false
+          STRICT_CONFIG_VALIDATION=false
+          CONNECTION_TIMEOUT=30
+          QUERY_TIMEOUT=15
+          MAX_RETRIES=2
+          EOF
+          
+          echo "✅ AWS test environment configured"
+      
+      - name: Verify AWS service connectivity
+        env:
+          ML_ENVIRONMENT: test
+          ML_DATABASE_TYPE: aws
+        run: |
+          echo "🔍 Verifying AWS service connectivity..."
+          
+          # Test AWS credentials
+          aws sts get-caller-identity
+          
+          # Test Neptune connectivity (if endpoint available)
+          if [ -n "${{ secrets.TEST_NEPTUNE_ENDPOINT }}" ]; then
+            echo "Testing Neptune connectivity..."
+            python -c "
+            import boto3
+            client = boto3.client('neptune', region_name='${{ env.AWS_REGION }}')
+            try:
+                response = client.describe_db_clusters()
+                print('Neptune: ✅ Connected')
+            except Exception as e:
+                print(f'Neptune: ⚠️ {e}')
+            "
+          fi
+          
+          # Test OpenSearch connectivity (if endpoint available)
+          if [ -n "${{ secrets.TEST_OPENSEARCH_ENDPOINT }}" ]; then
+            echo "Testing OpenSearch connectivity..."
+            python -c "
+            import boto3
+            client = boto3.client('opensearch', region_name='${{ env.AWS_REGION }}')
+            try:
+                response = client.list_domain_names()
+                print('OpenSearch: ✅ Connected')
+            except Exception as e:
+                print(f'OpenSearch: ⚠️ {e}')
+            "
+          fi
+          
+          echo "✅ AWS connectivity verified"
+      
+      - name: Run AWS-specific unit tests
+        env:
+          ML_ENVIRONMENT: test
+          ML_DATABASE_TYPE: aws
+        run: |
+          echo "🧪 Running unit tests with AWS services..."
+          
+          # Run AWS-specific tests
+          pytest tests/ \
+            -k "aws or neptune or opensearch" \
+            --cov=src/multimodal_librarian \
+            --cov-report=xml \
+            --junit-xml=test-results-aws.xml \
+            -v \
+            --tb=short \
+            --maxfail=5
+          
+          echo "✅ AWS unit tests completed"
+      
+      - name: Run AWS integration tests
+        env:
+          ML_ENVIRONMENT: test
+          ML_DATABASE_TYPE: aws
+        run: |
+          echo "🔗 Running AWS integration tests..."
+          
+          # Run AWS integration tests (if test resources available)
+          if [ -n "${{ secrets.TEST_NEPTUNE_ENDPOINT }}" ] && [ -n "${{ secrets.TEST_OPENSEARCH_ENDPOINT }}" ]; then
+            pytest tests/integration/ \
+              -k "aws" \
+              --junit-xml=integration-results-aws.xml \
+              -v \
+              --tb=short \
+              --maxfail=3
+          else
+            echo "⚠️ AWS test resources not available, skipping integration tests"
+          fi
+          
+          echo "✅ AWS integration tests completed"
+      
+      - name: Test AWS client implementations
+        env:
+          ML_ENVIRONMENT: test
+          ML_DATABASE_TYPE: aws
+        run: |
+          echo "☁️ Testing AWS client implementations..."
+          
+          # Test AWS clients
+          pytest tests/clients/ -k "aws or neptune or opensearch" -v
+          
+          # Test AWS configuration
+          pytest tests/config/test_aws_native_config.py -v
+          
+          echo "✅ AWS client tests completed"
+      
+      - name: Upload AWS test results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: aws-test-results
+          path: |
+            test-results-aws.xml
+            integration-results-aws.xml
+            coverage.xml
+
+  # =============================================================================
+  # Environment Switching Tests
+  # =============================================================================
+  
+  test-environment-switching:
+    name: Test Environment Switching
+    runs-on: ubuntu-latest
+    needs: [detect-environment, test-local]
+    if: needs.detect-environment.outputs.test-local == 'true' && github.event.inputs.skip_tests != 'true'
+    
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: multimodal_librarian_test
+          POSTGRES_USER: ml_user
+          POSTGRES_PASSWORD: ml_password
+        options: >-
+          --health-cmd "pg_isready -U ml_user -d multimodal_librarian_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+          pip install pytest pytest-asyncio
+      
+      - name: Test configuration switching
+        run: |
+          echo "🔄 Testing environment configuration switching..."
+          
+          # Test local configuration
+          ML_ENVIRONMENT=test ML_DATABASE_TYPE=local python -c "
+          from multimodal_librarian.config.config_factory import get_database_config
+          config = get_database_config()
+          print(f'Local config type: {type(config).__name__}')
+          assert 'Local' in type(config).__name__
+          print('✅ Local configuration works')
+          "
+          
+          # Test AWS configuration (mock)
+          ML_ENVIRONMENT=test ML_DATABASE_TYPE=aws python -c "
+          from multimodal_librarian.config.config_factory import get_database_config
+          try:
+              config = get_database_config()
+              print(f'AWS config type: {type(config).__name__}')
+              print('✅ AWS configuration works')
+          except Exception as e:
+              print(f'⚠️ AWS configuration test: {e}')
+          "
+          
+          echo "✅ Configuration switching tests completed"
+      
+      - name: Test database factory switching
+        env:
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5432
+          POSTGRES_DB: multimodal_librarian_test
+          POSTGRES_USER: ml_user
+          POSTGRES_PASSWORD: ml_password
+        run: |
+          echo "🏭 Testing database factory environment switching..."
+          
+          pytest tests/integration/test_local_environment_switching.py -v
+          
+          echo "✅ Database factory switching tests completed"
+
+  # =============================================================================
+  # Docker Compose Testing
+  # =============================================================================
+  
+  test-docker-compose:
+    name: Test Docker Compose Setup
+    runs-on: ubuntu-latest
+    needs: detect-environment
+    if: needs.detect-environment.outputs.test-local == 'true' && github.event.inputs.skip_tests != 'true'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Docker Compose
+        run: |
+          # Install Docker Compose if not available
+          if ! command -v docker-compose &> /dev/null; then
+            sudo curl -L "https://github.com/docker/compose/releases/download/v${{ env.DOCKER_COMPOSE_VERSION }}/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+            sudo chmod +x /usr/local/bin/docker-compose
+          fi
+          
+          docker-compose --version
+      
+      - name: Test Docker Compose configuration
+        run: |
+          echo "🐳 Testing Docker Compose configuration..."
+          
+          # Validate docker-compose.local.yml
+          docker-compose -f docker-compose.local.yml config
+          
+          echo "✅ Docker Compose configuration is valid"
+      
+      - name: Test service startup (quick test)
+        run: |
+          echo "🚀 Testing Docker Compose service startup..."
+          
+          # Start services in background
+          docker-compose -f docker-compose.local.yml up -d postgres neo4j redis
+          
+          # Wait for services to be ready
+          echo "Waiting for services to start..."
+          sleep 30
+          
+          # Check service health
+          docker-compose -f docker-compose.local.yml ps
+          
+          # Test basic connectivity
+          docker-compose -f docker-compose.local.yml exec -T postgres pg_isready -U ml_user -d multimodal_librarian
+          docker-compose -f docker-compose.local.yml exec -T redis redis-cli ping
+          
+          echo "✅ Docker Compose services started successfully"
+      
+      - name: Test application container build
+        run: |
+          echo "🏗️ Testing application container build..."
+          
+          # Build application container
+          docker-compose -f docker-compose.local.yml build multimodal-librarian
+          
+          echo "✅ Application container built successfully"
+      
+      - name: Cleanup Docker Compose
+        if: always()
+        run: |
+          echo "🧹 Cleaning up Docker Compose services..."
+          docker-compose -f docker-compose.local.yml down -v
+          docker system prune -f
+
+  # =============================================================================
+  # Build and Security Scanning
+  # =============================================================================
+  
+  build-and-scan:
+    name: Build and Security Scan
+    runs-on: ubuntu-latest
+    needs: [test-local, test-aws]
+    if: always() && (needs.test-local.result == 'success' || needs.test-aws.result == 'success')
+    
+    outputs:
+      image-tag: ${{ steps.build.outputs.image-tag }}
+      image-uri: ${{ steps.build.outputs.image-uri }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Configure AWS credentials
+        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Login to Amazon ECR
+        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      
+      - name: Build Docker image
+        id: build
+        run: |
+          IMAGE_TAG="${GITHUB_SHA:0:8}"
+          
+          if [ "${{ github.ref }}" = "refs/heads/main" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # Build and push to ECR
+            ECR_REGISTRY="${{ steps.login-ecr.outputs.registry }}"
+            ECR_REPOSITORY="${{ env.PROJECT_NAME }}"
+            IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+            
+            docker build -t "$IMAGE_URI" .
+            docker push "$IMAGE_URI"
+            
+            echo "image-uri=$IMAGE_URI" >> $GITHUB_OUTPUT
+            echo "✅ Image pushed to ECR: $IMAGE_URI"
+          else
+            # Build locally for testing
+            docker build -t "${{ env.PROJECT_NAME }}:$IMAGE_TAG" .
+            echo "✅ Image built locally"
+          fi
+          
+          echo "image-tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+      
+      - name: Run security scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ steps.build.outputs.image-uri || format('{0}:{1}', env.PROJECT_NAME, steps.build.outputs.image-tag) }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+      
+      - name: Upload security scan results
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  # =============================================================================
+  # Deployment
+  # =============================================================================
+  
+  deploy:
+    name: Deploy to ${{ needs.detect-environment.outputs.environment }}
+    runs-on: ubuntu-latest
+    needs: [detect-environment, build-and-scan]
+    if: needs.detect-environment.outputs.deploy == 'true' && needs.build-and-scan.result == 'success'
+    environment: ${{ needs.detect-environment.outputs.environment }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Deploy to ${{ needs.detect-environment.outputs.environment }}
+        env:
+          IMAGE_URI: ${{ needs.build-and-scan.outputs.image-uri }}
+          IMAGE_TAG: ${{ needs.build-and-scan.outputs.image-tag }}
+          ENVIRONMENT: ${{ needs.detect-environment.outputs.environment }}
+        run: |
+          echo "🚀 Deploying to $ENVIRONMENT..."
+          echo "   Image: $IMAGE_URI"
+          
+          # Update ECS service
+          CLUSTER_NAME="${{ env.PROJECT_NAME }}-$ENVIRONMENT"
+          SERVICE_NAME="${{ env.PROJECT_NAME }}-$ENVIRONMENT"
+          
+          aws ecs update-service \
+            --cluster "$CLUSTER_NAME" \
+            --service "$SERVICE_NAME" \
+            --force-new-deployment
+          
+          # Wait for deployment to complete
+          aws ecs wait services-stable \
+            --cluster "$CLUSTER_NAME" \
+            --services "$SERVICE_NAME"
+          
+          echo "✅ Deployment completed successfully"
+      
+      - name: Run post-deployment tests
+        env:
+          ENVIRONMENT: ${{ needs.detect-environment.outputs.environment }}
+        run: |
+          echo "🧪 Running post-deployment tests..."
+          
+          # Get load balancer URL
+          ALB_URL=$(aws elbv2 describe-load-balancers \
+            --names "${{ env.PROJECT_NAME }}-$ENVIRONMENT" \
+            --query 'LoadBalancers[0].DNSName' \
+            --output text)
+          
+          if [ "$ALB_URL" != "None" ]; then
+            # Test health endpoints
+            curl -f "https://$ALB_URL/health/simple" || exit 1
+            curl -f "https://$ALB_URL/health/detailed" || exit 1
+            
+            echo "✅ Post-deployment tests passed"
+          else
+            echo "⚠️ Load balancer not found, skipping health checks"
+          fi
+
+  # =============================================================================
+  # Test Results Summary
+  # =============================================================================
+  
+  test-summary:
+    name: Test Results Summary
+    runs-on: ubuntu-latest
+    needs: [detect-environment, test-local, test-aws, test-environment-switching, test-docker-compose]
+    if: always()
+    
+    steps:
+      - name: Generate test summary
+        run: |
+          echo "# 🧪 Test Results Summary" > test-summary.md
+          echo "" >> test-summary.md
+          echo "**Pipeline Run:** $(date)" >> test-summary.md
+          echo "**Branch:** ${{ github.ref_name }}" >> test-summary.md
+          echo "**Commit:** ${{ github.sha }}" >> test-summary.md
+          echo "**Triggered by:** ${{ github.actor }}" >> test-summary.md
+          echo "" >> test-summary.md
+          
+          echo "## Test Environment Results" >> test-summary.md
+          echo "" >> test-summary.md
+          
+          # Local tests
+          if [ "${{ needs.detect-environment.outputs.test-local }}" = "true" ]; then
+            if [ "${{ needs.test-local.result }}" = "success" ]; then
+              echo "✅ **Local Services Testing:** PASSED" >> test-summary.md
+            else
+              echo "❌ **Local Services Testing:** FAILED" >> test-summary.md
+            fi
+          else
+            echo "⏭️ **Local Services Testing:** SKIPPED" >> test-summary.md
+          fi
+          
+          # AWS tests
+          if [ "${{ needs.detect-environment.outputs.test-aws }}" = "true" ]; then
+            if [ "${{ needs.test-aws.result }}" = "success" ]; then
+              echo "✅ **AWS Services Testing:** PASSED" >> test-summary.md
+            else
+              echo "❌ **AWS Services Testing:** FAILED" >> test-summary.md
+            fi
+          else
+            echo "⏭️ **AWS Services Testing:** SKIPPED" >> test-summary.md
+          fi
+          
+          # Environment switching tests
+          if [ "${{ needs.test-environment-switching.result }}" = "success" ]; then
+            echo "✅ **Environment Switching:** PASSED" >> test-summary.md
+          elif [ "${{ needs.test-environment-switching.result }}" = "failure" ]; then
+            echo "❌ **Environment Switching:** FAILED" >> test-summary.md
+          else
+            echo "⏭️ **Environment Switching:** SKIPPED" >> test-summary.md
+          fi
+          
+          # Docker Compose tests
+          if [ "${{ needs.test-docker-compose.result }}" = "success" ]; then
+            echo "✅ **Docker Compose Setup:** PASSED" >> test-summary.md
+          elif [ "${{ needs.test-docker-compose.result }}" = "failure" ]; then
+            echo "❌ **Docker Compose Setup:** FAILED" >> test-summary.md
+          else
+            echo "⏭️ **Docker Compose Setup:** SKIPPED" >> test-summary.md
+          fi
+          
+          echo "" >> test-summary.md
+          echo "## Overall Status" >> test-summary.md
+          echo "" >> test-summary.md
+          
+          # Determine overall status
+          FAILED_JOBS=0
+          
+          if [ "${{ needs.test-local.result }}" = "failure" ]; then
+            FAILED_JOBS=$((FAILED_JOBS + 1))
+          fi
+          
+          if [ "${{ needs.test-aws.result }}" = "failure" ]; then
+            FAILED_JOBS=$((FAILED_JOBS + 1))
+          fi
+          
+          if [ "${{ needs.test-environment-switching.result }}" = "failure" ]; then
+            FAILED_JOBS=$((FAILED_JOBS + 1))
+          fi
+          
+          if [ "${{ needs.test-docker-compose.result }}" = "failure" ]; then
+            FAILED_JOBS=$((FAILED_JOBS + 1))
+          fi
+          
+          if [ $FAILED_JOBS -eq 0 ]; then
+            echo "🎉 **Overall Status:** SUCCESS" >> test-summary.md
+            echo "" >> test-summary.md
+            echo "All tests passed successfully! The local development conversion is working correctly." >> test-summary.md
+          else
+            echo "❌ **Overall Status:** FAILED" >> test-summary.md
+            echo "" >> test-summary.md
+            echo "**Failed Jobs:** $FAILED_JOBS" >> test-summary.md
+            echo "" >> test-summary.md
+            echo "Please check the failed job logs for details." >> test-summary.md
+          fi
+          
+          echo "" >> test-summary.md
+          echo "---" >> test-summary.md
+          echo "**View Details:** [${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> test-summary.md
+          
+          cat test-summary.md
+      
+      - name: Upload test summary
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-summary
+          path: test-summary.md
+      
+      - name: Comment on PR (if applicable)
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const summary = fs.readFileSync('test-summary.md', 'utf8');
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });

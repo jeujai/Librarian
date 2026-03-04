@@ -1,0 +1,59 @@
+# Cost-optimized learning Dockerfile for Multimodal Librarian
+FROM python:3.11-slim as base
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app/src \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# Set work directory
+WORKDIR /app
+
+# Install system dependencies (minimal set for cost optimization)
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    curl \
+    git \
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Copy learning requirements
+COPY requirements-learning.txt ./
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements-learning.txt
+
+# Download spacy model (essential for NLP)
+RUN python -m spacy download en_core_web_sm
+
+# Copy project files
+COPY src/ ./src/
+COPY pyproject.toml ./
+
+# Install the package
+RUN pip install .
+
+# Create necessary directories with proper permissions
+RUN mkdir -p uploads media exports logs audit_logs \
+    && chmod 755 uploads media exports logs audit_logs
+
+# Create non-root user for security
+RUN groupadd -r appuser && useradd -r -g appuser appuser \
+    && chown -R appuser:appuser /app
+
+USER appuser
+
+# Expose ports for API and WebSocket
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:8000/health/simple || exit 1
+
+# Run the learning application
+CMD ["gunicorn", "multimodal_librarian.main_learning:app", "-w", "2", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000", "--timeout", "120"]

@@ -1,0 +1,33 @@
+{
+  "cleanup_timestamp": "2026-01-22T10:58:41.191634",
+  "original_monthly_cost": 516.91,
+  "estimated_monthly_savings": 95,
+  "estimated_new_monthly_cost": 421.90999999999997,
+  "savings_breakdown": {
+    "Neptune": 0,
+    "ECS": 0,
+    "NAT_Gateways": 0,
+    "Load_Balancers": 0,
+    "ElastiCache": 0,
+    "CloudFront": 60,
+    "Collaborative_Editor": 15,
+    "OpenSearch": 0,
+    "VPCs": 20
+  },
+  "remaining_costs": {
+    "AWS_WAF": 4.5,
+    "ECR": 2.99,
+    "Secrets_Manager": 2.08,
+    "S3": 0.15,
+    "CloudWatch": 2.19,
+    "KMS": 0.45,
+    "CloudTrail": 0.03,
+    "Other_Small_Services": 5.0
+  },
+  "notes": [
+    "CloudFront distributions are disabled but may take 15-20 minutes to fully delete",
+    "Some resources may have dependencies that prevent immediate deletion",
+    "Monitor AWS billing console for actual cost reductions over the next few days",
+    "Remaining costs should be under $20/month after all deletions complete"
+  ]
+}

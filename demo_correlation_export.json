@@ -1,0 +1,168 @@
+{
+  "export_timestamp": "2026-01-10T23:02:07.884438",
+  "export_format": "json",
+  "time_period_hours": 24,
+  "correlation_id_filter": "export_demo_1768111327",
+  "trace_id_filter": null,
+  "total_logs": 4,
+  "logs": [
+    {
+      "timestamp": "2026-01-10T23:02:07.876594",
+      "level": "INFO",
+      "service": "export_service",
+      "operation": "start_export_demo",
+      "message": "Starting export demonstration",
+      "correlation_id": "export_demo_1768111327",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": null,
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": null,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "demo_type": "export",
+        "step": 1
+      },
+      "tags": {},
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.876675",
+      "level": "INFO",
+      "service": "export_service",
+      "operation": "process_data",
+      "message": "Processing data for export",
+      "correlation_id": "export_demo_1768111327",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": null,
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": null,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "demo_type": "export",
+        "step": 2,
+        "records_processed": 100
+      },
+      "tags": {},
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.876740",
+      "level": "WARNING",
+      "service": "export_service",
+      "operation": "validate_data",
+      "message": "Some data validation warnings",
+      "correlation_id": "export_demo_1768111327",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": null,
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": null,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "demo_type": "export",
+        "step": 3,
+        "warnings": 2
+      },
+      "tags": {},
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.876800",
+      "level": "INFO",
+      "service": "export_service",
+      "operation": "complete_export_demo",
+      "message": "Export demonstration completed",
+      "correlation_id": "export_demo_1768111327",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": null,
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": null,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "demo_type": "export",
+        "step": 4,
+        "success": true
+      },
+      "tags": {},
+      "context": {}
+    }
+  ],
+  "statistics": {
+    "time_period_hours": 24,
+    "total_logs": 44,
+    "logs_per_hour": 1.8333333333333333,
+    "level_distribution": {
+      "INFO": 27,
+      "WARNING": 9,
+      "ERROR": 8
+    },
+    "service_distribution": {
+      "demo_service": 9,
+      "structured_logging": 1,
+      "demo_api_gateway": 4,
+      "demo_api_auth": 3,
+      "demo_api_data": 3,
+      "web_service": 5,
+      "api_service": 5,
+      "data_service": 5,
+      "auth_service": 5,
+      "export_service": 4
+    },
+    "top_operations": {
+      "operation_0": 4,
+      "operation_1": 4,
+      "operation_2": 4,
+      "operation_3": 4,
+      "operation_4": 4,
+      "handle_request": 3,
+      "authenticate_user": 3,
+      "intermediate_step": 2,
+      "fetch_data": 2,
+      "process_response": 2
+    },
+    "top_errors": {
+      "demo_service.error_operation.DemoError": 1,
+      "demo_service.failing_operation_error.ValueError": 1,
+      "data_service.operation_2": 1,
+      "api_service.operation_0": 1,
+      "web_service.operation_3": 1,
+      "auth_service.operation_1": 1,
+      "data_service.operation_4": 1,
+      "api_service.operation_2": 1
+    },
+    "active_users": 3,
+    "average_duration_ms": 97.88622422651811,
+    "processing_stats": {
+      "total_logs_processed": 44,
+      "logs_per_second": 16666.666666666668,
+      "average_processing_time_ms": 0.015734842076654255,
+      "last_processing_time": "2026-01-10 23:02:07.876810"
+    },
+    "aggregation_rules": 5,
+    "retention_policies": 3,
+    "archived_logs_count": 0
+  }
+}

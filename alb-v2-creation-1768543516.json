@@ -1,0 +1,52 @@
+{
+  "success": true,
+  "timestamp": "2026-01-15T23:05:16.329311",
+  "load_balancer": {
+    "arn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:loadbalancer/app/multimodal-lib-prod-alb-v2/5964a1d711ab8dfe",
+    "name": "multimodal-lib-prod-alb-v2",
+    "dns_name": "multimodal-lib-prod-alb-v2-1090291461.us-east-1.elb.amazonaws.com",
+    "state": "active",
+    "type": "application",
+    "scheme": "internet-facing",
+    "vpc_id": "vpc-0b2186b38779e77f6",
+    "availability_zones": [
+      {
+        "zone_name": "us-east-1c",
+        "subnet_id": "subnet-02fe694f061238d5a"
+      },
+      {
+        "zone_name": "us-east-1b",
+        "subnet_id": "subnet-02f4d9ecb751beb27"
+      },
+      {
+        "zone_name": "us-east-1a",
+        "subnet_id": "subnet-0c352188f5398a718"
+      }
+    ],
+    "security_groups": [
+      "sg-0135b368e20b7bd01"
+    ]
+  },
+  "configuration_used": {
+    "name": "multimodal-lib-prod-alb-v2",
+    "subnets": [
+      "subnet-0c352188f5398a718",
+      "subnet-02f4d9ecb751beb27",
+      "subnet-02fe694f061238d5a"
+    ],
+    "security_groups": [
+      "sg-0135b368e20b7bd01"
+    ],
+    "scheme": "internet-facing",
+    "type": "application",
+    "ip_address_type": "ipv4"
+  },
+  "listener_created": true,
+  "listener_arn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:listener/app/multimodal-lib-prod-alb-v2/5964a1d711ab8dfe/a312e4e0d1e0805e",
+  "listener": {
+    "arn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:listener/app/multimodal-lib-prod-alb-v2/5964a1d711ab8dfe/a312e4e0d1e0805e",
+    "protocol": "HTTP",
+    "port": 80,
+    "target_group_arn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg-v2/7b63a6337a5c7a34"
+  }
+}

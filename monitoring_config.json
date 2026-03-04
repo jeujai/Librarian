@@ -1,0 +1,21 @@
+{
+  "interval": 30,
+  "duration": 60,
+  "services": [
+    "postgres",
+    "neo4j",
+    "milvus",
+    "etcd",
+    "minio"
+  ],
+  "alerts_enabled": true,
+  "output_dir": "monitoring_reports",
+  "thresholds": {
+    "cpu_warning": 70.0,
+    "cpu_critical": 85.0,
+    "memory_warning": 80.0,
+    "memory_critical": 90.0,
+    "disk_warning": 85.0,
+    "disk_critical": 95.0
+  }
+}

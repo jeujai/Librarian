@@ -1,0 +1,61 @@
+{
+  "timestamp": "2026-01-11T01:42:03.185324",
+  "test_name": "comprehensive_validation_system",
+  "tests": {
+    "configuration_management": {
+      "test_name": "configuration_management",
+      "success": false,
+      "details": {
+        "config_manager_created": true
+      },
+      "errors": [
+        "Configuration error: 'ConfigurationManager' object has no attribute 'load_config'"
+      ]
+    },
+    "validation_workflow": {
+      "test_name": "validation_workflow",
+      "success": true,
+      "details": {
+        "deployment_config_created": true,
+        "validator_created": true,
+        "aws_validation_skipped": true
+      },
+      "errors": []
+    },
+    "cli_integration": {
+      "test_name": "cli_integration",
+      "success": true,
+      "details": {
+        "cli_imported": true,
+        "main_function_exists": true
+      },
+      "errors": []
+    },
+    "error_handling": {
+      "test_name": "error_handling",
+      "success": true,
+      "details": {
+        "invalid_config_handled": true,
+        "missing_file_handled": true
+      },
+      "errors": []
+    },
+    "remediation_workflow": {
+      "test_name": "remediation_workflow",
+      "success": true,
+      "details": {
+        "fix_manager_created": true,
+        "remediation_guide_generated": true,
+        "all_scripts_exist": true
+      },
+      "errors": []
+    }
+  },
+  "overall_success": false,
+  "summary": {
+    "total_tests": 5,
+    "passed_tests": 4,
+    "failed_tests": 1,
+    "success_rate": 80.0
+  }
+}

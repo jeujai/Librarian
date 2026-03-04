@@ -1,0 +1,152 @@
+{
+  "vpc_endpoints_status": [
+    {
+      "service": "secretsmanager",
+      "endpoint_id": "vpce-0f82ff9f6fc0c0359",
+      "state": "available",
+      "type": "Interface",
+      "creation_timestamp": "2026-01-09T10:14:13.035000+00:00"
+    },
+    {
+      "service": "dkr",
+      "endpoint_id": "vpce-0b679ce7516e6da9e",
+      "state": "available",
+      "type": "Interface",
+      "creation_timestamp": "2026-01-09T10:14:14.391000+00:00"
+    },
+    {
+      "service": "api",
+      "endpoint_id": "vpce-09d2384c104083d45",
+      "state": "available",
+      "type": "Interface",
+      "creation_timestamp": "2026-01-09T10:14:15.772000+00:00"
+    },
+    {
+      "service": "logs",
+      "endpoint_id": "vpce-081d448bdfdbd9d63",
+      "state": "available",
+      "type": "Interface",
+      "creation_timestamp": "2026-01-09T10:14:17.059000+00:00"
+    },
+    {
+      "service": "s3",
+      "endpoint_id": "vpce-0d5e478d61b2ed942",
+      "state": "available",
+      "type": "Gateway",
+      "creation_timestamp": "2026-01-09T10:14:18+00:00"
+    }
+  ],
+  "service_restart": {
+    "success": true,
+    "deployment_id": "ecs-svc/4469107364387962261",
+    "previous_task_count": 0,
+    "new_task_count": 1,
+    "status": "ACTIVE"
+  },
+  "task_monitoring": {
+    "startup_successful": true,
+    "monitoring_duration": 248.3899610042572,
+    "final_status": {
+      "running_count": 1,
+      "desired_count": 1,
+      "pending_count": 1,
+      "status": "ACTIVE"
+    },
+    "events": [
+      {
+        "time": "2026-01-09T03:15:06.757000-07:00",
+        "message": "(service multimodal-lib-prod-service) has started 1 tasks: (task be02b803968d470a9b3bbec6b0afb90e)."
+      },
+      {
+        "time": "2026-01-09T03:19:12.528000-07:00",
+        "message": "(service multimodal-lib-prod-service) has started 1 tasks: (task 131e8edd4c844ca9bf47432e727d308b)."
+      },
+      {
+        "time": "2026-01-09T03:22:35.228000-07:00",
+        "message": "(service multimodal-lib-prod-service) registered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/4fcfbdac0243c773)"
+      }
+    ],
+    "task_details": [
+      {
+        "task_id": "be02b803968d470a9b3bbec6b0afb90e",
+        "status": "PENDING"
+      },
+      {
+        "task_id": "131e8edd4c844ca9bf47432e727d308b",
+        "status": "PROVISIONING"
+      },
+      {
+        "task_id": "be02b803968d470a9b3bbec6b0afb90e",
+        "status": "PENDING"
+      },
+      {
+        "task_id": "131e8edd4c844ca9bf47432e727d308b",
+        "status": "PENDING"
+      },
+      {
+        "task_id": "be02b803968d470a9b3bbec6b0afb90e",
+        "status": "PENDING"
+      },
+      {
+        "task_id": "131e8edd4c844ca9bf47432e727d308b",
+        "status": "PENDING"
+      },
+      {
+        "task_id": "be02b803968d470a9b3bbec6b0afb90e",
+        "status": "PENDING"
+      },
+      {
+        "task_id": "131e8edd4c844ca9bf47432e727d308b",
+        "status": "PENDING"
+      },
+      {
+        "task_id": "be02b803968d470a9b3bbec6b0afb90e",
+        "status": "PENDING"
+      },
+      {
+        "task_id": "131e8edd4c844ca9bf47432e727d308b",
+        "status": "PENDING"
+      },
+      {
+        "task_id": "be02b803968d470a9b3bbec6b0afb90e",
+        "status": "PENDING"
+      },
+      {
+        "task_id": "131e8edd4c844ca9bf47432e727d308b",
+        "status": "PENDING"
+      },
+      {
+        "task_id": "be02b803968d470a9b3bbec6b0afb90e",
+        "status": "PENDING"
+      },
+      {
+        "task_id": "131e8edd4c844ca9bf47432e727d308b",
+        "status": "PENDING"
+      },
+      {
+        "task_id": "be02b803968d470a9b3bbec6b0afb90e",
+        "status": "PENDING"
+      },
+      {
+        "task_id": "131e8edd4c844ca9bf47432e727d308b",
+        "status": "PENDING"
+      },
+      {
+        "task_id": "be02b803968d470a9b3bbec6b0afb90e",
+        "status": "RUNNING"
+      }
+    ]
+  },
+  "summary": {
+    "endpoints_available": 5,
+    "endpoints_total": 5,
+    "deployment_successful": true,
+    "service_running": true,
+    "issues_found": [],
+    "next_steps": [
+      "\u2705 Service is running successfully",
+      "\ud83e\uddea Run end-to-end tests to validate functionality",
+      "\ud83d\udcca Monitor service health and performance"
+    ]
+  }
+}

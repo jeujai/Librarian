@@ -1,0 +1,821 @@
+name: Local Development Testing
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_scope:
+        description: 'Scope of tests to run'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - unit
+          - integration
+          - docker-compose
+          - database-clients
+      cleanup_after:
+        description: 'Clean up services after testing'
+        required: false
+        default: true
+        type: boolean
+  
+  push:
+    branches:
+      - develop
+      - feature/local-development-*
+    paths:
+      - 'src/multimodal_librarian/clients/**'
+      - 'src/multimodal_librarian/config/**'
+      - 'tests/clients/**'
+      - 'tests/config/**'
+      - 'tests/integration/test_local_*'
+      - 'docker-compose.local.yml'
+      - '.env.local.example'
+      - 'database/**'
+      - 'scripts/wait-for-services.sh'
+
+env:
+  PYTHON_VERSION: '3.11'
+  COMPOSE_PROJECT_NAME: multimodal-librarian-test
+
+jobs:
+  # =============================================================================
+  # Local Services Setup and Testing
+  # =============================================================================
+  
+  test-local-services:
+    name: Test Local Services
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        test-group:
+          - unit-tests
+          - integration-tests
+          - client-tests
+      fail-fast: false
+    
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: multimodal_librarian_test
+          POSTGRES_USER: ml_user
+          POSTGRES_PASSWORD: ml_password
+          POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
+        options: >-
+          --health-cmd "pg_isready -U ml_user -d multimodal_librarian_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      
+      neo4j:
+        image: neo4j:5.15-community
+        env:
+          NEO4J_AUTH: neo4j/ml_password
+          NEO4J_PLUGINS: '["gds", "apoc"]'
+          NEO4J_dbms_security_procedures_unrestricted: gds.*,apoc.*
+          NEO4J_dbms_memory_heap_initial__size: 256m
+          NEO4J_dbms_memory_heap_max__size: 512m
+          NEO4J_dbms_memory_pagecache_size: 128m
+        options: >-
+          --health-cmd "cypher-shell -u neo4j -p ml_password 'RETURN 1'"
+          --health-interval 30s
+          --health-timeout 10s
+          --health-retries 5
+        ports:
+          - 7474:7474
+          - 7687:7687
+      
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            libpq-dev \
+            curl \
+            netcat-openbsd \
+            jq
+      
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+          pip install pytest pytest-cov pytest-asyncio pytest-xdist pytest-timeout
+      
+      - name: Set up Milvus (standalone)
+        run: |
+          echo "🚀 Setting up Milvus standalone..."
+          
+          # Download Milvus standalone script
+          curl -sfL https://raw.githubusercontent.com/milvus-io/milvus/master/scripts/standalone_embed.sh -o standalone_embed.sh
+          chmod +x standalone_embed.sh
+          
+          # Start Milvus
+          bash standalone_embed.sh start
+          
+          # Wait for Milvus to be ready
+          echo "Waiting for Milvus to start..."
+          for i in {1..60}; do
+            if curl -f http://localhost:9091/healthz >/dev/null 2>&1; then
+              echo "✅ Milvus is ready"
+              break
+            fi
+            echo "Waiting for Milvus... ($i/60)"
+            sleep 5
+          done
+          
+          # Verify Milvus is running
+          curl -f http://localhost:9091/healthz || {
+            echo "❌ Milvus failed to start"
+            exit 1
+          }
+      
+      - name: Verify all services are ready
+        run: |
+          echo "🔍 Verifying all services are ready..."
+          
+          # PostgreSQL
+          echo "Testing PostgreSQL connection..."
+          PGPASSWORD=ml_password psql -h localhost -U ml_user -d multimodal_librarian_test -c "SELECT version();" || {
+            echo "❌ PostgreSQL connection failed"
+            exit 1
+          }
+          echo "✅ PostgreSQL is ready"
+          
+          # Neo4j
+          echo "Testing Neo4j connection..."
+          for i in {1..30}; do
+            if curl -f http://localhost:7474/db/data/ >/dev/null 2>&1; then
+              echo "✅ Neo4j HTTP is ready"
+              break
+            fi
+            echo "Waiting for Neo4j HTTP... ($i/30)"
+            sleep 2
+          done
+          
+          # Test Cypher connection
+          echo 'RETURN "Hello Neo4j" as message' | cypher-shell -u neo4j -p ml_password || {
+            echo "❌ Neo4j Cypher connection failed"
+            exit 1
+          }
+          echo "✅ Neo4j is ready"
+          
+          # Redis
+          echo "Testing Redis connection..."
+          redis-cli -h localhost ping || {
+            echo "❌ Redis connection failed"
+            exit 1
+          }
+          echo "✅ Redis is ready"
+          
+          # Milvus
+          echo "Testing Milvus connection..."
+          curl -f http://localhost:9091/healthz || {
+            echo "❌ Milvus health check failed"
+            exit 1
+          }
+          echo "✅ Milvus is ready"
+          
+          echo "🎉 All services are ready!"
+      
+      - name: Set up test environment
+        run: |
+          echo "⚙️ Setting up test environment..."
+          
+          # Create comprehensive test environment file
+          cat > .env.test << EOF
+          # Local Development Test Environment
+          ML_ENVIRONMENT=test
+          ML_DATABASE_TYPE=local
+          DATABASE_TYPE=local
+          DEBUG=true
+          LOG_LEVEL=DEBUG
+          
+          # Local Database Configuration
+          POSTGRES_HOST=localhost
+          POSTGRES_PORT=5432
+          POSTGRES_DB=multimodal_librarian_test
+          POSTGRES_USER=ml_user
+          POSTGRES_PASSWORD=ml_password
+          
+          NEO4J_HOST=localhost
+          NEO4J_PORT=7687
+          NEO4J_USER=neo4j
+          NEO4J_PASSWORD=ml_password
+          NEO4J_URI=bolt://localhost:7687
+          
+          MILVUS_HOST=localhost
+          MILVUS_PORT=19530
+          MILVUS_COLLECTION_NAME=test_knowledge_chunks
+          
+          REDIS_HOST=localhost
+          REDIS_PORT=6379
+          REDIS_DB=1
+          
+          # Connection Settings
+          CONNECTION_TIMEOUT=15
+          QUERY_TIMEOUT=10
+          MAX_RETRIES=2
+          POOL_SIZE=5
+          
+          # Test Optimizations
+          ENABLE_HEALTH_CHECKS=false
+          VALIDATE_CONFIG_ON_STARTUP=false
+          STRICT_CONFIG_VALIDATION=false
+          ENABLE_QUERY_LOGGING=false
+          
+          # Disable External Services
+          OPENAI_API_KEY=test-key-disabled
+          GOOGLE_API_KEY=test-key-disabled
+          ANTHROPIC_API_KEY=test-key-disabled
+          
+          # Test-specific Settings
+          TEST_MODE=true
+          PYTEST_CURRENT_TEST=true
+          EOF
+          
+          echo "✅ Test environment configured"
+      
+      - name: Initialize test databases
+        env:
+          ML_ENVIRONMENT: test
+          ML_DATABASE_TYPE: local
+        run: |
+          echo "🗄️ Initializing test databases..."
+          
+          # Initialize PostgreSQL schema
+          if [ -f "database/postgresql/init_db.sql" ]; then
+            echo "Initializing PostgreSQL schema..."
+            PGPASSWORD=ml_password psql -h localhost -U ml_user -d multimodal_librarian_test -f database/postgresql/init_db.sql
+          fi
+          
+          # Initialize PostgreSQL test data
+          if [ -f "database/postgresql/init/test_data.sql" ]; then
+            echo "Loading PostgreSQL test data..."
+            PGPASSWORD=ml_password psql -h localhost -U ml_user -d multimodal_librarian_test -f database/postgresql/init/test_data.sql
+          fi
+          
+          # Initialize Neo4j schema
+          if [ -f "database/neo4j/init_schema.sh" ]; then
+            echo "Initializing Neo4j schema..."
+            bash database/neo4j/init_schema.sh
+          fi
+          
+          # Create test collections in Milvus
+          echo "Initializing Milvus test collections..."
+          python -c "
+          import sys
+          sys.path.append('src')
+          try:
+              from multimodal_librarian.clients.milvus_client import MilvusClient
+              import asyncio
+              
+              async def init_milvus():
+                  client = MilvusClient(host='localhost', port=19530)
+                  await client.connect()
+                  
+                  # Create test collection if it doesn't exist
+                  try:
+                      await client.create_collection('test_knowledge_chunks', dimension=384)
+                      print('✅ Milvus test collection created')
+                  except Exception as e:
+                      print(f'Milvus collection setup: {e}')
+                  
+                  await client.disconnect()
+              
+              asyncio.run(init_milvus())
+          except ImportError as e:
+              print(f'Milvus client not available: {e}')
+          except Exception as e:
+              print(f'Milvus initialization error: {e}')
+          "
+          
+          echo "✅ Test databases initialized"
+      
+      - name: Run unit tests
+        if: matrix.test-group == 'unit-tests' || github.event.inputs.test_scope == 'all' || github.event.inputs.test_scope == 'unit'
+        env:
+          ML_ENVIRONMENT: test
+          ML_DATABASE_TYPE: local
+        run: |
+          echo "🧪 Running unit tests for local services..."
+          
+          pytest tests/ \
+            --cov=src/multimodal_librarian \
+            --cov-report=xml \
+            --cov-report=html \
+            --cov-report=term-missing \
+            --junit-xml=test-results-unit-${{ matrix.test-group }}.xml \
+            -v \
+            --tb=short \
+            --timeout=30 \
+            --maxfail=10 \
+            -k "not integration and not docker"
+          
+          echo "✅ Unit tests completed"
+      
+      - name: Run integration tests
+        if: matrix.test-group == 'integration-tests' || github.event.inputs.test_scope == 'all' || github.event.inputs.test_scope == 'integration'
+        env:
+          ML_ENVIRONMENT: test
+          ML_DATABASE_TYPE: local
+        run: |
+          echo "🔗 Running integration tests for local services..."
+          
+          pytest tests/integration/ \
+            --junit-xml=integration-results-${{ matrix.test-group }}.xml \
+            -v \
+            --tb=short \
+            --timeout=60 \
+            --maxfail=5 \
+            -k "local"
+          
+          echo "✅ Integration tests completed"
+      
+      - name: Run database client tests
+        if: matrix.test-group == 'client-tests' || github.event.inputs.test_scope == 'all' || github.event.inputs.test_scope == 'database-clients'
+        env:
+          ML_ENVIRONMENT: test
+          ML_DATABASE_TYPE: local
+        run: |
+          echo "🏭 Running database client tests..."
+          
+          # Test local database clients
+          pytest tests/clients/ \
+            --junit-xml=client-results-${{ matrix.test-group }}.xml \
+            -v \
+            --tb=short \
+            --timeout=45 \
+            --maxfail=5 \
+            -k "local"
+          
+          # Test database factory
+          pytest tests/clients/test_database_client_factory.py -v
+          
+          # Test configuration
+          pytest tests/config/test_local_config.py -v
+          pytest tests/config/test_config_factory.py -v
+          
+          echo "✅ Database client tests completed"
+      
+      - name: Test environment switching
+        env:
+          ML_ENVIRONMENT: test
+        run: |
+          echo "🔄 Testing environment switching..."
+          
+          # Test switching from local to AWS config (mock)
+          python -c "
+          import os
+          import sys
+          sys.path.append('src')
+          
+          # Test local configuration
+          os.environ['ML_DATABASE_TYPE'] = 'local'
+          try:
+              from multimodal_librarian.config.config_factory import get_database_config
+              config = get_database_config()
+              print(f'✅ Local config: {type(config).__name__}')
+              assert 'Local' in type(config).__name__ or 'local' in str(type(config)).lower()
+          except Exception as e:
+              print(f'❌ Local config test failed: {e}')
+              sys.exit(1)
+          
+          # Test AWS configuration (should work even without AWS credentials)
+          os.environ['ML_DATABASE_TYPE'] = 'aws'
+          try:
+              config = get_database_config()
+              print(f'✅ AWS config: {type(config).__name__}')
+          except Exception as e:
+              print(f'⚠️ AWS config test (expected in CI): {e}')
+          
+          print('✅ Environment switching works')
+          "
+          
+          echo "✅ Environment switching tests completed"
+      
+      - name: Upload test results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: local-test-results-${{ matrix.test-group }}
+          path: |
+            test-results-*.xml
+            integration-results-*.xml
+            client-results-*.xml
+            htmlcov/
+            .coverage
+            coverage.xml
+      
+      - name: Cleanup Milvus
+        if: always() && github.event.inputs.cleanup_after != 'false'
+        run: |
+          echo "🧹 Cleaning up Milvus..."
+          bash standalone_embed.sh stop || true
+          docker system prune -f || true
+
+  # =============================================================================
+  # Docker Compose Full Stack Testing
+  # =============================================================================
+  
+  test-docker-compose-full:
+    name: Test Docker Compose Full Stack
+    runs-on: ubuntu-latest
+    if: github.event.inputs.test_scope == 'all' || github.event.inputs.test_scope == 'docker-compose'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Docker Compose
+        run: |
+          # Ensure Docker Compose is available
+          docker-compose --version
+          
+          # Create test environment file
+          cp .env.local.example .env.local
+          
+          # Update for testing
+          cat >> .env.local << EOF
+          
+          # Test overrides
+          POSTGRES_DB=multimodal_librarian_test
+          MILVUS_COLLECTION_NAME=test_knowledge_chunks
+          REDIS_DB=1
+          DEBUG=true
+          LOG_LEVEL=DEBUG
+          EOF
+      
+      - name: Test Docker Compose configuration
+        run: |
+          echo "🐳 Testing Docker Compose configuration..."
+          
+          # Validate configuration
+          docker-compose -f docker-compose.local.yml config
+          
+          echo "✅ Docker Compose configuration is valid"
+      
+      - name: Start services with Docker Compose
+        run: |
+          echo "🚀 Starting services with Docker Compose..."
+          
+          # Start all services
+          docker-compose -f docker-compose.local.yml up -d
+          
+          # Wait for services to be ready
+          echo "Waiting for services to start..."
+          sleep 60
+          
+          # Check service status
+          docker-compose -f docker-compose.local.yml ps
+          
+          echo "✅ Services started"
+      
+      - name: Wait for services to be healthy
+        run: |
+          echo "⏳ Waiting for services to be healthy..."
+          
+          # Use the wait script if available
+          if [ -f "scripts/wait-for-services.sh" ]; then
+            timeout 300 bash scripts/wait-for-services.sh
+          else
+            # Manual health checks
+            echo "Waiting for PostgreSQL..."
+            for i in {1..30}; do
+              if docker-compose -f docker-compose.local.yml exec -T postgres pg_isready -U ml_user -d multimodal_librarian; then
+                echo "✅ PostgreSQL is ready"
+                break
+              fi
+              echo "Waiting for PostgreSQL... ($i/30)"
+              sleep 5
+            done
+            
+            echo "Waiting for Neo4j..."
+            for i in {1..30}; do
+              if docker-compose -f docker-compose.local.yml exec -T neo4j cypher-shell -u neo4j -p ml_password "RETURN 1" >/dev/null 2>&1; then
+                echo "✅ Neo4j is ready"
+                break
+              fi
+              echo "Waiting for Neo4j... ($i/30)"
+              sleep 5
+            done
+            
+            echo "Waiting for Milvus..."
+            for i in {1..30}; do
+              if curl -f http://localhost:19530/healthz >/dev/null 2>&1; then
+                echo "✅ Milvus is ready"
+                break
+              fi
+              echo "Waiting for Milvus... ($i/30)"
+              sleep 5
+            done
+          fi
+          
+          echo "✅ All services are healthy"
+      
+      - name: Test service connectivity
+        run: |
+          echo "🔍 Testing service connectivity..."
+          
+          # Test PostgreSQL
+          docker-compose -f docker-compose.local.yml exec -T postgres \
+            psql -U ml_user -d multimodal_librarian -c "SELECT version();"
+          
+          # Test Neo4j
+          docker-compose -f docker-compose.local.yml exec -T neo4j \
+            cypher-shell -u neo4j -p ml_password "RETURN 'Neo4j is working' as message"
+          
+          # Test Redis
+          docker-compose -f docker-compose.local.yml exec -T redis \
+            redis-cli ping
+          
+          # Test Milvus
+          curl -f http://localhost:19530/healthz
+          
+          echo "✅ All services are accessible"
+      
+      - name: Test application container
+        run: |
+          echo "🏗️ Testing application container..."
+          
+          # Build application container
+          docker-compose -f docker-compose.local.yml build multimodal-librarian
+          
+          # Start application container
+          docker-compose -f docker-compose.local.yml up -d multimodal-librarian
+          
+          # Wait for application to start
+          echo "Waiting for application to start..."
+          sleep 30
+          
+          # Test application health
+          for i in {1..20}; do
+            if curl -f http://localhost:8000/health >/dev/null 2>&1; then
+              echo "✅ Application is responding"
+              break
+            fi
+            echo "Waiting for application... ($i/20)"
+            sleep 5
+          done
+          
+          # Test application endpoints
+          curl -f http://localhost:8000/health || {
+            echo "❌ Application health check failed"
+            docker-compose -f docker-compose.local.yml logs multimodal-librarian
+            exit 1
+          }
+          
+          echo "✅ Application container is working"
+      
+      - name: Run integration tests against Docker Compose
+        run: |
+          echo "🧪 Running integration tests against Docker Compose services..."
+          
+          # Set up Python for testing
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+          pip install pytest pytest-asyncio
+          
+          # Set environment for Docker Compose testing
+          export ML_ENVIRONMENT=test
+          export ML_DATABASE_TYPE=local
+          export POSTGRES_HOST=localhost
+          export POSTGRES_PORT=5432
+          export NEO4J_HOST=localhost
+          export NEO4J_PORT=7687
+          export MILVUS_HOST=localhost
+          export MILVUS_PORT=19530
+          export REDIS_HOST=localhost
+          export REDIS_PORT=6379
+          
+          # Run Docker Compose specific tests
+          pytest tests/integration/test_local_docker_integration.py -v --tb=short
+          
+          echo "✅ Docker Compose integration tests completed"
+      
+      - name: Collect service logs
+        if: always()
+        run: |
+          echo "📋 Collecting service logs..."
+          
+          mkdir -p logs
+          
+          docker-compose -f docker-compose.local.yml logs postgres > logs/postgres.log 2>&1 || true
+          docker-compose -f docker-compose.local.yml logs neo4j > logs/neo4j.log 2>&1 || true
+          docker-compose -f docker-compose.local.yml logs redis > logs/redis.log 2>&1 || true
+          docker-compose -f docker-compose.local.yml logs milvus > logs/milvus.log 2>&1 || true
+          docker-compose -f docker-compose.local.yml logs multimodal-librarian > logs/application.log 2>&1 || true
+          
+          echo "✅ Service logs collected"
+      
+      - name: Upload service logs
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: docker-compose-logs
+          path: logs/
+      
+      - name: Cleanup Docker Compose
+        if: always() && github.event.inputs.cleanup_after != 'false'
+        run: |
+          echo "🧹 Cleaning up Docker Compose services..."
+          
+          docker-compose -f docker-compose.local.yml down -v
+          docker system prune -f
+          
+          echo "✅ Cleanup completed"
+
+  # =============================================================================
+  # Performance and Load Testing
+  # =============================================================================
+  
+  test-local-performance:
+    name: Test Local Performance
+    runs-on: ubuntu-latest
+    needs: test-local-services
+    if: github.event.inputs.test_scope == 'all'
+    
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: multimodal_librarian_test
+          POSTGRES_USER: ml_user
+          POSTGRES_PASSWORD: ml_password
+        options: >-
+          --health-cmd "pg_isready -U ml_user -d multimodal_librarian_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+          pip install pytest pytest-benchmark pytest-asyncio
+      
+      - name: Run performance tests
+        env:
+          ML_ENVIRONMENT: test
+          ML_DATABASE_TYPE: local
+        run: |
+          echo "⚡ Running performance tests for local services..."
+          
+          # Run performance benchmarks
+          pytest tests/performance/ \
+            --benchmark-only \
+            --benchmark-json=benchmark-results.json \
+            -v \
+            -k "local"
+          
+          echo "✅ Performance tests completed"
+      
+      - name: Upload performance results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: performance-results
+          path: benchmark-results.json
+
+  # =============================================================================
+  # Test Summary and Reporting
+  # =============================================================================
+  
+  local-test-summary:
+    name: Local Test Summary
+    runs-on: ubuntu-latest
+    needs: [test-local-services, test-docker-compose-full, test-local-performance]
+    if: always()
+    
+    steps:
+      - name: Download all test artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: test-artifacts
+      
+      - name: Generate comprehensive test report
+        run: |
+          echo "# 🏠 Local Development Testing Report" > local-test-report.md
+          echo "" >> local-test-report.md
+          echo "**Test Run:** $(date)" >> local-test-report.md
+          echo "**Branch:** ${{ github.ref_name }}" >> local-test-report.md
+          echo "**Commit:** ${{ github.sha }}" >> local-test-report.md
+          echo "**Scope:** ${{ github.event.inputs.test_scope || 'all' }}" >> local-test-report.md
+          echo "" >> local-test-report.md
+          
+          echo "## Test Results" >> local-test-report.md
+          echo "" >> local-test-report.md
+          
+          # Service tests
+          if [ "${{ needs.test-local-services.result }}" = "success" ]; then
+            echo "✅ **Local Services Testing:** PASSED" >> local-test-report.md
+          else
+            echo "❌ **Local Services Testing:** FAILED" >> local-test-report.md
+          fi
+          
+          # Docker Compose tests
+          if [ "${{ needs.test-docker-compose-full.result }}" = "success" ]; then
+            echo "✅ **Docker Compose Full Stack:** PASSED" >> local-test-report.md
+          elif [ "${{ needs.test-docker-compose-full.result }}" = "failure" ]; then
+            echo "❌ **Docker Compose Full Stack:** FAILED" >> local-test-report.md
+          else
+            echo "⏭️ **Docker Compose Full Stack:** SKIPPED" >> local-test-report.md
+          fi
+          
+          # Performance tests
+          if [ "${{ needs.test-local-performance.result }}" = "success" ]; then
+            echo "✅ **Performance Testing:** PASSED" >> local-test-report.md
+          elif [ "${{ needs.test-local-performance.result }}" = "failure" ]; then
+            echo "❌ **Performance Testing:** FAILED" >> local-test-report.md
+          else
+            echo "⏭️ **Performance Testing:** SKIPPED" >> local-test-report.md
+          fi
+          
+          echo "" >> local-test-report.md
+          echo "## Test Coverage" >> local-test-report.md
+          echo "" >> local-test-report.md
+          
+          # List test artifacts
+          if [ -d "test-artifacts" ]; then
+            echo "**Available Test Artifacts:**" >> local-test-report.md
+            find test-artifacts -name "*.xml" -o -name "*.json" -o -name "*.log" | while read file; do
+              echo "- $(basename "$file")" >> local-test-report.md
+            done
+          fi
+          
+          echo "" >> local-test-report.md
+          echo "## Overall Status" >> local-test-report.md
+          echo "" >> local-test-report.md
+          
+          # Calculate overall status
+          FAILED_JOBS=0
+          if [ "${{ needs.test-local-services.result }}" = "failure" ]; then
+            FAILED_JOBS=$((FAILED_JOBS + 1))
+          fi
+          if [ "${{ needs.test-docker-compose-full.result }}" = "failure" ]; then
+            FAILED_JOBS=$((FAILED_JOBS + 1))
+          fi
+          if [ "${{ needs.test-local-performance.result }}" = "failure" ]; then
+            FAILED_JOBS=$((FAILED_JOBS + 1))
+          fi
+          
+          if [ $FAILED_JOBS -eq 0 ]; then
+            echo "🎉 **Overall Status:** SUCCESS" >> local-test-report.md
+            echo "" >> local-test-report.md
+            echo "All local development tests passed! The local environment is working correctly." >> local-test-report.md
+          else
+            echo "❌ **Overall Status:** FAILED" >> local-test-report.md
+            echo "" >> local-test-report.md
+            echo "**Failed Components:** $FAILED_JOBS" >> local-test-report.md
+          fi
+          
+          echo "" >> local-test-report.md
+          echo "---" >> local-test-report.md
+          echo "**View Details:** [${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> local-test-report.md
+          
+          cat local-test-report.md
+      
+      - name: Upload test report
+        uses: actions/upload-artifact@v3
+        with:
+          name: local-test-report
+          path: local-test-report.md

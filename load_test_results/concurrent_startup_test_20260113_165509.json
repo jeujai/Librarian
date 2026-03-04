@@ -1,0 +1,114 @@
+{
+  "start_time": "2026-01-13T16:54:09.556176",
+  "base_url": "http://httpbin.org",
+  "test_type": "concurrent_startup",
+  "tests": {
+    "minimal_phase": {
+      "test_name": "concurrent_minimal_phase",
+      "concurrent_users": 10,
+      "total_requests": 50,
+      "successful_requests": 0,
+      "failed_requests": 50,
+      "model_not_loaded_errors": 0,
+      "fallback_responses": 0,
+      "avg_response_time_ms": 227.16547966003418,
+      "p95_response_time_ms": 659.623384475708,
+      "p99_response_time_ms": 1152.4770259857178,
+      "max_response_time_ms": 1152.4770259857178,
+      "min_response_time_ms": 54.95595932006836,
+      "requests_per_second": 6.145448141246566,
+      "error_rate_percent": 100.0,
+      "fallback_rate_percent": 0.0,
+      "response_quality_distribution": {
+        "basic": 0,
+        "enhanced": 0,
+        "full": 0,
+        "error": 50
+      },
+      "errors": [],
+      "duration_seconds": 8.13610315322876
+    },
+    "during_loading": {
+      "test_name": "concurrent_during_loading",
+      "concurrent_users": 15,
+      "total_requests": 150,
+      "successful_requests": 0,
+      "failed_requests": 150,
+      "model_not_loaded_errors": 0,
+      "fallback_responses": 0,
+      "avg_response_time_ms": 162.37586816151938,
+      "p95_response_time_ms": 500.52785873413086,
+      "p99_response_time_ms": 697.1778869628906,
+      "max_response_time_ms": 790.5809879302979,
+      "min_response_time_ms": 50.39095878601074,
+      "requests_per_second": 19.58551267722149,
+      "error_rate_percent": 100.0,
+      "fallback_rate_percent": 0.0,
+      "response_quality_distribution": {
+        "basic": 0,
+        "enhanced": 0,
+        "full": 0,
+        "error": 150
+      },
+      "errors": [],
+      "duration_seconds": 7.658722162246704
+    },
+    "stress_test": {
+      "test_name": "high_concurrency_stress",
+      "concurrent_users": 50,
+      "total_requests": 1000,
+      "successful_requests": 0,
+      "failed_requests": 1000,
+      "model_not_loaded_errors": 0,
+      "fallback_responses": 0,
+      "avg_response_time_ms": 164.90796327590942,
+      "p95_response_time_ms": 576.0419368743896,
+      "p99_response_time_ms": 860.1160049438477,
+      "max_response_time_ms": 1197.2737312316895,
+      "min_response_time_ms": 47.966957092285156,
+      "requests_per_second": 127.02000238334517,
+      "error_rate_percent": 100.0,
+      "fallback_rate_percent": 0.0,
+      "response_quality_distribution": {
+        "basic": 0,
+        "enhanced": 0,
+        "full": 0,
+        "error": 1000
+      },
+      "errors": [],
+      "duration_seconds": 7.8727757930755615
+    },
+    "mixed_patterns": {
+      "test_name": "mixed_request_patterns",
+      "concurrent_users": 20,
+      "total_requests": 526,
+      "successful_requests": 0,
+      "failed_requests": 526,
+      "model_not_loaded_errors": 0,
+      "fallback_responses": 0,
+      "avg_response_time_ms": 191.13343160868598,
+      "p95_response_time_ms": 660.7837677001953,
+      "p99_response_time_ms": 1264.4119262695312,
+      "max_response_time_ms": 2009.3309879302979,
+      "min_response_time_ms": 48.5377311706543,
+      "requests_per_second": 14.602589296211113,
+      "error_rate_percent": 100.0,
+      "fallback_rate_percent": 0.0,
+      "response_quality_distribution": {
+        "basic": 0,
+        "enhanced": 0,
+        "full": 0,
+        "error": 526
+      },
+      "errors": [],
+      "duration_seconds": 36.02100896835327
+    }
+  },
+  "summary": {
+    "total_requests": 1726,
+    "total_model_not_loaded_errors": 0,
+    "average_success_rate": 0.0,
+    "tests_run": 4
+  },
+  "end_time": "2026-01-13T16:55:09.247545"
+}

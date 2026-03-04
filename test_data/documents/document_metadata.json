@@ -1,0 +1,49 @@
+{
+  "Machine_Learning_Fundamentals.pdf": {
+    "title": "Machine Learning Fundamentals",
+    "type": "academic_paper",
+    "pages": 1,
+    "size_kb": 3,
+    "topics": [
+      "machine learning",
+      "neural networks",
+      "overfitting",
+      "classification",
+      "regression",
+      "supervised learning",
+      "unsupervised learning",
+      "optimization"
+    ]
+  },
+  "Deep_Learning_Applications.pdf": {
+    "title": "Deep Learning Applications in Modern AI",
+    "type": "academic_paper",
+    "pages": 1,
+    "size_kb": 5,
+    "topics": [
+      "machine learning",
+      "deep learning",
+      "neural networks",
+      "transformer",
+      "attention",
+      "classification"
+    ]
+  },
+  "Neural_Network_Architectures.pdf": {
+    "title": "Neural Network Architectures: A Comprehensive Survey",
+    "type": "academic_paper",
+    "pages": 1,
+    "size_kb": 10,
+    "topics": [
+      "deep learning",
+      "neural networks",
+      "backpropagation",
+      "overfitting",
+      "transformer",
+      "attention",
+      "classification",
+      "regression",
+      "optimization"
+    ]
+  }
+}

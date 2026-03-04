@@ -1,0 +1,23 @@
+{
+  "timestamp": "2026-01-11T22:11:55.722528",
+  "operation": "deploy_with_async_database_fix",
+  "steps": {
+    "build_and_push_image": {
+      "success": true,
+      "image_tag": "591222106065.dkr.ecr.us-east-1.amazonaws.com/multimodal-librarian:latest"
+    },
+    "update_ecs_service": {
+      "success": true,
+      "deployment_id": "ecs-svc/5806673278663986553"
+    },
+    "wait_for_deployment": {
+      "success": true
+    },
+    "test_ai_chat_endpoints": {
+      "success": false,
+      "working_endpoints": 0,
+      "total_endpoints": 3
+    }
+  },
+  "success": false
+}

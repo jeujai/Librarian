@@ -1,0 +1,373 @@
+{
+  "timestamp": "20260122_131324",
+  "period": "2026-01-01 to 2026-01-22",
+  "high_cost_items": [
+    {
+      "service": "AWS Secrets Manager",
+      "usage_type": "USE1-AWSSecretsManager-Secrets",
+      "cost": 2.0111547961,
+      "usage": 5.0386396767
+    },
+    {
+      "service": "AWS WAF",
+      "usage_type": "USE1-RuleV2",
+      "cost": 2.2506329519,
+      "usage": 2.2506329519
+    },
+    {
+      "service": "AWS WAF",
+      "usage_type": "USE1-WebACLV2",
+      "cost": 2.2506329185,
+      "usage": 0.4501265837
+    },
+    {
+      "service": "Amazon EC2 Container Registry (ECR)",
+      "usage_type": "TimedStorage-ByteHrs",
+      "cost": 2.9880428289,
+      "usage": 29.8804278893
+    },
+    {
+      "service": "Amazon ElastiCache",
+      "usage_type": "NodeUsage:cache.t3.micro",
+      "cost": 27.285,
+      "usage": 1605.0
+    },
+    {
+      "service": "EC2 - Other",
+      "usage_type": "DataTransfer-Regional-Bytes",
+      "cost": 3.8291662226,
+      "usage": 382.9373665671
+    },
+    {
+      "service": "EC2 - Other",
+      "usage_type": "EBS:VolumeUsage.gp3",
+      "cost": 1.1837888107,
+      "usage": 14.7973603483
+    },
+    {
+      "service": "EC2 - Other",
+      "usage_type": "NatGateway-Bytes",
+      "cost": 41.2873171564,
+      "usage": 917.4959366988
+    },
+    {
+      "service": "EC2 - Other",
+      "usage_type": "NatGateway-Hours",
+      "cost": 45.585,
+      "usage": 1013.0
+    },
+    {
+      "service": "EC2 - Other",
+      "usage_type": "USE2-EBS:VolumeUsage.gp2",
+      "cost": 1.0838709504,
+      "usage": 10.8387097056
+    },
+    {
+      "service": "Amazon Elastic Compute Cloud - Compute",
+      "usage_type": "BoxUsage:t3.medium",
+      "cost": 2.6296515232,
+      "usage": 63.212777
+    },
+    {
+      "service": "Amazon Elastic Compute Cloud - Compute",
+      "usage_type": "USW2-BoxUsage:t3.micro",
+      "cost": 5.2416,
+      "usage": 504.0
+    },
+    {
+      "service": "Amazon Elastic Container Service",
+      "usage_type": "DataTransfer-Regional-Bytes",
+      "cost": 3.8170114463,
+      "usage": 382.6804000484
+    },
+    {
+      "service": "Amazon Elastic Container Service",
+      "usage_type": "USE1-Fargate-EphemeralStorage-GB-Hours",
+      "cost": 2.0404911095,
+      "usage": 18382.80277766
+    },
+    {
+      "service": "Amazon Elastic Container Service",
+      "usage_type": "USE1-Fargate-GB-Hours",
+      "cost": 19.6342392163,
+      "usage": 4417.1516850229
+    },
+    {
+      "service": "Amazon Elastic Container Service",
+      "usage_type": "USE1-Fargate-vCPU-Hours:perCPU",
+      "cost": 75.0701715925,
+      "usage": 1854.5002869211
+    },
+    {
+      "service": "Amazon Elastic Load Balancing",
+      "usage_type": "LoadBalancerUsage",
+      "cost": 29.6325,
+      "usage": 1317.0
+    },
+    {
+      "service": "Amazon Neptune",
+      "usage_type": "InstanceUsage:db.r5.large",
+      "cost": 115.786076628,
+      "usage": 332.718611
+    },
+    {
+      "service": "Amazon OpenSearch Service",
+      "usage_type": "ES:GP3-Storage",
+      "cost": 1.0920967434,
+      "usage": 8.9516126934
+    },
+    {
+      "service": "Amazon OpenSearch Service",
+      "usage_type": "ESInstance:t3.small",
+      "cost": 11.988,
+      "usage": 333.0
+    },
+    {
+      "service": "Amazon Relational Database Service",
+      "usage_type": "InstanceUsage:db.t3.micro",
+      "cost": 7.632544806,
+      "usage": 424.030267
+    },
+    {
+      "service": "Amazon Relational Database Service",
+      "usage_type": "RDS:GP2-Storage",
+      "cost": 1.8287446943,
+      "usage": 15.9021280111
+    },
+    {
+      "service": "Amazon Virtual Private Cloud",
+      "usage_type": "USE1-PublicIPv4:IdleAddress",
+      "cost": 1.30701827,
+      "usage": 261.403654
+    },
+    {
+      "service": "Amazon Virtual Private Cloud",
+      "usage_type": "USE1-PublicIPv4:InUseAddress",
+      "cost": 18.768661455,
+      "usage": 3753.732291
+    },
+    {
+      "service": "Amazon Virtual Private Cloud",
+      "usage_type": "USE1-VpcEndpoint-Hours",
+      "cost": 47.04,
+      "usage": 4704.0
+    },
+    {
+      "service": "Amazon Virtual Private Cloud",
+      "usage_type": "USW2-PublicIPv4:InUseAddress",
+      "cost": 2.52,
+      "usage": 504.0
+    },
+    {
+      "service": "AmazonCloudWatch",
+      "usage_type": "CW:MetricMonitorUsage",
+      "cost": 1.7790322988,
+      "usage": 15.9301075258
+    },
+    {
+      "service": "CloudFront Flat-Rate Plans",
+      "usage_type": "Global-CloudFrontPlan-Pro",
+      "cost": 15.0,
+      "usage": 1.0
+    },
+    {
+      "service": "Tax",
+      "usage_type": "InstanceUsage:db.r5.large",
+      "cost": 5.86,
+      "usage": 0.0
+    },
+    {
+      "service": "Tax",
+      "usage_type": "LoadBalancerUsage",
+      "cost": 1.5,
+      "usage": 0.0
+    },
+    {
+      "service": "Tax",
+      "usage_type": "NatGateway-Bytes",
+      "cost": 2.06,
+      "usage": 0.0
+    },
+    {
+      "service": "Tax",
+      "usage_type": "NatGateway-Hours",
+      "cost": 2.29,
+      "usage": 0.0
+    },
+    {
+      "service": "Tax",
+      "usage_type": "NodeUsage:cache.t3.micro",
+      "cost": 1.37,
+      "usage": 0.0
+    },
+    {
+      "service": "Tax",
+      "usage_type": "USE1-Fargate-vCPU-Hours:perCPU",
+      "cost": 3.77,
+      "usage": 0.0
+    },
+    {
+      "service": "Tax",
+      "usage_type": "USE1-VpcEndpoint-Hours",
+      "cost": 2.39,
+      "usage": 0.0
+    }
+  ],
+  "daily_costs": [
+    {
+      "TimePeriod": {
+        "Start": "2026-01-15",
+        "End": "2026-01-16"
+      },
+      "Total": {
+        "BlendedCost": {
+          "Amount": "28.8566723112",
+          "Unit": "USD"
+        }
+      },
+      "Groups": [],
+      "Estimated": true
+    },
+    {
+      "TimePeriod": {
+        "Start": "2026-01-16",
+        "End": "2026-01-17"
+      },
+      "Total": {
+        "BlendedCost": {
+          "Amount": "28.0764718147",
+          "Unit": "USD"
+        }
+      },
+      "Groups": [],
+      "Estimated": true
+    },
+    {
+      "TimePeriod": {
+        "Start": "2026-01-17",
+        "End": "2026-01-18"
+      },
+      "Total": {
+        "BlendedCost": {
+          "Amount": "32.6021351446",
+          "Unit": "USD"
+        }
+      },
+      "Groups": [],
+      "Estimated": true
+    },
+    {
+      "TimePeriod": {
+        "Start": "2026-01-18",
+        "End": "2026-01-19"
+      },
+      "Total": {
+        "BlendedCost": {
+          "Amount": "29.0307256477",
+          "Unit": "USD"
+        }
+      },
+      "Groups": [],
+      "Estimated": true
+    },
+    {
+      "TimePeriod": {
+        "Start": "2026-01-19",
+        "End": "2026-01-20"
+      },
+      "Total": {
+        "BlendedCost": {
+          "Amount": "21.7997801407",
+          "Unit": "USD"
+        }
+      },
+      "Groups": [],
+      "Estimated": true
+    },
+    {
+      "TimePeriod": {
+        "Start": "2026-01-20",
+        "End": "2026-01-21"
+      },
+      "Total": {
+        "BlendedCost": {
+          "Amount": "22.9367548029",
+          "Unit": "USD"
+        }
+      },
+      "Groups": [],
+      "Estimated": true
+    },
+    {
+      "TimePeriod": {
+        "Start": "2026-01-21",
+        "End": "2026-01-22"
+      },
+      "Total": {
+        "BlendedCost": {
+          "Amount": "22.6333488129",
+          "Unit": "USD"
+        }
+      },
+      "Groups": [],
+      "Estimated": true
+    }
+  ],
+  "region_costs": [
+    {
+      "Keys": [
+        "NoRegion"
+      ],
+      "Metrics": {
+        "BlendedCost": {
+          "Amount": "22.63",
+          "Unit": "USD"
+        }
+      }
+    },
+    {
+      "Keys": [
+        "global"
+      ],
+      "Metrics": {
+        "BlendedCost": {
+          "Amount": "15",
+          "Unit": "USD"
+        }
+      }
+    },
+    {
+      "Keys": [
+        "us-east-1"
+      ],
+      "Metrics": {
+        "BlendedCost": {
+          "Amount": "469.9165230721",
+          "Unit": "USD"
+        }
+      }
+    },
+    {
+      "Keys": [
+        "us-east-2"
+      ],
+      "Metrics": {
+        "BlendedCost": {
+          "Amount": "1.161290304",
+          "Unit": "USD"
+        }
+      }
+    },
+    {
+      "Keys": [
+        "us-west-2"
+      ],
+      "Metrics": {
+        "BlendedCost": {
+          "Amount": "8.20087568",
+          "Unit": "USD"
+        }
+      }
+    }
+  ]
+}

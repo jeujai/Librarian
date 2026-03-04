@@ -1,0 +1,19 @@
+{
+  "timestamp": "2026-01-22T12:26:30.873477",
+  "total_monthly_savings": 7.3,
+  "total_annual_savings": 87.6,
+  "results": [
+    {
+      "ip": "3.233.193.206",
+      "allocation_id": "eipalloc-0f711f00a7ef435a4",
+      "status": "released",
+      "savings": 3.65
+    },
+    {
+      "ip": "52.202.142.217",
+      "allocation_id": "eipalloc-014f1a24f39eef5cb",
+      "status": "released",
+      "savings": 3.65
+    }
+  ]
+}

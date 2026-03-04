@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-01-17T10:40:45.647624",
+  "source_instance": "multimodallibrarianfullml-databasepostgresdatabase-ccjxkhsancro",
+  "new_instance": "ml-librarian-postgres-prod",
+  "snapshot_id": "postgres-migration-1768645237",
+  "new_endpoint": "ml-librarian-postgres-prod.cq1iiac2gfkf.us-east-1.rds.amazonaws.com",
+  "new_port": 5432,
+  "target_vpc": "vpc-0b2186b38779e77f6",
+  "subnet_group": "ml-librarian-prod-db-subnet-group",
+  "security_group": "sg-06444720c970a9054"
+}

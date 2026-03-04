@@ -1,0 +1,557 @@
+version: "3.8"
+
+services:
+  # Model Server - Dedicated ML model inference service
+  # Separates model loading from the main app for faster development iteration
+  model-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.model-server
+    ports:
+      - "8001:8001"
+    environment:
+      - EMBEDDING_MODEL=all-MiniLM-L6-v2
+      - NLP_MODEL=en_core_web_sm
+      - LOG_LEVEL=INFO
+      - PRELOAD_MODELS=true
+    volumes:
+      - model_cache:/root/.cache # Cache downloaded models
+    restart: unless-stopped
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s # Allow time for model loading
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+
+  # Main application service with chat interface and ML APIs
+  # Uses lightweight container - ML models are loaded from model-server
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.app
+      target: development
+    ports:
+      - "8000:8000"
+    environment:
+      # Application settings
+      - DEBUG=true
+      - LOG_LEVEL=INFO
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - API_WORKERS=1
+
+      # Database connections (both prefixed and non-prefixed for compatibility)
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=multimodal_librarian
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - ML_POSTGRES_HOST=postgres
+      - ML_POSTGRES_PORT=5432
+      - ML_POSTGRES_DB=multimodal_librarian
+      - ML_POSTGRES_USER=postgres
+      - ML_POSTGRES_PASSWORD=postgres
+
+      # Vector database
+      - MILVUS_HOST=milvus
+      - MILVUS_PORT=19530
+      - MILVUS_COLLECTION_NAME=knowledge_chunks
+      - ML_MILVUS_HOST=milvus
+      - ML_MILVUS_PORT=19530
+
+      # Knowledge graph
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=password
+      - ML_NEO4J_HOST=neo4j
+      - ML_NEO4J_PORT=7687
+      - ML_NEO4J_USER=neo4j
+      - ML_NEO4J_PASSWORD=password
+
+      # Redis
+      - ML_REDIS_HOST=redis
+      - ML_REDIS_PORT=6379
+
+      # Celery broker configuration (for queuing tasks)
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+
+      # Security settings
+      - SECRET_KEY=dev-secret-key-change-in-production
+      - REQUIRE_AUTH=false
+      - RATE_LIMIT_PER_MINUTE=100
+      - WEBSOCKET_TIMEOUT=300
+
+      # External APIs (set these in .env file)
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+
+      # File storage - MinIO (S3-compatible) for local development
+      - MINIO_ENDPOINT=http://minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+      - S3_BUCKET_NAME=documents
+      - UPLOAD_DIR=/app/uploads
+      - MEDIA_DIR=/app/media
+      - EXPORT_DIR=/app/exports
+      - MAX_FILE_SIZE=104857600
+
+      # Processing settings
+      - CHUNK_SIZE=512
+      - CHUNK_OVERLAP=50
+      - EMBEDDING_MODEL=all-MiniLM-L6-v2
+
+      # External knowledge bases
+      - YAGO_ENDPOINT=https://yago-knowledge.org/sparql/query
+      - CONCEPTNET_API_BASE=http://api.conceptnet.io
+
+      # Model Server configuration
+      - MODEL_SERVER_URL=http://model-server:8001
+      - MODEL_SERVER_TIMEOUT=30
+      - MODEL_SERVER_ENABLED=true
+
+      # Ollama Configuration (Local LLM for bridge generation)
+      # Ollama runs natively on the host for Metal GPU acceleration
+      - OLLAMA_HOST=http://host.docker.internal:11434
+      - OLLAMA_MODEL=deepseek-r1:7b
+      - OLLAMA_ENABLED=true
+      - OLLAMA_TIMEOUT=120.0
+      - BRIDGE_GENERATION_PROVIDER=ollama
+
+      # SearXNG web search (optional, requires web-search profile)
+      - SEARXNG_ENABLED=true
+      - SEARXNG_HOST=searxng
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./uploads:/app/uploads
+      - ./media:/app/media
+      - ./exports:/app/exports
+      - ./logs:/app/logs
+      - ./audit_logs:/app/audit_logs
+      - ./test_uploads:/app/test_uploads
+      - ./test_media:/app/test_media
+      - ./test_exports:/app/test_exports
+      # Mount source code for development hot reload
+      - ./src:/app/src
+      - ./scripts:/app/scripts
+      - ./yago-dumps:/tmp/yago-dumps
+    # Override CMD to disable reload (prevents stuck reload loops from log file changes)
+    command:
+      [
+        "python",
+        "-m",
+        "uvicorn",
+        "multimodal_librarian.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--ws-max-size",
+        "157286400",
+      ]
+    depends_on:
+      model-server:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      milvus:
+        condition: service_started
+      neo4j:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/simple"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # PostgreSQL database for metadata and configuration
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_DB=multimodal_librarian
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./src/multimodal_librarian/database/init_db.sql:/docker-entrypoint-initdb.d/01_init_db.sql:ro
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d multimodal_librarian"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # Performance tuning via command
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=256MB"
+      - "-c"
+      - "effective_cache_size=768MB"
+      - "-c"
+      - "work_mem=16MB"
+      - "-c"
+      - "maintenance_work_mem=128MB"
+      - "-c"
+      - "random_page_cost=1.1"
+      - "-c"
+      - "effective_io_concurrency=200"
+      - "-c"
+      - "max_connections=100"
+      - "-c"
+      - "checkpoint_completion_target=0.9"
+
+  # Milvus vector database for embeddings
+  milvus:
+    image: milvusdb/milvus:v2.3.4
+    command: ["milvus", "run", "standalone"]
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
+    environment:
+      - ETCD_ENDPOINTS=etcd:2379
+      - MINIO_ADDRESS=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+      # Performance optimization
+      - MILVUS_QUERYNODE_CACHE_ENABLED=true
+      - MILVUS_QUERYNODE_CACHE_MEMORYSIZE=2147483648
+      - MILVUS_QUERYNODE_GROUPING_ENABLED=true
+      - MILVUS_QUERYNODE_SEARCH_GROUPSIZE=8
+      # Index building optimization
+      - MILVUS_INDEXNODE_SCHEDULER_BUILDPARALLEL=2
+      # Query optimization
+      - MILVUS_PROXY_MAXSHARDNUM=256
+      - MILVUS_PROXY_MAXQUERYNODENUM=64
+    volumes:
+      - milvus_data:/var/lib/milvus
+    ports:
+      - "19530:19530"
+      - "9091:9091" # Milvus web UI
+    depends_on:
+      - etcd
+      - minio
+    restart: unless-stopped
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+
+  # etcd for Milvus metadata
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+    environment:
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      - ETCD_AUTO_COMPACTION_RETENTION=1000
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+      - ETCD_SNAPSHOT_COUNT=50000
+    volumes:
+      - etcd_data:/etcd
+    command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    ports:
+      - "2379:2379"
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  # MinIO for Milvus object storage
+  minio:
+    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    environment:
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+    volumes:
+      - minio_data:/data
+    command: minio server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    restart: unless-stopped
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Neo4j knowledge graph database
+  neo4j:
+    image: neo4j:5.14-community
+    environment:
+      - NEO4J_AUTH=neo4j/password
+      - NEO4J_PLUGINS=["apoc", "graph-data-science"]
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*,gds.*
+      - NEO4J_dbms_security_procedures_allowlist=apoc.*,gds.*
+      # Memory optimization for faster queries
+      - NEO4J_dbms_memory_heap_initial__size=1G
+      - NEO4J_dbms_memory_heap_max__size=2G
+      - NEO4J_dbms_memory_pagecache_size=1G
+      # Query optimization
+      - NEO4J_dbms_query__cache__size=1000
+      - NEO4J_cypher_min__replan__interval=10s
+      - NEO4J_cypher_statistics__divergence__threshold=0.5
+      # Connection pool optimization
+      - NEO4J_dbms_connector_bolt_thread__pool__min__size=10
+      - NEO4J_dbms_connector_bolt_thread__pool__max__size=200
+      - NEO4J_dbms_connector_bolt_thread__pool__keep__alive=5m
+      # Transaction optimization
+      - NEO4J_dbms_transaction_timeout=30s
+      - NEO4J_dbms_lock_acquisition_timeout=10s
+      # Suppress license agreement warnings (Community Edition doesn't have this procedure)
+      - NEO4J_dbms_logs_query_enabled=OFF
+      - NEO4J_gds_enterprise_license_file=
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    ports:
+      - "7474:7474" # HTTP
+      - "7687:7687" # Bolt
+    restart: unless-stopped
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "password", "RETURN 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Redis for caching and session management (optional)
+  redis:
+    image: redis:7-alpine
+    command: >
+      redis-server 
+      --appendonly yes 
+      --maxmemory 512mb 
+      --maxmemory-policy allkeys-lru
+      --tcp-keepalive 300
+      --timeout 0
+      --tcp-backlog 511
+      --save ""
+      --io-threads 2
+      --io-threads-do-reads yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Celery worker for async document processing
+  celery-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.app
+      target: development
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
+    command:
+      [
+        "celery",
+        "-A",
+        "src.multimodal_librarian.services.celery_service",
+        "worker",
+        "--loglevel=info",
+        "--queues=document_processing,pdf_processing,chunking,vector_storage,knowledge_graph,enrichment",
+      ]
+    environment:
+      # Celery broker configuration
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+
+      # Database connections
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=multimodal_librarian
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - ML_POSTGRES_HOST=postgres
+      - ML_POSTGRES_PORT=5432
+      - ML_POSTGRES_DB=multimodal_librarian
+      - ML_POSTGRES_USER=postgres
+      - ML_POSTGRES_PASSWORD=postgres
+
+      # Vector database
+      - MILVUS_HOST=milvus
+      - MILVUS_PORT=19530
+      - MILVUS_COLLECTION_NAME=knowledge_chunks
+      - ML_MILVUS_HOST=milvus
+      - ML_MILVUS_PORT=19530
+
+      # Knowledge graph
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=password
+      - ML_NEO4J_HOST=neo4j
+      - ML_NEO4J_PORT=7687
+      - ML_NEO4J_USER=neo4j
+      - ML_NEO4J_PASSWORD=password
+
+      # Redis
+      - ML_REDIS_HOST=redis
+      - ML_REDIS_PORT=6379
+
+      # File storage - MinIO (S3-compatible)
+      - MINIO_ENDPOINT=http://minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+      - S3_BUCKET_NAME=documents
+      - ML_S3_ENDPOINT_URL=http://minio:9000
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin
+      - ML_S3_BUCKET_NAME=documents
+
+      # Processing settings
+      - CHUNK_SIZE=512
+      - CHUNK_OVERLAP=50
+      - EMBEDDING_MODEL=all-MiniLM-L6-v2
+
+      # Model Server configuration
+      - MODEL_SERVER_URL=http://model-server:8001
+      - MODEL_SERVER_TIMEOUT=30
+      - MODEL_SERVER_ENABLED=true
+
+      # Ollama Configuration (Local LLM for bridge generation)
+      # Ollama runs natively on the host for Metal GPU acceleration
+      - OLLAMA_HOST=http://host.docker.internal:11434
+      - OLLAMA_MODEL=llama3.2:3b
+      - OLLAMA_ENABLED=true
+      - OLLAMA_TIMEOUT=120.0
+      - BRIDGE_GENERATION_PROVIDER=ollama
+
+      # External APIs (for Gemini fallback)
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+
+      # Logging
+      - LOG_LEVEL=INFO
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./uploads:/app/uploads
+      - ./media:/app/media
+      - ./exports:/app/exports
+      - ./logs:/app/logs
+      # Mount source code for development
+      - ./src:/app/src
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      milvus:
+        condition: service_started
+      model-server:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - app-network
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "celery -A src.multimodal_librarian.services.celery_service inspect ping -d celery@$$HOSTNAME || exit 0",
+        ]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 60s
+
+  # SearXNG meta-search engine for supplementary web search (optional)
+  searxng:
+    image: searxng/searxng:latest
+    environment:
+      - SEARXNG_BASE_URL=http://searxng:8080/
+    volumes:
+      - ./searxng-settings.yml:/etc/searxng/settings.yml:ro
+    ports:
+      - "8888:8080"
+    restart: unless-stopped
+    networks:
+      - app-network
+    profiles:
+      - web-search
+
+  # Nginx reverse proxy for production (optional)
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - app
+    restart: unless-stopped
+    networks:
+      - app-network
+    profiles:
+      - production
+
+volumes:
+  postgres_data:
+    driver: local
+  milvus_data:
+    driver: local
+  etcd_data:
+    driver: local
+  minio_data:
+    driver: local
+  neo4j_data:
+    driver: local
+  neo4j_logs:
+    driver: local
+  redis_data:
+    driver: local
+  model_cache:
+    driver: local
+
+networks:
+  app-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

@@ -1,0 +1,43 @@
+# Model Server Dockerfile
+# Dedicated container for ML model inference
+
+FROM python:3.11-slim
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+COPY requirements-model-server.txt .
+RUN pip install --no-cache-dir -r requirements-model-server.txt
+
+# Pre-download models at build time for faster startup
+# This caches the models in the Docker image
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')" \
+    && python -c "import spacy; spacy.cli.download('en_core_web_sm')"
+
+# Copy application code
+COPY src/model_server /app/src/model_server
+
+# Create non-root user for security
+RUN useradd -m -u 1000 modelserver && chown -R modelserver:modelserver /app
+USER modelserver
+
+# Expose port
+EXPOSE 8001
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8001/health/live || exit 1
+
+# Run the server
+CMD ["uvicorn", "src.model_server.main:app", "--host", "0.0.0.0", "--port", "8001"]

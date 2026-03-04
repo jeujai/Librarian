@@ -1,0 +1,46 @@
+{
+  "timestamp": "2026-01-09T18:32:18.477513",
+  "critical_issues": [
+    "Tasks cannot pull container images from ECR"
+  ],
+  "infrastructure_status": {
+    "cluster": {
+      "exists": true,
+      "status": "ACTIVE",
+      "active_services": 1,
+      "running_tasks": 0,
+      "pending_tasks": 1
+    },
+    "service": {
+      "exists": true,
+      "status": "ACTIVE",
+      "running_count": 0,
+      "desired_count": 1,
+      "task_definition": "arn:aws:ecs:us-east-1:591222106065:task-definition/multimodal-lib-prod-app:11"
+    },
+    "load_balancer": {
+      "exists": true,
+      "name": "multimodal-librarian-full-ml",
+      "state": "active",
+      "dns_name": "multimodal-librarian-full-ml-249704554.us-east-1.elb.amazonaws.com",
+      "vpc_id": "vpc-0bc85162dcdbcc986"
+    }
+  },
+  "task_failures": [
+    {
+      "task_id": "ec6def90911c4c5b8795fadf3f239434",
+      "stop_code": "TaskFailedToStart",
+      "stop_reason": "CannotPullContainerError: ref pull has been retried 1 time(s): failed to extract layer sha256:8e81af4727c971330cfc128a8e030bb6d65ad675918e85ebdec5fd25dd8caa90: mkdir /var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/81/fs/usr/local/lib/python3.11/site-packages/plotly/validators/parcats/labelfont: no space left on device",
+      "failure_type": "container_pull"
+    },
+    {
+      "task_id": "f43160eaa9ba48e6a29c94f40920a70c",
+      "stop_code": "TaskFailedToStart",
+      "stop_reason": "CannotPullContainerError: ref pull has been retried 1 time(s): failed to extract layer sha256:8e81af4727c971330cfc128a8e030bb6d65ad675918e85ebdec5fd25dd8caa90: write /var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/81/fs/usr/local/lib/python3.11/site-packages/plotly/validators/parcats/labelfont/__init__.py: no space left on device",
+      "failure_type": "container_pull"
+    }
+  ],
+  "recommendations": [
+    "Fix container pull: Check ECR access and VPC endpoints"
+  ]
+}

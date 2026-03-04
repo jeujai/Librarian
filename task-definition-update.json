@@ -1,0 +1,123 @@
+{
+    "family": "multimodal-lib-prod-app",
+    "taskRoleArn": "arn:aws:iam::591222106065:role/ecsTaskRole",
+    "executionRoleArn": "arn:aws:iam::591222106065:role/ecsTaskExecutionRole",
+    "networkMode": "awsvpc",
+    "requiresCompatibilities": [
+        "FARGATE"
+    ],
+    "cpu": "2048",
+    "memory": "4096",
+    "ephemeralStorage": {
+        "sizeInGiB": 50
+    },
+    "containerDefinitions": [
+        {
+            "name": "multimodal-lib-prod-app",
+            "image": "591222106065.dkr.ecr.us-east-1.amazonaws.com/multimodal-librarian:latest",
+            "cpu": 0,
+            "portMappings": [
+                {
+                    "containerPort": 8000,
+                    "hostPort": 8000,
+                    "protocol": "tcp"
+                }
+            ],
+            "essential": true,
+            "environment": [
+                {
+                    "name": "API_HOST",
+                    "value": "0.0.0.0"
+                },
+                {
+                    "name": "API_PORT",
+                    "value": "8000"
+                },
+                {
+                    "name": "API_WORKERS",
+                    "value": "4"
+                },
+                {
+                    "name": "LOG_LEVEL",
+                    "value": "INFO"
+                },
+                {
+                    "name": "DEBUG",
+                    "value": "false"
+                },
+                {
+                    "name": "PYTHONDONTWRITEBYTECODE",
+                    "value": "1"
+                },
+                {
+                    "name": "PYTHONUNBUFFERED",
+                    "value": "1"
+                },
+                {
+                    "name": "MAX_FILE_SIZE",
+                    "value": "104857600"
+                },
+                {
+                    "name": "CHUNK_SIZE",
+                    "value": "512"
+                },
+                {
+                    "name": "CHUNK_OVERLAP",
+                    "value": "50"
+                },
+                {
+                    "name": "EMBEDDING_MODEL",
+                    "value": "all-MiniLM-L6-v2"
+                },
+                {
+                    "name": "CONCEPTNET_API_BASE",
+                    "value": "http://api.conceptnet.io"
+                },
+                {
+                    "name": "YAGO_ENDPOINT",
+                    "value": "https://yago-knowledge.org/sparql/query"
+                }
+            ],
+            "secrets": [
+                {
+                    "name": "NEPTUNE_ENDPOINT",
+                    "valueFrom": "arn:aws:secretsmanager:us-east-1:591222106065:secret:multimodal-lib-prod/neptune/connection-PZoQbU:endpoint::"
+                },
+                {
+                    "name": "OPENSEARCH_ENDPOINT",
+                    "valueFrom": "arn:aws:secretsmanager:us-east-1:591222106065:secret:multimodal-lib-prod/opensearch/connection-BZIW5m:endpoint::"
+                },
+                {
+                    "name": "OPENAI_API_KEY",
+                    "valueFrom": "arn:aws:secretsmanager:us-east-1:591222106065:secret:multimodal-lib-prod/api-keys-EyQpxo:openai_api_key::"
+                },
+                {
+                    "name": "GOOGLE_API_KEY",
+                    "valueFrom": "arn:aws:secretsmanager:us-east-1:591222106065:secret:multimodal-lib-prod/api-keys-EyQpxo:google_api_key::"
+                },
+                {
+                    "name": "GEMINI_API_KEY",
+                    "valueFrom": "arn:aws:secretsmanager:us-east-1:591222106065:secret:multimodal-lib-prod/api-keys-EyQpxo:gemini_api_key::"
+                }
+            ],
+            "logConfiguration": {
+                "logDriver": "awslogs",
+                "options": {
+                    "awslogs-group": "/ecs/multimodal-lib-prod",
+                    "awslogs-region": "us-east-1",
+                    "awslogs-stream-prefix": "ecs"
+                }
+            },
+            "healthCheck": {
+                "command": [
+                    "CMD-SHELL",
+                    "curl -f http://localhost:8000/api/health/simple || exit 1"
+                ],
+                "interval": 30,
+                "timeout": 15,
+                "retries": 5,
+                "startPeriod": 300
+            }
+        }
+    ]
+}

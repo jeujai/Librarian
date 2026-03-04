@@ -1,0 +1,34 @@
+{
+  "timestamp": "2026-01-09T03:50:07.531057",
+  "service_analysis": {
+    "cluster": "multimodal-lib-prod-cluster",
+    "service": "multimodal-lib-prod-service",
+    "status": "ACTIVE",
+    "running_count": 1,
+    "desired_count": 1,
+    "current_load_balancers": [
+      {
+        "targetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/4fcfbdac0243c773",
+        "containerName": "multimodal-lib-prod-app",
+        "containerPort": 8000
+      }
+    ]
+  },
+  "load_balancer_analysis": {
+    "name": "multimodal-librarian-full-ml",
+    "arn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:loadbalancer/app/multimodal-librarian-full-ml/39e45609ae99d010",
+    "state": "active",
+    "dns_name": "multimodal-librarian-full-ml-249704554.us-east-1.elb.amazonaws.com"
+  },
+  "target_group_analysis": {
+    "name": "multimodal-librarian-full-ml",
+    "arn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-librarian-full-ml/470249d1c107d47d",
+    "port": 8000,
+    "protocol": "HTTP"
+  },
+  "fix_actions": [
+    "Updated service with target group multimodal-librarian-full-ml",
+    "Error updating service: Waiter ServicesStable failed: Max attempts exceeded"
+  ],
+  "success": false
+}

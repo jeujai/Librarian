@@ -1,0 +1,31 @@
+{
+  "timestamp": "2026-01-11T16:00:48.787676",
+  "endpoints_status": {
+    "com.amazonaws.us-east-1.secretsmanager": {
+      "id": "vpce-0318600b7d1e8c5a2",
+      "state": "available",
+      "dns_entries": 4
+    },
+    "com.amazonaws.us-east-1.ecr.dkr": {
+      "id": "vpce-0b72842a1ed096484",
+      "state": "available",
+      "dns_entries": 7
+    },
+    "com.amazonaws.us-east-1.ecr.api": {
+      "id": "vpce-0b924322dd3907dc9",
+      "state": "available",
+      "dns_entries": 5
+    },
+    "com.amazonaws.us-east-1.logs": {
+      "id": "vpce-0d2698121f6156d2c",
+      "state": "available",
+      "dns_entries": 7
+    },
+    "com.amazonaws.us-east-1.s3": {
+      "id": "vpce-0a5f7c454e7e9a1aa",
+      "state": "available",
+      "dns_entries": 0
+    }
+  },
+  "recommendations": []
+}

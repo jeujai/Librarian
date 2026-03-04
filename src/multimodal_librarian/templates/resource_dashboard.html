@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Resource Usage Dashboard - Multimodal Librarian</title>
+    <link rel="stylesheet" href="/static/css/resource_dashboard.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/date-fns@2.29.3/index.min.js"></script>
+</head>
+
+<body>
+    <div class="dashboard-container">
+        <header class="dashboard-header">
+            <h1>Resource Usage Dashboard</h1>
+            <div class="header-controls">
+                <div class="monitoring-status">
+                    <span id="monitoring-indicator" class="status-indicator"></span>
+                    <span id="monitoring-text">Monitoring Status</span>
+                </div>
+                <button id="start-monitoring-btn" class="btn btn-primary">Start Monitoring</button>
+                <button id="stop-monitoring-btn" class="btn btn-secondary">Stop Monitoring</button>
+                <button id="refresh-btn" class="btn btn-outline">Refresh</button>
+            </div>
+        </header>
+
+        <nav class="dashboard-nav">
+            <button class="nav-btn active" data-dashboard="system_resources">System Resources</button>
+            <button class="nav-btn" data-dashboard="container_resources">Container Resources</button>
+            <button class="nav-btn" data-dashboard="resource_trends">Trends & Optimization</button>
+        </nav>
+
+        <div class="dashboard-content">
+            <!-- System Resources Dashboard -->
+            <div id="system_resources" class="dashboard-panel active">
+                <div class="dashboard-grid">
+                    <div class="chart-container">
+                        <h3>System CPU Usage</h3>
+                        <canvas id="system-cpu-chart"></canvas>
+                        <div class="chart-info">
+                            <span class="current-value" id="cpu-current">--</span>
+                            <span class="chart-status" id="cpu-status">--</span>
+                        </div>
+                    </div>
+
+                    <div class="chart-container">
+                        <h3>System Memory Usage</h3>
+                        <canvas id="system-memory-chart"></canvas>
+                        <div class="chart-info">
+                            <span class="current-value" id="memory-current">--</span>
+                            <span class="chart-status" id="memory-status">--</span>
+                        </div>
+                    </div>
+
+                    <div class="chart-container">
+                        <h3>System Disk Usage</h3>
+                        <canvas id="system-disk-chart"></canvas>
+                        <div class="chart-info">
+                            <span class="current-value" id="disk-current">--</span>
+                            <span class="chart-status" id="disk-status">--</span>
+                        </div>
+                    </div>
+
+                    <div class="alerts-container">
+                        <h3>Resource Alerts</h3>
+                        <div id="alerts-list" class="alerts-list">
+                            <div class="no-alerts">No active alerts</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Container Resources Dashboard -->
+            <div id="container_resources" class="dashboard-panel">
+                <div class="dashboard-grid">
+                    <div class="chart-container">
+                        <h3>Container Memory Usage</h3>
+                        <canvas id="container-memory-chart"></canvas>
+                    </div>
+
+                    <div class="chart-container">
+                        <h3>Container CPU Usage</h3>
+                        <canvas id="container-cpu-chart"></canvas>
+                    </div>
+
+                    <div class="efficiency-container">
+                        <h3>Container Resource Efficiency</h3>
+                        <div id="efficiency-table" class="efficiency-table">
+                            <div class="no-data">No container data available</div>
+                        </div>
+                    </div>
+
+                    <div class="chart-container">
+                        <h3>Total Container Resources</h3>
+                        <canvas id="total-container-chart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Resource Trends Dashboard -->
+            <div id="resource_trends" class="dashboard-panel">
+                <div class="dashboard-grid">
+                    <div class="chart-container full-width">
+                        <h3>24-Hour Resource Trends</h3>
+                        <canvas id="trends-chart"></canvas>
+                    </div>
+
+                    <div class="optimization-container">
+                        <h3>Optimization Opportunities</h3>
+                        <div id="optimization-list" class="optimization-list">
+                            <div class="no-data">No optimization recommendations available</div>
+                        </div>
+                    </div>
+
+                    <div class="efficiency-score-container">
+                        <h3>Resource Efficiency Score</h3>
+                        <div class="efficiency-score">
+                            <div class="score-circle">
+                                <canvas id="efficiency-score-chart"></canvas>
+                                <div class="score-text">
+                                    <span id="efficiency-score">--</span>
+                                    <span id="efficiency-grade">--</span>
+                                </div>
+                            </div>
+                            <div class="efficiency-details">
+                                <div class="efficiency-item">
+                                    <span>CPU Efficiency:</span>
+                                    <span id="cpu-efficiency">--</span>
+                                </div>
+                                <div class="efficiency-item">
+                                    <span>Memory Efficiency:</span>
+                                    <span id="memory-efficiency">--</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Status Bar -->
+        <div class="status-bar">
+            <div class="status-item">
+                <span>Last Updated:</span>
+                <span id="last-updated">--</span>
+            </div>
+            <div class="status-item">
+                <span>Docker:</span>
+                <span id="docker-status">--</span>
+            </div>
+            <div class="status-item">
+                <span>Samples:</span>
+                <span id="samples-count">--</span>
+            </div>
+            <div class="status-item">
+                <span>Containers:</span>
+                <span id="containers-count">--</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div id="loading-overlay" class="loading-overlay">
+        <div class="loading-spinner"></div>
+        <div class="loading-text">Loading dashboard data...</div>
+    </div>
+
+    <!-- Error Modal -->
+    <div id="error-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Error</h3>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p id="error-message">An error occurred</p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" onclick="closeErrorModal()">OK</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/resource_dashboard.js"></script>
+</body>
+
+</html>

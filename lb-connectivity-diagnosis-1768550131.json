@@ -1,0 +1,122 @@
+{
+  "timestamp": "2026-01-16T00:55:29.753554",
+  "investigation": "Load Balancer Connectivity Root Cause Analysis",
+  "task": {
+    "taskArn": "arn:aws:ecs:us-east-1:591222106065:task/multimodal-lib-prod-cluster/1be0ef5a37f249e98ccae84d1615fd69",
+    "lastStatus": "RUNNING",
+    "healthStatus": "HEALTHY",
+    "containers": [
+      {
+        "name": "multimodal-lib-prod-app",
+        "lastStatus": "RUNNING",
+        "healthStatus": "HEALTHY"
+      }
+    ],
+    "eni_id": "eni-0267eef61cb4657bc",
+    "private_ip": "10.0.2.58"
+  },
+  "eni": {
+    "id": "eni-0267eef61cb4657bc",
+    "subnet_id": "subnet-02f4d9ecb751beb27",
+    "vpc_id": "vpc-0b2186b38779e77f6",
+    "private_ip": "10.0.2.58",
+    "security_groups": [
+      "sg-0135b368e20b7bd01"
+    ],
+    "status": "in-use",
+    "public_ip": "54.211.25.126"
+  },
+  "security_groups": [
+    {
+      "id": "sg-0135b368e20b7bd01",
+      "name": "multimodal-lib-prod-alb-sg",
+      "inbound_rules": [
+        "  tcp 80-80 from 0.0.0.0/0",
+        "  tcp 8000-8000 from 10.0.0.0/16",
+        "  tcp 443-443 from 0.0.0.0/0"
+      ],
+      "outbound_rules": [
+        "  -1 to 0.0.0.0/0"
+      ]
+    }
+  ],
+  "subnet": {
+    "id": "subnet-02f4d9ecb751beb27",
+    "cidr": "10.0.2.0/24",
+    "availability_zone": "us-east-1b",
+    "available_ips": 247,
+    "map_public_ip": true,
+    "route_table_id": "rtb-0f20f8bf26d9cb671"
+  },
+  "alb": {
+    "arn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:loadbalancer/app/multimodal-lib-prod-alb-v2/5964a1d711ab8dfe",
+    "dns_name": "multimodal-lib-prod-alb-v2-1090291461.us-east-1.elb.amazonaws.com",
+    "scheme": "internet-facing",
+    "vpc_id": "vpc-0b2186b38779e77f6",
+    "subnets": [
+      {
+        "ZoneName": "us-east-1b",
+        "SubnetId": "subnet-02f4d9ecb751beb27",
+        "LoadBalancerAddresses": []
+      },
+      {
+        "ZoneName": "us-east-1c",
+        "SubnetId": "subnet-02fe694f061238d5a",
+        "LoadBalancerAddresses": []
+      },
+      {
+        "ZoneName": "us-east-1a",
+        "SubnetId": "subnet-0c352188f5398a718",
+        "LoadBalancerAddresses": []
+      }
+    ],
+    "security_groups": [
+      "sg-0135b368e20b7bd01"
+    ],
+    "target_group": {
+      "arn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg-v2/7b63a6337a5c7a34",
+      "health_check_path": "/api/health/simple",
+      "health_check_port": "traffic-port",
+      "targets": []
+    }
+  },
+  "nlb": {
+    "arn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:loadbalancer/net/multimodal-lib-prod-nlb/9f03ee5dda51903f",
+    "dns_name": "multimodal-lib-prod-nlb-9f03ee5dda51903f.elb.us-east-1.amazonaws.com",
+    "scheme": "internet-facing",
+    "vpc_id": "vpc-0b2186b38779e77f6",
+    "subnets": [
+      {
+        "ZoneName": "us-east-1a",
+        "SubnetId": "subnet-0c352188f5398a718",
+        "LoadBalancerAddresses": []
+      },
+      {
+        "ZoneName": "us-east-1b",
+        "SubnetId": "subnet-02f4d9ecb751beb27",
+        "LoadBalancerAddresses": []
+      },
+      {
+        "ZoneName": "us-east-1c",
+        "SubnetId": "subnet-02fe694f061238d5a",
+        "LoadBalancerAddresses": []
+      }
+    ],
+    "target_group": {
+      "arn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-nlb-tg/e3896922f939759a",
+      "health_check_path": "TCP",
+      "health_check_port": "traffic-port",
+      "targets": [
+        {
+          "id": "10.0.2.58",
+          "port": 8000,
+          "state": "healthy"
+        }
+      ]
+    }
+  },
+  "root_cause_analysis": {
+    "issues_found": 0,
+    "issues": []
+  }
+}

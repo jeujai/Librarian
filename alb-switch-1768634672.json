@@ -1,0 +1,5 @@
+{
+  "status": "complete",
+  "alb_dns": "multimodal-lib-prod-alb-1415728107.us-east-1.elb.amazonaws.com",
+  "target_group": "arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-alb-tg/8f7b59ea06a035bf"
+}

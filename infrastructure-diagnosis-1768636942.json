@@ -1,0 +1,361 @@
+[2026-01-17T01:02:23.086421] Starting comprehensive infrastructure network diagnostic...
+[2026-01-17T01:02:23.086451] Checking ECS task status...
+[2026-01-17T01:02:23.530598] Checking application logs...
+[2026-01-17T01:02:24.395360] Checking security groups...
+[2026-01-17T01:02:24.977363] Checking route tables...
+[2026-01-17T01:02:25.549130] Checking Network ACLs...
+[2026-01-17T01:02:25.682137] Checking VPC Flow Logs...
+[2026-01-17T01:02:26.225066] Checking load balancers...
+[2026-01-17T01:02:27.281974] Generating recommendation...
+[2026-01-17T01:02:27.283520] Diagnostic complete!
+{
+  "timestamp": "2026-01-17T01:02:23.086447",
+  "diagnostic_version": "1.0",
+  "configuration": {
+    "cluster": "multimodal-lib-prod-cluster",
+    "service": "multimodal-lib-prod-service",
+    "vpc_id": "vpc-0b2186b38779e77f6",
+    "alb_sg_id": "sg-0135b368e20b7bd01",
+    "ecs_sg_id": "sg-0393d472e770ed1a3",
+    "app_port": 8000
+  },
+  "checks": {
+    "ecs_task": {
+      "status": "OK",
+      "task_count": 1,
+      "task_arn": "arn:aws:ecs:us-east-1:591222106065:task/multimodal-lib-prod-cluster/15f6101bce9042129e76bcf846867fc3",
+      "last_status": "RUNNING",
+      "health_status": "HEALTHY",
+      "task_ip": "10.0.1.91",
+      "task_eni": "eni-00f4979ae4b0af8de",
+      "task_subnet": "subnet-0c352188f5398a718",
+      "started_at": "2026-01-17T01:01:47.507000-07:00"
+    },
+    "application": {
+      "status": "OK",
+      "uvicorn_running": true,
+      "error_count": 0,
+      "recent_errors": [],
+      "health_check_requests": 0,
+      "assessment": "HEALTHY"
+    },
+    "security_groups": {
+      "status": "OK",
+      "alb_sg_id": "sg-0135b368e20b7bd01",
+      "ecs_sg_id": "sg-0393d472e770ed1a3",
+      "alb_allows_outbound_to_ecs": true,
+      "ecs_allows_inbound_from_alb": true,
+      "issues": []
+    },
+    "route_tables": {
+      "status": "OK",
+      "alb_route_tables": [
+        {
+          "subnet": "subnet-0c352188f5398a718",
+          "route_table_id": "rtb-0f20f8bf26d9cb671",
+          "routes": [
+            {
+              "DestinationCidrBlock": "10.0.0.0/16",
+              "GatewayId": "local",
+              "Origin": "CreateRouteTable",
+              "State": "active"
+            },
+            {
+              "DestinationCidrBlock": "0.0.0.0/0",
+              "GatewayId": "igw-07ccfaa3229a312e1",
+              "Origin": "CreateRoute",
+              "State": "active"
+            },
+            {
+              "DestinationPrefixListId": "pl-63a5400a",
+              "GatewayId": "vpce-0d5e478d61b2ed942",
+              "Origin": "CreateRoute",
+              "State": "active"
+            }
+          ]
+        },
+        {
+          "subnet": "subnet-02f4d9ecb751beb27",
+          "route_table_id": "rtb-0f20f8bf26d9cb671",
+          "routes": [
+            {
+              "DestinationCidrBlock": "10.0.0.0/16",
+              "GatewayId": "local",
+              "Origin": "CreateRouteTable",
+              "State": "active"
+            },
+            {
+              "DestinationCidrBlock": "0.0.0.0/0",
+              "GatewayId": "igw-07ccfaa3229a312e1",
+              "Origin": "CreateRoute",
+              "State": "active"
+            },
+            {
+              "DestinationPrefixListId": "pl-63a5400a",
+              "GatewayId": "vpce-0d5e478d61b2ed942",
+              "Origin": "CreateRoute",
+              "State": "active"
+            }
+          ]
+        },
+        {
+          "subnet": "subnet-02fe694f061238d5a",
+          "route_table_id": "rtb-0f20f8bf26d9cb671",
+          "routes": [
+            {
+              "DestinationCidrBlock": "10.0.0.0/16",
+              "GatewayId": "local",
+              "Origin": "CreateRouteTable",
+              "State": "active"
+            },
+            {
+              "DestinationCidrBlock": "0.0.0.0/0",
+              "GatewayId": "igw-07ccfaa3229a312e1",
+              "Origin": "CreateRoute",
+              "State": "active"
+            },
+            {
+              "DestinationPrefixListId": "pl-63a5400a",
+              "GatewayId": "vpce-0d5e478d61b2ed942",
+              "Origin": "CreateRoute",
+              "State": "active"
+            }
+          ]
+        }
+      ],
+      "ecs_route_table": {
+        "subnet": "subnet-0c352188f5398a718",
+        "route_table_id": "rtb-0f20f8bf26d9cb671",
+        "routes": [
+          {
+            "DestinationCidrBlock": "10.0.0.0/16",
+            "GatewayId": "local",
+            "Origin": "CreateRouteTable",
+            "State": "active"
+          },
+          {
+            "DestinationCidrBlock": "0.0.0.0/0",
+            "GatewayId": "igw-07ccfaa3229a312e1",
+            "Origin": "CreateRoute",
+            "State": "active"
+          },
+          {
+            "DestinationPrefixListId": "pl-63a5400a",
+            "GatewayId": "vpce-0d5e478d61b2ed942",
+            "Origin": "CreateRoute",
+            "State": "active"
+          }
+        ]
+      },
+      "same_vpc": true,
+      "vpc_id": "vpc-0b2186b38779e77f6",
+      "issues": []
+    },
+    "network_acls": {
+      "status": "ISSUES_FOUND",
+      "nacl_count": 2,
+      "blocking_rules": [
+        {
+          "nacl_id": "acl-00169acf1849846ce",
+          "rule_number": 32767,
+          "egress": true,
+          "cidr": "0.0.0.0/0",
+          "protocol": "-1",
+          "port_range": "all"
+        },
+        {
+          "nacl_id": "acl-00169acf1849846ce",
+          "rule_number": 32767,
+          "egress": false,
+          "cidr": "0.0.0.0/0",
+          "protocol": "-1",
+          "port_range": "all"
+        },
+        {
+          "nacl_id": "acl-08fa81899d86dca95",
+          "rule_number": 32767,
+          "egress": true,
+          "cidr": "0.0.0.0/0",
+          "protocol": "-1",
+          "port_range": "all"
+        },
+        {
+          "nacl_id": "acl-08fa81899d86dca95",
+          "rule_number": 32767,
+          "egress": false,
+          "cidr": "0.0.0.0/0",
+          "protocol": "-1",
+          "port_range": "all"
+        }
+      ],
+      "issues": [
+        {
+          "type": "nacl",
+          "severity": "HIGH",
+          "description": "NACL acl-00169acf1849846ce has deny rule 32767 that may block port 8000",
+          "fix": "Review and modify NACL rule: aws ec2 delete-network-acl-entry --network-acl-id acl-00169acf1849846ce --rule-number 32767 --egress"
+        },
+        {
+          "type": "nacl",
+          "severity": "HIGH",
+          "description": "NACL acl-00169acf1849846ce has deny rule 32767 that may block port 8000",
+          "fix": "Review and modify NACL rule: aws ec2 delete-network-acl-entry --network-acl-id acl-00169acf1849846ce --rule-number 32767 --ingress"
+        },
+        {
+          "type": "nacl",
+          "severity": "HIGH",
+          "description": "NACL acl-08fa81899d86dca95 has deny rule 32767 that may block port 8000",
+          "fix": "Review and modify NACL rule: aws ec2 delete-network-acl-entry --network-acl-id acl-08fa81899d86dca95 --rule-number 32767 --egress"
+        },
+        {
+          "type": "nacl",
+          "severity": "HIGH",
+          "description": "NACL acl-08fa81899d86dca95 has deny rule 32767 that may block port 8000",
+          "fix": "Review and modify NACL rule: aws ec2 delete-network-acl-entry --network-acl-id acl-08fa81899d86dca95 --rule-number 32767 --ingress"
+        }
+      ]
+    },
+    "vpc_flow_logs": {
+      "status": "ENABLED",
+      "flow_log_id": "fl-00b94e28c27f22b36",
+      "log_group": "/aws/vpc/flowlogs/multimodal-lib-prod",
+      "packets_seen_last_5min": 0,
+      "traffic_detected": false
+    },
+    "load_balancers": {
+      "status": "OK",
+      "load_balancer_count": 3,
+      "load_balancers": [
+        {
+          "name": "multimodal-lib-prod-nlb",
+          "arn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:loadbalancer/net/multimodal-lib-prod-nlb/9f03ee5dda51903f",
+          "dns_name": "multimodal-lib-prod-nlb-9f03ee5dda51903f.elb.us-east-1.amazonaws.com",
+          "type": "network",
+          "scheme": "internet-facing",
+          "state": "active",
+          "vpc_id": "vpc-0b2186b38779e77f6",
+          "subnets": [
+            "subnet-0c352188f5398a718",
+            "subnet-02f4d9ecb751beb27",
+            "subnet-02fe694f061238d5a"
+          ],
+          "target_groups": [
+            {
+              "target_group_name": "multimodal-lib-prod-nlb-tg",
+              "target_group_arn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-nlb-tg/e3896922f939759a",
+              "port": 8000,
+              "protocol": "TCP",
+              "health_check_path": null,
+              "targets": [
+                {
+                  "id": "10.0.2.172",
+                  "port": 8000,
+                  "health": "draining",
+                  "reason": "Target.DeregistrationInProgress"
+                },
+                {
+                  "id": "10.0.1.91",
+                  "port": 8000,
+                  "health": "healthy",
+                  "reason": "N/A"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "multimodal-lib-prod-alb",
+          "arn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:loadbalancer/app/multimodal-lib-prod-alb/f24be2cfb7f2f8ec",
+          "dns_name": "multimodal-lib-prod-alb-1415728107.us-east-1.elb.amazonaws.com",
+          "type": "application",
+          "scheme": "internet-facing",
+          "state": "active",
+          "vpc_id": "vpc-0b2186b38779e77f6",
+          "subnets": [
+            "subnet-02f4d9ecb751beb27",
+            "subnet-02fe694f061238d5a",
+            "subnet-0c352188f5398a718"
+          ],
+          "target_groups": [
+            {
+              "target_group_name": "multimodal-lib-prod-alb-tg",
+              "target_group_arn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-alb-tg/8f7b59ea06a035bf",
+              "port": 8000,
+              "protocol": "HTTP",
+              "health_check_path": "/api/health/simple",
+              "targets": []
+            }
+          ]
+        },
+        {
+          "name": "multimodal-lib-prod-alb-v2",
+          "arn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:loadbalancer/app/multimodal-lib-prod-alb-v2/5964a1d711ab8dfe",
+          "dns_name": "multimodal-lib-prod-alb-v2-1090291461.us-east-1.elb.amazonaws.com",
+          "type": "application",
+          "scheme": "internet-facing",
+          "state": "active",
+          "vpc_id": "vpc-0b2186b38779e77f6",
+          "subnets": [
+            "subnet-02f4d9ecb751beb27",
+            "subnet-02fe694f061238d5a",
+            "subnet-0c352188f5398a718"
+          ],
+          "target_groups": [
+            {
+              "target_group_name": "multimodal-lib-prod-tg-v2",
+              "target_group_arn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg-v2/7b63a6337a5c7a34",
+              "port": 8000,
+              "protocol": "HTTP",
+              "health_check_path": "/health/simple",
+              "targets": []
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "recommendation": {
+    "status": "ISSUES_FOUND",
+    "issue_count": 4,
+    "primary_issue": {
+      "type": "nacl",
+      "severity": "HIGH",
+      "description": "NACL acl-00169acf1849846ce has deny rule 32767 that may block port 8000",
+      "fix": "Review and modify NACL rule: aws ec2 delete-network-acl-entry --network-acl-id acl-00169acf1849846ce --rule-number 32767 --egress"
+    },
+    "all_issues": [
+      {
+        "type": "nacl",
+        "severity": "HIGH",
+        "description": "NACL acl-00169acf1849846ce has deny rule 32767 that may block port 8000",
+        "fix": "Review and modify NACL rule: aws ec2 delete-network-acl-entry --network-acl-id acl-00169acf1849846ce --rule-number 32767 --egress"
+      },
+      {
+        "type": "nacl",
+        "severity": "HIGH",
+        "description": "NACL acl-00169acf1849846ce has deny rule 32767 that may block port 8000",
+        "fix": "Review and modify NACL rule: aws ec2 delete-network-acl-entry --network-acl-id acl-00169acf1849846ce --rule-number 32767 --ingress"
+      },
+      {
+        "type": "nacl",
+        "severity": "HIGH",
+        "description": "NACL acl-08fa81899d86dca95 has deny rule 32767 that may block port 8000",
+        "fix": "Review and modify NACL rule: aws ec2 delete-network-acl-entry --network-acl-id acl-08fa81899d86dca95 --rule-number 32767 --egress"
+      },
+      {
+        "type": "nacl",
+        "severity": "HIGH",
+        "description": "NACL acl-08fa81899d86dca95 has deny rule 32767 that may block port 8000",
+        "fix": "Review and modify NACL rule: aws ec2 delete-network-acl-entry --network-acl-id acl-08fa81899d86dca95 --rule-number 32767 --ingress"
+      }
+    ],
+    "recommendation": "Fix nacl issue: NACL acl-00169acf1849846ce has deny rule 32767 that may block port 8000",
+    "immediate_action": "Review and modify NACL rule: aws ec2 delete-network-acl-entry --network-acl-id acl-00169acf1849846ce --rule-number 32767 --egress",
+    "next_steps": [
+      "Implement the recommended fix",
+      "Monitor VPC Flow Logs for traffic",
+      "Check target health status",
+      "Verify application logs show incoming requests"
+    ]
+  }
+}

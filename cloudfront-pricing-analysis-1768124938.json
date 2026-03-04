@@ -1,0 +1,19 @@
+{
+  "distribution_id": "EG4POF7D2NLA4",
+  "distribution_domain": "d1p5nsqu15ui56.cloudfront.net",
+  "status": "Deployed",
+  "enabled": false,
+  "price_class": "PriceClass_All",
+  "last_modified": "2026-01-11T09:44:58.199000+00:00",
+  "deletion_blocked_reason": "pricing_plan_subscription",
+  "next_steps": [
+    "Cancel pricing plan subscription in AWS Console",
+    "Wait for billing cycle end",
+    "Delete distribution after pricing plan cancellation"
+  ],
+  "cost_impact": {
+    "monthly_cost": 0.6,
+    "savings_timeline": "up_to_1_billing_cycle"
+  },
+  "analysis_timestamp": "2026-01-11T02:48:58.918154"
+}

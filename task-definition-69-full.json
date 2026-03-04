@@ -1,0 +1,274 @@
+{
+  "taskDefinitionArn": "arn:aws:ecs:us-east-1:591222106065:task-definition/multimodal-lib-prod-app:69",
+  "containerDefinitions": [
+    {
+      "name": "multimodal-lib-prod-app",
+      "image": "591222106065.dkr.ecr.us-east-1.amazonaws.com/multimodal-librarian:latest",
+      "cpu": 0,
+      "portMappings": [
+        {
+          "containerPort": 8000,
+          "hostPort": 8000,
+          "protocol": "tcp"
+        }
+      ],
+      "essential": true,
+      "environment": [
+        {
+          "name": "API_HOST",
+          "value": "0.0.0.0"
+        },
+        {
+          "name": "DB_PORT",
+          "value": "5432"
+        },
+        {
+          "name": "POSTGRES_HOST",
+          "value": "ml-librarian-postgres-prod.cq1iiac2gfkf.us-east-1.rds.amazonaws.com"
+        },
+        {
+          "name": "DB_USER",
+          "value": "postgres"
+        },
+        {
+          "name": "AWS_DEFAULT_REGION",
+          "value": "us-east-1"
+        },
+        {
+          "name": "OPENSEARCH_PORT",
+          "value": "443"
+        },
+        {
+          "name": "CONCEPTNET_API_BASE",
+          "value": "http://api.conceptnet.io"
+        },
+        {
+          "name": "NEPTUNE_ENDPOINT",
+          "value": "multimodal-lib-prod-neptune.cluster-cq1iiac2gfkf.us-east-1.neptune.amazonaws.com"
+        },
+        {
+          "name": "DB_NAME",
+          "value": "multimodal_librarian"
+        },
+        {
+          "name": "CHUNK_SIZE",
+          "value": "512"
+        },
+        {
+          "name": "OPENSEARCH_DOMAIN_ENDPOINT",
+          "value": "https://vpc-multimodal-lib-prod-search-2mjsemd5qwcuj3ezeltxxmwkrq.us-east-1.es.amazonaws.com"
+        },
+        {
+          "name": "USE_AWS_NEPTUNE",
+          "value": "true"
+        },
+        {
+          "name": "OPENSEARCH_ENDPOINT",
+          "value": "https://vpc-multimodal-lib-prod-search-2mjsemd5qwcuj3ezeltxxmwkrq.us-east-1.es.amazonaws.com"
+        },
+        {
+          "name": "USE_AWS_OPENSEARCH",
+          "value": "true"
+        },
+        {
+          "name": "REDIS_PORT",
+          "value": "6379"
+        },
+        {
+          "name": "CHUNK_OVERLAP",
+          "value": "50"
+        },
+        {
+          "name": "API_WORKERS",
+          "value": "4"
+        },
+        {
+          "name": "ENABLE_VECTOR_SEARCH",
+          "value": "true"
+        },
+        {
+          "name": "USE_AWS_NATIVE",
+          "value": "true"
+        },
+        {
+          "name": "LOG_LEVEL",
+          "value": "INFO"
+        },
+        {
+          "name": "YAGO_ENDPOINT",
+          "value": "https://yago-knowledge.org/sparql/query"
+        },
+        {
+          "name": "POSTGRES_USER",
+          "value": "postgres"
+        },
+        {
+          "name": "MAX_FILE_SIZE",
+          "value": "104857600"
+        },
+        {
+          "name": "REDIS_HOST",
+          "value": "master.multimodal-lib-prod-redis.znjbcw.use1.cache.amazonaws.com"
+        },
+        {
+          "name": "AWS_REGION",
+          "value": "us-east-1"
+        },
+        {
+          "name": "NEPTUNE_CLUSTER_ENDPOINT",
+          "value": "multimodal-lib-prod-neptune.cluster-cq1iiac2gfkf.us-east-1.neptune.amazonaws.com"
+        },
+        {
+          "name": "OPENSEARCH_TIMEOUT",
+          "value": "5"
+        },
+        {
+          "name": "POSTGRES_PORT",
+          "value": "5432"
+        },
+        {
+          "name": "POSTGRES_DB",
+          "value": "multimodal_librarian"
+        },
+        {
+          "name": "DB_HOST",
+          "value": "ml-librarian-postgres-prod.cq1iiac2gfkf.us-east-1.rds.amazonaws.com"
+        },
+        {
+          "name": "DEBUG",
+          "value": "false"
+        },
+        {
+          "name": "VECTOR_STORE_ENABLED",
+          "value": "true"
+        },
+        {
+          "name": "ENABLE_GRAPH_DB",
+          "value": "false"
+        },
+        {
+          "name": "PYTHONDONTWRITEBYTECODE",
+          "value": "1"
+        },
+        {
+          "name": "PYTHONUNBUFFERED",
+          "value": "1"
+        },
+        {
+          "name": "API_PORT",
+          "value": "8000"
+        },
+        {
+          "name": "OPENSEARCH_HOST",
+          "value": "https://vpc-multimodal-lib-prod-search-2mjsemd5qwcuj3ezeltxxmwkrq.us-east-1.es.amazonaws.com"
+        },
+        {
+          "name": "HEALTH_CHECK_TIMEOUT",
+          "value": "2"
+        },
+        {
+          "name": "NEPTUNE_PORT",
+          "value": "8182"
+        },
+        {
+          "name": "EMBEDDING_MODEL",
+          "value": "all-MiniLM-L6-v2"
+        },
+        {
+          "name": "KNOWLEDGE_GRAPH_ENABLED",
+          "value": "true"
+        }
+      ],
+      "mountPoints": [],
+      "volumesFrom": [],
+      "secrets": [
+        {
+          "name": "POSTGRES_PASSWORD",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:591222106065:secret:multimodal-librarian/learning/database-TSnLsl:password::"
+        },
+        {
+          "name": "REDIS_PASSWORD",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:591222106065:secret:multimodal-librarian/full-ml/redis-7UEzui"
+        },
+        {
+          "name": "DB_PASSWORD",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:591222106065:secret:multimodal-librarian/learning/database-TSnLsl:password::"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/multimodal-lib-prod-app",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      },
+      "healthCheck": {
+        "command": [
+          "CMD-SHELL",
+          "curl -f http://localhost:8000/health/minimal || exit 1"
+        ],
+        "interval": 30,
+        "timeout": 15,
+        "retries": 5,
+        "startPeriod": 300
+      },
+      "systemControls": []
+    }
+  ],
+  "family": "multimodal-lib-prod-app",
+  "taskRoleArn": "arn:aws:iam::591222106065:role/ecsTaskRole",
+  "executionRoleArn": "arn:aws:iam::591222106065:role/ecsTaskExecutionRole",
+  "networkMode": "awsvpc",
+  "revision": 69,
+  "volumes": [],
+  "status": "ACTIVE",
+  "requiresAttributes": [
+    {
+      "name": "com.amazonaws.ecs.capability.logging-driver.awslogs"
+    },
+    {
+      "name": "ecs.capability.execution-role-awslogs"
+    },
+    {
+      "name": "com.amazonaws.ecs.capability.ecr-auth"
+    },
+    {
+      "name": "com.amazonaws.ecs.capability.docker-remote-api.1.19"
+    },
+    {
+      "name": "ecs.capability.secrets.asm.environment-variables"
+    },
+    {
+      "name": "com.amazonaws.ecs.capability.task-iam-role"
+    },
+    {
+      "name": "ecs.capability.container-health-check"
+    },
+    {
+      "name": "ecs.capability.execution-role-ecr-pull"
+    },
+    {
+      "name": "com.amazonaws.ecs.capability.docker-remote-api.1.18"
+    },
+    {
+      "name": "ecs.capability.task-eni"
+    },
+    {
+      "name": "com.amazonaws.ecs.capability.docker-remote-api.1.29"
+    }
+  ],
+  "placementConstraints": [],
+  "compatibilities": [
+    "EC2",
+    "MANAGED_INSTANCES",
+    "FARGATE"
+  ],
+  "requiresCompatibilities": [
+    "FARGATE"
+  ],
+  "cpu": "4096",
+  "memory": "8192",
+  "registeredAt": "2026-01-18 19:08:52.512000-07:00",
+  "registeredBy": "arn:aws:iam::591222106065:root"
+}

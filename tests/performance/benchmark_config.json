@@ -1,0 +1,164 @@
+{
+  "benchmark_config": {
+    "description": "Local Development Performance Benchmark Configuration",
+    "version": "1.0.0",
+    "created": "2024-01-24",
+    
+    "execution_settings": {
+      "timeout_seconds": 1800,
+      "max_retries": 3,
+      "retry_delay_seconds": 5,
+      "parallel_execution": false,
+      "resource_monitoring_interval": 1.0
+    },
+    
+    "performance_thresholds": {
+      "connection_establishment": {
+        "max_duration_ms": 5000,
+        "min_throughput_ops_per_sec": 1.0,
+        "max_memory_usage_mb": 100,
+        "max_cpu_usage_percent": 50,
+        "min_success_rate": 0.95
+      },
+      "simple_query": {
+        "max_duration_ms": 100,
+        "min_throughput_ops_per_sec": 10.0,
+        "max_memory_usage_mb": 50,
+        "max_cpu_usage_percent": 30,
+        "min_success_rate": 0.99
+      },
+      "complex_query": {
+        "max_duration_ms": 1000,
+        "min_throughput_ops_per_sec": 1.0,
+        "max_memory_usage_mb": 200,
+        "max_cpu_usage_percent": 70,
+        "min_success_rate": 0.95
+      },
+      "vector_search": {
+        "max_duration_ms": 500,
+        "min_throughput_ops_per_sec": 2.0,
+        "max_memory_usage_mb": 300,
+        "max_cpu_usage_percent": 60,
+        "min_success_rate": 0.98
+      },
+      "concurrent_operations": {
+        "max_duration_ms": 2000,
+        "min_throughput_ops_per_sec": 5.0,
+        "max_memory_usage_mb": 500,
+        "max_cpu_usage_percent": 80,
+        "min_success_rate": 0.90
+      }
+    },
+    
+    "nfr_requirements": {
+      "startup_time_max_seconds": 120,
+      "query_performance_degradation_max_percent": 20,
+      "total_memory_usage_max_gb": 8,
+      "cpu_usage_max_percent": 80,
+      "min_overall_success_rate": 0.90
+    },
+    
+    "test_suites": {
+      "connection_benchmarks": {
+        "enabled": true,
+        "tests": [
+          "test_postgresql_connection_performance",
+          "test_neo4j_connection_performance", 
+          "test_milvus_connection_performance",
+          "test_concurrent_connection_performance"
+        ],
+        "quick_mode_tests": [
+          "test_postgresql_connection_performance",
+          "test_neo4j_connection_performance"
+        ]
+      },
+      "query_performance": {
+        "enabled": true,
+        "tests": [
+          "test_postgresql_simple_query_performance",
+          "test_neo4j_simple_query_performance",
+          "test_milvus_vector_search_performance",
+          "test_concurrent_query_performance"
+        ],
+        "quick_mode_tests": [
+          "test_postgresql_simple_query_performance",
+          "test_neo4j_simple_query_performance"
+        ]
+      },
+      "resource_usage": {
+        "enabled": true,
+        "tests": [
+          "test_memory_usage_benchmark",
+          "test_cpu_usage_benchmark",
+          "test_startup_time_benchmark"
+        ],
+        "quick_mode_tests": [
+          "test_memory_usage_benchmark"
+        ]
+      },
+      "end_to_end": {
+        "enabled": true,
+        "tests": [
+          "test_document_processing_pipeline_performance",
+          "test_search_and_retrieval_performance"
+        ],
+        "quick_mode_tests": [
+          "test_search_and_retrieval_performance"
+        ]
+      }
+    },
+    
+    "database_configurations": {
+      "postgresql": {
+        "host": "localhost",
+        "port": 5432,
+        "database": "multimodal_librarian",
+        "pool_size": 10,
+        "max_overflow": 20,
+        "connection_timeout": 30
+      },
+      "neo4j": {
+        "host": "localhost",
+        "port": 7687,
+        "http_port": 7474,
+        "pool_size": 100,
+        "connection_timeout": 30
+      },
+      "milvus": {
+        "host": "localhost",
+        "port": 19530,
+        "default_collection": "test_performance",
+        "connection_timeout": 30
+      }
+    },
+    
+    "benchmark_data": {
+      "vector_dimensions": [128, 384, 768],
+      "collection_sizes": [100, 1000, 10000],
+      "query_batch_sizes": [1, 10, 50, 100],
+      "concurrent_user_counts": [1, 5, 10, 20],
+      "test_document_sizes": ["small", "medium", "large"]
+    },
+    
+    "reporting": {
+      "generate_json": true,
+      "generate_html": true,
+      "generate_csv": false,
+      "include_detailed_logs": true,
+      "include_resource_graphs": true,
+      "comparison_with_baseline": true
+    },
+    
+    "aws_baseline_comparison": {
+      "enabled": false,
+      "baseline_file": "tests/performance/aws_baseline_performance.json",
+      "comparison_metrics": [
+        "connection_establishment_time",
+        "query_response_time",
+        "throughput",
+        "resource_usage"
+      ],
+      "acceptable_degradation_percent": 20
+    }
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "timestamp": "2026-01-22T10:49:50.148959",
+  "lambda_cleanup": true,
+  "s3_cleanup": true,
+  "vpc_cleanup": false,
+  "iam_cleanup": true,
+  "collaborative_editor_analysis": true,
+  "total_additional_monthly_savings": 5,
+  "errors": [
+    "Failed to delete S3 bucket multimodal-lib-prod-cloudtrail-logs-50fcb7c1: An error occurred (BucketNotEmpty) when calling the DeleteBucket operation: The bucket you tried to delete is not empty. You must delete all versions in the bucket.",
+    "Failed to delete VPC vpc-0bc85162dcdbcc986: An error occurred (DependencyViolation) when calling the DeleteVpc operation: The vpc 'vpc-0bc85162dcdbcc986' has dependencies and cannot be deleted.",
+    "Failed to delete VPC vpc-0b2186b38779e77f6: An error occurred (DependencyViolation) when calling the DeleteVpc operation: The vpc 'vpc-0b2186b38779e77f6' has dependencies and cannot be deleted.",
+    "Failed to delete IAM role multimodal-librarian-full-ml-ec2-role: An error occurred (DeleteConflict) when calling the DeleteRole operation: Cannot delete entity, must remove roles from instance profile first.",
+    "Failed to delete IAM policy MultimodalLibrarianSecretsManagerAccess: An error occurred (DeleteConflict) when calling the DeletePolicy operation: This policy has more than one version. Before you delete a policy, you must delete the policy's versions. The default version is deleted with the policy.",
+    "Failed to delete IAM policy MultimodalLibrarianOpenSearchAccess: An error occurred (DeleteConflict) when calling the DeletePolicy operation: Cannot delete a policy attached to entities."
+  ],
+  "collaborative_editor_resources": [
+    {
+      "instance_id": "i-098359c54b3c1cd3a",
+      "instance_type": "t3.micro",
+      "launch_time": "2025-12-14T21:34:03+00:00",
+      "state": "running",
+      "estimated_monthly_cost": 15
+    }
+  ]
+}

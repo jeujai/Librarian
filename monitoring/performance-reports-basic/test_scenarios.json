@@ -1,0 +1,405 @@
+{
+  "performance_test_scenarios": {
+    "description": "Comprehensive performance test scenarios for AWS learning deployment",
+    "version": "1.0.0",
+    "last_updated": "2024-01-01T00:00:00Z",
+    "environment": "learning",
+    
+    "basic_load_scenarios": [
+      {
+        "name": "Health Check Baseline",
+        "description": "Baseline performance test for health check endpoint",
+        "endpoint": "/health",
+        "method": "GET",
+        "expected_response_time_ms": 50,
+        "expected_success_rate_percent": 99,
+        "test_configuration": {
+          "concurrent_users": 5,
+          "duration_seconds": 30,
+          "ramp_up_seconds": 2
+        }
+      },
+      {
+        "name": "API Info Load Test",
+        "description": "Test API information endpoint under moderate load",
+        "endpoint": "/api/info",
+        "method": "GET",
+        "expected_response_time_ms": 100,
+        "expected_success_rate_percent": 98,
+        "test_configuration": {
+          "concurrent_users": 10,
+          "duration_seconds": 60,
+          "ramp_up_seconds": 5
+        }
+      },
+      {
+        "name": "Static Content Load Test",
+        "description": "Test static content delivery through CDN",
+        "endpoint": "/",
+        "method": "GET",
+        "expected_response_time_ms": 200,
+        "expected_success_rate_percent": 99,
+        "test_configuration": {
+          "concurrent_users": 15,
+          "duration_seconds": 45,
+          "ramp_up_seconds": 5
+        }
+      },
+      {
+        "name": "Conversation List Performance",
+        "description": "Test conversation listing under concurrent access",
+        "endpoint": "/api/conversations",
+        "method": "GET",
+        "headers": {
+          "Authorization": "Bearer test-token"
+        },
+        "expected_response_time_ms": 300,
+        "expected_success_rate_percent": 95,
+        "test_configuration": {
+          "concurrent_users": 12,
+          "duration_seconds": 90,
+          "ramp_up_seconds": 10
+        }
+      },
+      {
+        "name": "Document Upload Simulation",
+        "description": "Simulate document upload requests under load",
+        "endpoint": "/api/documents/upload",
+        "method": "POST",
+        "payload": {
+          "filename": "performance_test_document.pdf",
+          "content_type": "application/pdf",
+          "size": 1024,
+          "content": "base64_encoded_test_content"
+        },
+        "expected_response_time_ms": 2000,
+        "expected_success_rate_percent": 90,
+        "test_configuration": {
+          "concurrent_users": 8,
+          "duration_seconds": 120,
+          "ramp_up_seconds": 15
+        }
+      }
+    ],
+    
+    "chat_performance_scenarios": [
+      {
+        "name": "WebSocket Connection Stress",
+        "description": "Test WebSocket connection establishment under load",
+        "test_type": "websocket_connection",
+        "expected_connection_success_rate_percent": 95,
+        "expected_connection_time_ms": 500,
+        "test_configuration": {
+          "concurrent_connections": 20,
+          "connection_duration_seconds": 60,
+          "connection_timeout_seconds": 10
+        }
+      },
+      {
+        "name": "Chat Message Throughput",
+        "description": "Test chat message sending and receiving performance",
+        "test_type": "message_throughput",
+        "message_pattern": "burst",
+        "expected_message_latency_ms": 150,
+        "expected_delivery_rate_percent": 98,
+        "test_configuration": {
+          "concurrent_users": 15,
+          "messages_per_user": 20,
+          "message_interval_seconds": 0.5
+        }
+      },
+      {
+        "name": "Sustained Chat Load",
+        "description": "Test sustained chat activity over extended period",
+        "test_type": "sustained_messaging",
+        "message_pattern": "steady",
+        "expected_message_latency_ms": 200,
+        "expected_delivery_rate_percent": 95,
+        "test_configuration": {
+          "concurrent_users": 10,
+          "test_duration_seconds": 300,
+          "messages_per_minute": 12
+        }
+      },
+      {
+        "name": "Mixed Chat Operations",
+        "description": "Test mixed WebSocket and HTTP operations",
+        "test_type": "mixed_operations",
+        "operations": ["websocket_message", "http_conversation_list", "http_conversation_create"],
+        "expected_overall_success_rate_percent": 92,
+        "test_configuration": {
+          "concurrent_users": 12,
+          "test_duration_seconds": 180,
+          "operation_mix_ratio": [0.7, 0.2, 0.1]
+        }
+      }
+    ],
+    
+    "ml_performance_scenarios": [
+      {
+        "name": "Document Processing Pipeline",
+        "description": "Test end-to-end document processing performance",
+        "test_type": "document_processing",
+        "document_types": ["text", "pdf"],
+        "document_sizes": ["small", "medium", "large"],
+        "expected_processing_time_ms": 3000,
+        "expected_success_rate_percent": 90,
+        "test_configuration": {
+          "concurrent_operations": 5,
+          "documents_per_operation": 3,
+          "processing_timeout_seconds": 30
+        }
+      },
+      {
+        "name": "Adaptive Chunking Performance",
+        "description": "Test chunking framework under various content types",
+        "test_type": "chunking_framework",
+        "chunking_strategies": ["adaptive", "fixed", "semantic"],
+        "content_types": ["text", "code", "mixed"],
+        "expected_chunking_time_ms": 1000,
+        "expected_success_rate_percent": 95,
+        "test_configuration": {
+          "concurrent_operations": 8,
+          "chunks_per_operation": 10,
+          "chunking_timeout_seconds": 15
+        }
+      },
+      {
+        "name": "Vector Search Performance",
+        "description": "Test vector database search operations under load",
+        "test_type": "vector_search",
+        "search_types": ["similarity", "hybrid", "filtered"],
+        "result_limits": [10, 50, 100],
+        "expected_search_time_ms": 500,
+        "expected_success_rate_percent": 98,
+        "test_configuration": {
+          "concurrent_searches": 10,
+          "searches_per_thread": 20,
+          "search_timeout_seconds": 5
+        }
+      },
+      {
+        "name": "Knowledge Graph Operations",
+        "description": "Test knowledge graph query and update performance",
+        "test_type": "knowledge_graph",
+        "operation_types": ["query", "create_node", "create_relationship"],
+        "query_complexity": ["simple", "medium", "complex"],
+        "expected_operation_time_ms": 1500,
+        "expected_success_rate_percent": 92,
+        "test_configuration": {
+          "concurrent_operations": 6,
+          "operations_per_thread": 15,
+          "operation_timeout_seconds": 20
+        }
+      },
+      {
+        "name": "ML Training API Load",
+        "description": "Test ML training API endpoints under concurrent access",
+        "test_type": "ml_training_api",
+        "api_endpoints": ["/api/ml-training/status", "/api/ml-training/configure", "/api/ml-training/metrics"],
+        "expected_response_time_ms": 2000,
+        "expected_success_rate_percent": 88,
+        "test_configuration": {
+          "concurrent_requests": 4,
+          "requests_per_endpoint": 10,
+          "request_timeout_seconds": 30
+        }
+      }
+    ],
+    
+    "stress_test_scenarios": [
+      {
+        "name": "Peak Load Simulation",
+        "description": "Simulate peak usage conditions",
+        "test_type": "peak_load",
+        "load_pattern": "spike",
+        "peak_multiplier": 3,
+        "expected_degradation_percent": 20,
+        "test_configuration": {
+          "baseline_users": 10,
+          "peak_users": 30,
+          "spike_duration_seconds": 60,
+          "recovery_time_seconds": 120
+        }
+      },
+      {
+        "name": "Sustained High Load",
+        "description": "Test system behavior under sustained high load",
+        "test_type": "sustained_load",
+        "load_pattern": "plateau",
+        "expected_stability_percent": 85,
+        "test_configuration": {
+          "concurrent_users": 25,
+          "test_duration_seconds": 600,
+          "ramp_up_seconds": 60,
+          "plateau_duration_seconds": 480
+        }
+      },
+      {
+        "name": "Resource Exhaustion Test",
+        "description": "Test system behavior approaching resource limits",
+        "test_type": "resource_exhaustion",
+        "target_resources": ["cpu", "memory", "connections"],
+        "expected_graceful_degradation": true,
+        "test_configuration": {
+          "gradual_increase": true,
+          "max_concurrent_users": 50,
+          "step_size": 5,
+          "step_duration_seconds": 30
+        }
+      }
+    ],
+    
+    "reliability_scenarios": [
+      {
+        "name": "Connection Recovery Test",
+        "description": "Test system recovery from connection failures",
+        "test_type": "connection_recovery",
+        "failure_types": ["network_timeout", "connection_reset", "service_unavailable"],
+        "expected_recovery_time_seconds": 30,
+        "test_configuration": {
+          "concurrent_users": 10,
+          "failure_injection_rate": 0.1,
+          "test_duration_seconds": 300
+        }
+      },
+      {
+        "name": "Database Failover Test",
+        "description": "Test application behavior during database issues",
+        "test_type": "database_failover",
+        "failure_scenarios": ["connection_timeout", "query_timeout", "connection_pool_exhaustion"],
+        "expected_error_handling": true,
+        "test_configuration": {
+          "concurrent_operations": 8,
+          "failure_duration_seconds": 60,
+          "recovery_verification_seconds": 120
+        }
+      },
+      {
+        "name": "Service Degradation Test",
+        "description": "Test graceful degradation under service failures",
+        "test_type": "service_degradation",
+        "affected_services": ["vector_search", "knowledge_graph", "ml_training"],
+        "expected_fallback_behavior": true,
+        "test_configuration": {
+          "concurrent_users": 12,
+          "service_failure_duration_seconds": 90,
+          "degraded_performance_acceptable": true
+        }
+      }
+    ],
+    
+    "cost_optimization_scenarios": [
+      {
+        "name": "Idle Resource Detection",
+        "description": "Test system behavior during low usage periods",
+        "test_type": "idle_detection",
+        "idle_threshold_minutes": 15,
+        "expected_resource_scaling": true,
+        "test_configuration": {
+          "initial_load_users": 10,
+          "idle_duration_minutes": 30,
+          "resource_monitoring_interval_seconds": 60
+        }
+      },
+      {
+        "name": "Auto-scaling Efficiency",
+        "description": "Test auto-scaling behavior and cost efficiency",
+        "test_type": "auto_scaling",
+        "scaling_triggers": ["cpu_utilization", "memory_utilization", "request_rate"],
+        "expected_scaling_time_seconds": 180,
+        "test_configuration": {
+          "load_ramp_pattern": "gradual",
+          "max_scale_out_instances": 3,
+          "scale_in_delay_seconds": 300
+        }
+      },
+      {
+        "name": "Cost Per Operation Analysis",
+        "description": "Measure cost efficiency of different operations",
+        "test_type": "cost_analysis",
+        "operations": ["document_processing", "vector_search", "chat_message", "ml_training"],
+        "cost_tracking_granularity": "per_operation",
+        "test_configuration": {
+          "operation_samples": 100,
+          "cost_measurement_duration_hours": 2,
+          "resource_attribution_method": "proportional"
+        }
+      }
+    ],
+    
+    "monitoring_scenarios": [
+      {
+        "name": "Metrics Collection Validation",
+        "description": "Validate performance metrics collection accuracy",
+        "test_type": "metrics_validation",
+        "metrics_to_validate": ["response_time", "throughput", "error_rate", "resource_utilization"],
+        "expected_accuracy_percent": 95,
+        "test_configuration": {
+          "known_load_pattern": true,
+          "metrics_comparison_sources": ["application_logs", "cloudwatch", "custom_metrics"],
+          "validation_duration_seconds": 300
+        }
+      },
+      {
+        "name": "Alert Threshold Validation",
+        "description": "Test alerting system responsiveness and accuracy",
+        "test_type": "alert_validation",
+        "alert_types": ["response_time_degradation", "error_rate_spike", "resource_exhaustion"],
+        "expected_alert_latency_seconds": 60,
+        "test_configuration": {
+          "controlled_threshold_breach": true,
+          "alert_verification_timeout_seconds": 300,
+          "false_positive_tolerance": 0.05
+        }
+      }
+    ],
+    
+    "test_execution_matrix": {
+      "daily_tests": [
+        "Health Check Baseline",
+        "API Info Load Test",
+        "WebSocket Connection Stress",
+        "Chat Message Throughput"
+      ],
+      "weekly_tests": [
+        "Document Processing Pipeline",
+        "Vector Search Performance",
+        "Sustained Chat Load",
+        "Mixed Chat Operations"
+      ],
+      "monthly_tests": [
+        "Peak Load Simulation",
+        "Sustained High Load",
+        "ML Training API Load",
+        "Cost Per Operation Analysis"
+      ],
+      "on_demand_tests": [
+        "Resource Exhaustion Test",
+        "Connection Recovery Test",
+        "Service Degradation Test",
+        "Alert Threshold Validation"
+      ]
+    },
+    
+    "test_environment_requirements": {
+      "minimum_resources": {
+        "ecs_tasks": 2,
+        "database_connections": 10,
+        "memory_mb": 1024,
+        "cpu_units": 512
+      },
+      "test_data_requirements": {
+        "test_documents": 50,
+        "test_conversations": 20,
+        "test_users": 10,
+        "vector_embeddings": 1000
+      },
+      "external_dependencies": {
+        "internet_connectivity": true,
+        "aws_services": ["cloudwatch", "s3", "rds", "elasticache"],
+        "third_party_apis": ["openai", "gemini"]
+      }
+    }
+  }
+}

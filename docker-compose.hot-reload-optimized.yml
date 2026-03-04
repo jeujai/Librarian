@@ -1,0 +1,524 @@
+version: '3.8'
+
+# Optimized Docker Compose configuration for hot reload performance
+# This configuration focuses on minimizing restart times and improving
+# file watching efficiency for local development.
+
+services:
+  # =============================================================================
+  # MAIN APPLICATION SERVICE - OPTIMIZED FOR HOT RELOAD
+  # =============================================================================
+  multimodal-librarian:
+    build:
+      context: .
+      target: development
+      # Use BuildKit for faster builds
+      cache_from:
+        - multimodal-librarian:dev-cache
+    image: multimodal-librarian:dev-optimized
+    
+    # Load environment variables from .env.local file
+    env_file:
+      - .env.local
+    
+    ports:
+      - "${API_PORT:-8000}:8000"
+    
+    # Optimized resource limits for hot reload
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1.5G  # Reduced memory for faster restarts
+        reservations:
+          cpus: '0.5'
+          memory: 256M  # Lower reservation for efficiency
+      restart_policy:
+        condition: on-failure
+        delay: 2s  # Faster restart delay
+        max_attempts: 5
+        window: 60s
+    
+    # Optimized graceful shutdown
+    stop_signal: SIGTERM
+    stop_grace_period: 10s  # Reduced for faster restarts
+    init: true
+    
+    environment:
+      # Environment selection
+      - ML_ENVIRONMENT=${ML_ENVIRONMENT:-local}
+      - ML_DATABASE_TYPE=${ML_DATABASE_TYPE:-local}
+      - DATABASE_TYPE=${DATABASE_TYPE:-local}
+      
+      # Development mode settings (optimized)
+      - DEBUG=${DEBUG:-true}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}  # Reduced verbosity
+      - API_HOST=${API_HOST:-0.0.0.0}
+      - API_PORT=${API_PORT:-8000}
+      - API_WORKERS=${API_WORKERS:-1}
+      
+      # Hot reload optimizations
+      - PYTHONPATH=/app/src:/app
+      - PYTHONOPTIMIZE=1  # Enable Python optimizations
+      - PYTHONDONTWRITEBYTECODE=1  # Don't write .pyc files
+      - PYTHONUNBUFFERED=1
+      - WATCHDOG_ENABLED=true
+      - UVICORN_RELOAD=true
+      - UVICORN_RELOAD_DELAY=0.5  # Faster reload delay
+      - RELOAD_DIRS=/app/src/multimodal_librarian  # More specific watching
+      - RELOAD_INCLUDES=*.py,*.yaml,*.yml,*.json,*.toml
+      - RELOAD_EXCLUDES=__pycache__,*.pyc,*.pyo,*.pyd,.git,*.log,*.tmp
+      - UVLOOP_ENABLED=1  # Enable uvloop for performance
+      
+      # Database connections (optimized for development)
+      - POSTGRES_HOST=${POSTGRES_HOST:-postgres}
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      - POSTGRES_DB=${POSTGRES_DB:-multimodal_librarian}
+      - POSTGRES_USER=${POSTGRES_USER:-ml_user}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-ml_password}
+      - POSTGRES_POOL_SIZE=${POSTGRES_POOL_SIZE:-5}  # Smaller pool for dev
+      - POSTGRES_MAX_CONNECTIONS=${POSTGRES_MAX_CONNECTIONS:-50}
+      
+      # Neo4j configuration (optimized)
+      - NEO4J_HOST=${NEO4J_HOST:-neo4j}
+      - NEO4J_PORT=${NEO4J_PORT:-7687}
+      - NEO4J_URI=${NEO4J_URI:-bolt://neo4j:7687}
+      - NEO4J_USER=${NEO4J_USER:-neo4j}
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD:-ml_password}
+      
+      # Milvus configuration (optimized)
+      - MILVUS_HOST=${MILVUS_HOST:-milvus}
+      - MILVUS_PORT=${MILVUS_PORT:-19530}
+      - MILVUS_COLLECTION_NAME=${MILVUS_COLLECTION_NAME:-knowledge_chunks}
+      
+      # Redis configuration
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - CACHE_TTL=${CACHE_TTL:-1800}  # Shorter TTL for development
+      
+      # Security settings (relaxed for development)
+      - SECRET_KEY=${SECRET_KEY:-local-dev-secret-key}
+      - REQUIRE_AUTH=${REQUIRE_AUTH:-false}
+      - RATE_LIMIT_PER_MINUTE=${RATE_LIMIT_PER_MINUTE:-1000}  # Higher limit
+      
+      # External APIs
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-3.5-turbo}
+      
+      # File storage (optimized paths)
+      - UPLOAD_DIR=${UPLOAD_DIR:-/app/uploads}
+      - MEDIA_DIR=${MEDIA_DIR:-/app/media}
+      - EXPORT_DIR=${EXPORT_DIR:-/app/exports}
+      - MAX_FILE_SIZE=${MAX_FILE_SIZE:-52428800}  # 50MB for faster processing
+      
+      # Processing settings (optimized for development)
+      - CHUNK_SIZE=${CHUNK_SIZE:-256}  # Smaller chunks for faster processing
+      - CHUNK_OVERLAP=${CHUNK_OVERLAP:-25}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-all-MiniLM-L6-v2}
+      
+      # Feature flags (optimized for development)
+      - ENABLE_DOCUMENT_UPLOAD=${ENABLE_DOCUMENT_UPLOAD:-true}
+      - ENABLE_KNOWLEDGE_GRAPH=${ENABLE_KNOWLEDGE_GRAPH:-true}
+      - ENABLE_VECTOR_SEARCH=${ENABLE_VECTOR_SEARCH:-true}
+      - ENABLE_AI_CHAT=${ENABLE_AI_CHAT:-true}
+    
+    volumes:
+      # =============================================================================
+      # OPTIMIZED SOURCE CODE MOUNTS FOR HOT RELOAD
+      # =============================================================================
+      # Mount only the main source directory (more efficient)
+      - ./src/multimodal_librarian:/app/src/multimodal_librarian:rw,cached
+      
+      # Mount configuration files separately
+      - ./pyproject.toml:/app/pyproject.toml:ro,cached
+      - ./.env.local:/app/.env.local:ro,cached
+      
+      # =============================================================================
+      # ESSENTIAL DATA DIRECTORIES ONLY
+      # =============================================================================
+      # Only mount essential directories for hot reload
+      - hot_reload_uploads:/app/uploads
+      - hot_reload_media:/app/media
+      - hot_reload_exports:/app/exports
+      - hot_reload_logs:/app/logs
+      
+      # =============================================================================
+      # OPTIMIZED CACHE VOLUMES
+      # =============================================================================
+      # Use named volumes for better performance
+      - hot_reload_model_cache:/app/.cache
+      - hot_reload_python_cache:/root/.cache/pip
+    
+    depends_on:
+      postgres:
+        condition: service_healthy
+        restart: true
+      neo4j:
+        condition: service_healthy
+        restart: true
+      milvus:
+        condition: service_healthy
+        restart: true
+      redis:
+        condition: service_healthy
+        restart: true
+    
+    restart: unless-stopped
+    networks:
+      - ml-hot-reload-network
+    
+    # Optimized health check for faster startup detection
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8000/health/simple\", timeout=5).read()' || exit 1"]
+      interval: 15s  # More frequent checks
+      timeout: 5s   # Faster timeout
+      retries: 3    # Fewer retries
+      start_period: 30s  # Shorter start period
+    
+    # Use optimized hot reload command
+    command: ["python", "/app/scripts/optimized-hot-reload.py"]
+
+  # =============================================================================
+  # OPTIMIZED DATABASE SERVICES
+  # =============================================================================
+  postgres:
+    image: postgres:15-alpine
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'  # Reduced for development
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    
+    stop_signal: SIGTERM
+    stop_grace_period: 10s
+    init: true
+    
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-multimodal_librarian}
+      - POSTGRES_USER=${POSTGRES_USER:-ml_user}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-ml_password}
+      # Optimized settings for development
+      - POSTGRES_SHARED_BUFFERS=128MB
+      - POSTGRES_EFFECTIVE_CACHE_SIZE=256MB
+      - POSTGRES_MAX_CONNECTIONS=50
+    
+    volumes:
+      - hot_reload_postgres_data:/var/lib/postgresql/data
+      # Only essential initialization scripts
+      - ./database/postgresql/init/01_extensions.sql:/docker-entrypoint-initdb.d/01_extensions.sql:ro
+      - ./database/postgresql/init/06_application_schema.sql:/docker-entrypoint-initdb.d/06_application_schema.sql:ro
+    
+    ports:
+      - "5432:5432"
+    
+    restart: unless-stopped
+    networks:
+      - ml-hot-reload-network
+    
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ml_user -d multimodal_librarian"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    
+    # Optimized PostgreSQL configuration for development
+    command: >
+      postgres
+      -c shared_buffers=128MB
+      -c effective_cache_size=256MB
+      -c max_connections=50
+      -c work_mem=4MB
+      -c maintenance_work_mem=32MB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c random_page_cost=2.0
+      -c log_statement=none
+      -c log_min_duration_statement=5000
+      -c fsync=off
+      -c synchronous_commit=off
+      -c full_page_writes=off
+
+  # =============================================================================
+  # OPTIMIZED NEO4J
+  # =============================================================================
+  neo4j:
+    image: neo4j:5.15-community
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 768M  # Reduced memory
+        reservations:
+          cpus: '0.2'
+          memory: 256M
+    
+    stop_signal: SIGTERM
+    stop_grace_period: 15s
+    init: true
+    
+    environment:
+      - NEO4J_AUTH=${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-ml_password}
+      - NEO4J_PLUGINS=["apoc"]  # Only essential plugins
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*
+      
+      # Optimized memory settings for development
+      - NEO4J_server_memory_heap_initial__size=256m
+      - NEO4J_server_memory_heap_max__size=512m
+      - NEO4J_server_memory_pagecache_size=256m
+      
+      # Performance optimizations for development
+      - NEO4J_dbms_query__cache__size=500
+      - NEO4J_db_tx__log_rotation_retention__policy=512M size
+      - NEO4J_dbms_usage__report_enabled=false
+      - NEO4J_metrics_enabled=false
+      - NEO4J_dbms_logs_query_enabled=false
+    
+    volumes:
+      - hot_reload_neo4j_data:/data
+      - hot_reload_neo4j_logs:/logs
+    
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    
+    restart: unless-stopped
+    networks:
+      - ml-hot-reload-network
+    
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p ml_password 'RETURN 1 as status'"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
+
+  # =============================================================================
+  # OPTIMIZED MILVUS
+  # =============================================================================
+  milvus:
+    image: milvusdb/milvus:v2.3.4
+    command: ["milvus", "run", "standalone"]
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 1G  # Reduced memory
+        reservations:
+          cpus: '0.2'
+          memory: 256M
+    
+    stop_signal: SIGTERM
+    stop_grace_period: 15s
+    init: true
+    
+    environment:
+      - ETCD_ENDPOINTS=etcd:2379
+      - MINIO_ADDRESS=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+      # Optimized settings for development
+      - MILVUS_QUERY_NODE_GRACEFUL_TIME=5
+      - MILVUS_QUERY_NODE_CACHE_SIZE=1073741824  # 1GB
+      - MILVUS_COMMON_SECURITY_AUTHORIZATIONENABLED=false
+    
+    volumes:
+      - hot_reload_milvus_data:/var/lib/milvus
+    
+    ports:
+      - "19530:19530"
+      - "9091:9091"
+    
+    depends_on:
+      etcd:
+        condition: service_healthy
+        restart: true
+      minio:
+        condition: service_healthy
+        restart: true
+    
+    restart: unless-stopped
+    networks:
+      - ml-hot-reload-network
+    
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9091/healthz"]
+      interval: 20s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # =============================================================================
+  # MILVUS DEPENDENCIES (OPTIMIZED)
+  # =============================================================================
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.5
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+    
+    stop_signal: SIGTERM
+    stop_grace_period: 5s
+    init: true
+    
+    environment:
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      - ETCD_AUTO_COMPACTION_RETENTION=500  # Reduced for development
+      - ETCD_QUOTA_BACKEND_BYTES=2147483648  # 2GB
+      - ETCD_SNAPSHOT_COUNT=25000
+    
+    volumes:
+      - hot_reload_etcd_data:/etcd
+    
+    command: etcd -advertise-client-urls=http://etcd:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    
+    ports:
+      - "2379:2379"
+    
+    restart: unless-stopped
+    networks:
+      - ml-hot-reload-network
+    
+    healthcheck:
+      test: ["CMD-SHELL", "etcdctl endpoint health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  minio:
+    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+    
+    stop_signal: SIGTERM
+    stop_grace_period: 10s
+    init: true
+    
+    environment:
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+    
+    volumes:
+      - hot_reload_minio_data:/data
+    
+    command: minio server /data --console-address ":9001"
+    
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    
+    restart: unless-stopped
+    networks:
+      - ml-hot-reload-network
+    
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+
+  # =============================================================================
+  # REDIS CACHE (OPTIMIZED)
+  # =============================================================================
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --maxmemory 128mb --maxmemory-policy allkeys-lru --save ""
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+    
+    stop_signal: SIGTERM
+    stop_grace_period: 5s
+    init: true
+    
+    volumes:
+      - hot_reload_redis_data:/data
+    
+    ports:
+      - "6379:6379"
+    
+    restart: unless-stopped
+    networks:
+      - ml-hot-reload-network
+    
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+# =============================================================================
+# OPTIMIZED VOLUMES
+# =============================================================================
+volumes:
+  # Use named volumes for better performance and easier cleanup
+  hot_reload_postgres_data:
+    driver: local
+  hot_reload_neo4j_data:
+    driver: local
+  hot_reload_neo4j_logs:
+    driver: local
+  hot_reload_milvus_data:
+    driver: local
+  hot_reload_etcd_data:
+    driver: local
+  hot_reload_minio_data:
+    driver: local
+  hot_reload_redis_data:
+    driver: local
+  
+  # Application data volumes
+  hot_reload_uploads:
+    driver: local
+  hot_reload_media:
+    driver: local
+  hot_reload_exports:
+    driver: local
+  hot_reload_logs:
+    driver: local
+  
+  # Cache volumes for performance
+  hot_reload_model_cache:
+    driver: local
+  hot_reload_python_cache:
+    driver: local
+
+# =============================================================================
+# OPTIMIZED NETWORK
+# =============================================================================
+networks:
+  ml-hot-reload-network:
+    name: multimodal-librarian-hot-reload
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.22.0.0/16
+          gateway: 172.22.0.1
+    driver_opts:
+      com.docker.network.bridge.enable_icc: "true"
+      com.docker.network.bridge.enable_ip_masquerade: "true"
+      com.docker.network.driver.mtu: 1500
+    labels:
+      - "multimodal-librarian.network.type=hot-reload-optimized"
+      - "multimodal-librarian.network.environment=local"

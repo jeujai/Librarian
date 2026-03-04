@@ -1,0 +1,70 @@
+{
+  "timestamp": "20260117_041022",
+  "alb_info": {
+    "name": "multimodal-lib-prod-alb-v2",
+    "arn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:loadbalancer/app/multimodal-lib-prod-alb-v2/5964a1d711ab8dfe",
+    "dns": "multimodal-lib-prod-alb-v2-1090291461.us-east-1.elb.amazonaws.com",
+    "vpc_id": "vpc-0b2186b38779e77f6",
+    "security_groups": [
+      "sg-0135b368e20b7bd01"
+    ]
+  },
+  "target_group_info": {
+    "name": "multimodal-lib-prod-tg-v2",
+    "arn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg-v2/7b63a6337a5c7a34",
+    "protocol": "HTTP",
+    "port": 8000,
+    "health_check_path": "/health/simple",
+    "health_check_protocol": "HTTP",
+    "health_check_port": "traffic-port",
+    "health_check_interval": 30,
+    "health_check_timeout": 29,
+    "healthy_threshold": 2,
+    "unhealthy_threshold": 2
+  },
+  "target_health": [
+    {
+      "id": "10.0.1.10",
+      "port": 8000,
+      "state": "draining",
+      "reason": "Target.DeregistrationInProgress",
+      "description": "Target deregistration is in progress"
+    },
+    {
+      "id": "10.0.3.165",
+      "port": 8000,
+      "state": "draining",
+      "reason": "Target.DeregistrationInProgress",
+      "description": "Target deregistration is in progress"
+    },
+    {
+      "id": "10.0.1.232",
+      "port": 8000,
+      "state": "unhealthy",
+      "reason": "Target.Timeout",
+      "description": "Request timed out"
+    },
+    {
+      "id": "10.0.2.149",
+      "port": 8000,
+      "state": "unhealthy",
+      "reason": "Target.FailedHealthChecks",
+      "description": "Health checks failed"
+    }
+  ],
+  "security_group_analysis": {
+    "alb_security_groups": [
+      "sg-0135b368e20b7bd01"
+    ],
+    "ecs_security_groups": [
+      "sg-0135b368e20b7bd01"
+    ]
+  },
+  "issues": [
+    "Target 10.0.1.10:8000 is draining: Target.DeregistrationInProgress",
+    "Target 10.0.3.165:8000 is draining: Target.DeregistrationInProgress",
+    "Target 10.0.1.232:8000 is unhealthy: Target.Timeout",
+    "Target 10.0.2.149:8000 is unhealthy: Target.FailedHealthChecks"
+  ],
+  "recommendations": []
+}

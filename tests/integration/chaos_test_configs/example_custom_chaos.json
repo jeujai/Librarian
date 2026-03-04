@@ -1,0 +1,12 @@
+{
+  "experiment_id": "custom_database_failure_001",
+  "name": "Custom Database Failure Test",
+  "description": "Test system behavior when database fails during high load",
+  "experiment_type": "random_component_failure",
+  "target_components": ["database", "cache"],
+  "impact_level": "medium",
+  "duration_seconds": 25,
+  "failure_probability": 0.8,
+  "recovery_time_seconds": 15,
+  "notes": "This configuration tests database failure scenarios with cache fallback"
+}

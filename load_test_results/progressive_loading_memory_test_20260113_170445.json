@@ -1,0 +1,960 @@
+{
+  "start_time": "2026-01-13T17:02:22.576717",
+  "max_memory_threshold_mb": 2000.0,
+  "test_type": "progressive_loading_memory",
+  "tests": {
+    "baseline": {
+      "test_name": "baseline_memory_usage",
+      "passed": true,
+      "baseline_memory_mb": 60.5,
+      "peak_memory_mb": 60.5,
+      "final_memory_mb": 60.5,
+      "memory_growth_mb": 0.0,
+      "memory_growth_percent": 0.0,
+      "max_memory_threshold_mb": 2000.0,
+      "memory_leak_detected": false,
+      "memory_leak_rate_mb_per_min": 0.0,
+      "phase_memory_usage": {
+        "baseline": 60.5
+      },
+      "memory_efficiency_score": 100.0,
+      "violations": [],
+      "warnings": [],
+      "snapshots": [
+        {
+          "timestamp": "2026-01-13T17:02:22.576819",
+          "phase": "baseline_start",
+          "rss_mb": 60.5,
+          "vms_mb": 401570.46875,
+          "available_mb": 13004.71875,
+          "percent_used": 60.3,
+          "swap_used_mb": 0.0,
+          "models_loaded": 0,
+          "memory_pressure": "medium"
+        },
+        {
+          "timestamp": "2026-01-13T17:02:27.578412",
+          "phase": "baseline_end",
+          "rss_mb": 60.5,
+          "vms_mb": 401570.46875,
+          "available_mb": 13397.8125,
+          "percent_used": 59.1,
+          "swap_used_mb": 0.0,
+          "models_loaded": 0,
+          "memory_pressure": "low"
+        }
+      ]
+    },
+    "minimal_phase": {
+      "test_name": "minimal_phase_memory",
+      "passed": true,
+      "baseline_memory_mb": 60.5625,
+      "peak_memory_mb": 60.5625,
+      "final_memory_mb": 60.5625,
+      "memory_growth_mb": 0.0,
+      "memory_growth_percent": 0.0,
+      "max_memory_threshold_mb": 2000.0,
+      "memory_leak_detected": false,
+      "memory_leak_rate_mb_per_min": 0.0,
+      "phase_memory_usage": {
+        "minimal": 60.5625
+      },
+      "memory_efficiency_score": 100.0,
+      "violations": [],
+      "warnings": [],
+      "snapshots": [
+        {
+          "timestamp": "2026-01-13T17:02:27.579277",
+          "phase": "minimal_start",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13397.8125,
+          "percent_used": 59.1,
+          "swap_used_mb": 0.0,
+          "models_loaded": 0,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:02:29.580806",
+          "phase": "minimal_end",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13398.46875,
+          "percent_used": 59.1,
+          "swap_used_mb": 0.0,
+          "models_loaded": 0,
+          "memory_pressure": "low"
+        }
+      ]
+    },
+    "essential_models": {
+      "test_name": "essential_models_memory",
+      "passed": true,
+      "baseline_memory_mb": 60.5625,
+      "peak_memory_mb": 60.5625,
+      "final_memory_mb": 60.5625,
+      "memory_growth_mb": 0.0,
+      "memory_growth_percent": 0.0,
+      "max_memory_threshold_mb": 2000.0,
+      "memory_leak_detected": false,
+      "memory_leak_rate_mb_per_min": 0.0,
+      "phase_memory_usage": {
+        "essential": 60.5625
+      },
+      "memory_efficiency_score": 100.0,
+      "violations": [],
+      "warnings": [],
+      "snapshots": [
+        {
+          "timestamp": "2026-01-13T17:02:29.581541",
+          "phase": "essential_start",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13398.46875,
+          "percent_used": 59.1,
+          "swap_used_mb": 0.0,
+          "models_loaded": 0,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:02:30.582361",
+          "phase": "essential_model_1",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13399.15625,
+          "percent_used": 59.1,
+          "swap_used_mb": 0.0,
+          "models_loaded": 1,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:02:31.582673",
+          "phase": "essential_model_2",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13488.46875,
+          "percent_used": 58.8,
+          "swap_used_mb": 0.0,
+          "models_loaded": 2,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:02:32.584149",
+          "phase": "essential_model_3",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13487.515625,
+          "percent_used": 58.8,
+          "swap_used_mb": 0.0,
+          "models_loaded": 3,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:02:32.584284",
+          "phase": "essential_end",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13487.515625,
+          "percent_used": 58.8,
+          "swap_used_mb": 0.0,
+          "models_loaded": 3,
+          "memory_pressure": "low"
+        }
+      ]
+    },
+    "full_models": {
+      "test_name": "full_models_memory",
+      "passed": true,
+      "baseline_memory_mb": 60.5625,
+      "peak_memory_mb": 60.5625,
+      "final_memory_mb": 60.5625,
+      "memory_growth_mb": 0.0,
+      "memory_growth_percent": 0.0,
+      "max_memory_threshold_mb": 2000.0,
+      "memory_leak_detected": false,
+      "memory_leak_rate_mb_per_min": 0.0,
+      "phase_memory_usage": {
+        "full": 60.5625
+      },
+      "memory_efficiency_score": 100.0,
+      "violations": [],
+      "warnings": [],
+      "snapshots": [
+        {
+          "timestamp": "2026-01-13T17:02:32.585214",
+          "phase": "full_start",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13487.515625,
+          "percent_used": 58.8,
+          "swap_used_mb": 0.0,
+          "models_loaded": 3,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:02:34.086583",
+          "phase": "full_model_1",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13488.75,
+          "percent_used": 58.8,
+          "swap_used_mb": 0.0,
+          "models_loaded": 4,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:02:35.588017",
+          "phase": "full_model_2",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13488.265625,
+          "percent_used": 58.8,
+          "swap_used_mb": 0.0,
+          "models_loaded": 5,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:02:37.089666",
+          "phase": "full_model_3",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13487.203125,
+          "percent_used": 58.8,
+          "swap_used_mb": 0.0,
+          "models_loaded": 6,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:02:38.591153",
+          "phase": "full_model_4",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13485.046875,
+          "percent_used": 58.8,
+          "swap_used_mb": 0.0,
+          "models_loaded": 7,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:02:38.591276",
+          "phase": "full_end",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13485.0625,
+          "percent_used": 58.8,
+          "swap_used_mb": 0.0,
+          "models_loaded": 7,
+          "memory_pressure": "low"
+        }
+      ]
+    },
+    "memory_leak": {
+      "test_name": "memory_leak_detection",
+      "passed": true,
+      "baseline_memory_mb": 60.5625,
+      "peak_memory_mb": 60.5625,
+      "final_memory_mb": 60.5625,
+      "memory_growth_mb": 0.0,
+      "memory_growth_percent": 0.0,
+      "max_memory_threshold_mb": 2000.0,
+      "memory_leak_detected": false,
+      "memory_leak_rate_mb_per_min": 0.0,
+      "phase_memory_usage": {
+        "leak_test": 60.5625
+      },
+      "memory_efficiency_score": 100.0,
+      "violations": [],
+      "warnings": [],
+      "snapshots": [
+        {
+          "timestamp": "2026-01-13T17:02:38.592065",
+          "phase": "leak_test_start",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13485.15625,
+          "percent_used": 58.8,
+          "swap_used_mb": 0.0,
+          "models_loaded": 7,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:02:48.593511",
+          "phase": "leak_test_sample",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13423.0625,
+          "percent_used": 59.0,
+          "swap_used_mb": 0.0,
+          "models_loaded": 7,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:02:58.595317",
+          "phase": "leak_test_sample",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13430.109375,
+          "percent_used": 59.0,
+          "swap_used_mb": 0.0,
+          "models_loaded": 7,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:03:08.597037",
+          "phase": "leak_test_sample",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 12959.375,
+          "percent_used": 60.5,
+          "swap_used_mb": 0.0,
+          "models_loaded": 7,
+          "memory_pressure": "medium"
+        },
+        {
+          "timestamp": "2026-01-13T17:03:18.598816",
+          "phase": "leak_test_sample",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13085.3125,
+          "percent_used": 60.1,
+          "swap_used_mb": 0.0,
+          "models_loaded": 7,
+          "memory_pressure": "medium"
+        },
+        {
+          "timestamp": "2026-01-13T17:03:28.599558",
+          "phase": "leak_test_sample",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13041.703125,
+          "percent_used": 60.2,
+          "swap_used_mb": 0.0,
+          "models_loaded": 7,
+          "memory_pressure": "medium"
+        },
+        {
+          "timestamp": "2026-01-13T17:03:38.601239",
+          "phase": "leak_test_sample",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13045.0,
+          "percent_used": 60.2,
+          "swap_used_mb": 0.0,
+          "models_loaded": 7,
+          "memory_pressure": "medium"
+        },
+        {
+          "timestamp": "2026-01-13T17:03:48.603338",
+          "phase": "leak_test_sample",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13518.265625,
+          "percent_used": 58.7,
+          "swap_used_mb": 0.0,
+          "models_loaded": 7,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:03:58.605069",
+          "phase": "leak_test_sample",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13548.4375,
+          "percent_used": 58.7,
+          "swap_used_mb": 0.0,
+          "models_loaded": 7,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:04:08.607864",
+          "phase": "leak_test_sample",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13558.71875,
+          "percent_used": 58.6,
+          "swap_used_mb": 0.0,
+          "models_loaded": 7,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:04:18.610044",
+          "phase": "leak_test_sample",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13555.109375,
+          "percent_used": 58.6,
+          "swap_used_mb": 0.0,
+          "models_loaded": 7,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:04:28.611905",
+          "phase": "leak_test_sample",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13579.375,
+          "percent_used": 58.6,
+          "swap_used_mb": 0.0,
+          "models_loaded": 7,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:04:38.613372",
+          "phase": "leak_test_sample",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13580.453125,
+          "percent_used": 58.6,
+          "swap_used_mb": 0.0,
+          "models_loaded": 7,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:04:38.613489",
+          "phase": "leak_test_end",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13580.453125,
+          "percent_used": 58.6,
+          "swap_used_mb": 0.0,
+          "models_loaded": 7,
+          "memory_pressure": "low"
+        }
+      ]
+    },
+    "memory_cleanup": {
+      "test_name": "memory_cleanup_after_unload",
+      "passed": true,
+      "baseline_memory_mb": 60.5625,
+      "peak_memory_mb": 60.5625,
+      "final_memory_mb": 60.5625,
+      "memory_growth_mb": -0.0,
+      "memory_growth_percent": -0.0,
+      "max_memory_threshold_mb": 2000.0,
+      "memory_leak_detected": false,
+      "memory_leak_rate_mb_per_min": 0.0,
+      "phase_memory_usage": {
+        "after_cleanup": 60.5625
+      },
+      "memory_efficiency_score": 0.0,
+      "violations": [],
+      "warnings": [
+        "Less memory freed than expected: 0.0MB"
+      ],
+      "snapshots": [
+        {
+          "timestamp": "2026-01-13T17:04:38.614555",
+          "phase": "before_unload",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13580.453125,
+          "percent_used": 58.6,
+          "swap_used_mb": 0.0,
+          "models_loaded": 7,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:04:39.616806",
+          "phase": "unload_1",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13578.234375,
+          "percent_used": 58.6,
+          "swap_used_mb": 0.0,
+          "models_loaded": 6,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:04:40.618145",
+          "phase": "unload_2",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13577.515625,
+          "percent_used": 58.6,
+          "swap_used_mb": 0.0,
+          "models_loaded": 5,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:04:41.620787",
+          "phase": "unload_3",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13578.921875,
+          "percent_used": 58.6,
+          "swap_used_mb": 0.0,
+          "models_loaded": 4,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:04:43.641293",
+          "phase": "after_cleanup",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13517.59375,
+          "percent_used": 58.7,
+          "swap_used_mb": 0.0,
+          "models_loaded": 4,
+          "memory_pressure": "low"
+        }
+      ]
+    },
+    "memory_pool": {
+      "test_name": "memory_pool_efficiency",
+      "passed": true,
+      "baseline_memory_mb": 60.5625,
+      "peak_memory_mb": 60.5625,
+      "final_memory_mb": 60.5625,
+      "memory_growth_mb": 0.0,
+      "memory_growth_percent": 0.0,
+      "max_memory_threshold_mb": 2000.0,
+      "memory_leak_detected": false,
+      "memory_leak_rate_mb_per_min": 0.0,
+      "phase_memory_usage": {
+        "pool_test": 60.5625
+      },
+      "memory_efficiency_score": 100.0,
+      "violations": [],
+      "warnings": [],
+      "snapshots": [
+        {
+          "timestamp": "2026-01-13T17:04:43.641616",
+          "phase": "pool_test_start",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13517.59375,
+          "percent_used": 58.7,
+          "swap_used_mb": 0.0,
+          "models_loaded": 4,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:04:45.643979",
+          "phase": "pool_test_end",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13517.3125,
+          "percent_used": 58.7,
+          "swap_used_mb": 0.0,
+          "models_loaded": 4,
+          "memory_pressure": "low"
+        }
+      ]
+    }
+  },
+  "summary": {
+    "tests_passed": 7,
+    "tests_failed": 0,
+    "total_tests": 7,
+    "pass_rate": 100.0,
+    "memory_summary": {
+      "total_snapshots": 36,
+      "baseline_memory_mb": 60.5,
+      "peak_memory_mb": 60.5625,
+      "final_memory_mb": 60.5625,
+      "average_memory_mb": 60.55902777777778,
+      "median_memory_mb": 60.5625,
+      "memory_range_mb": 0.0625,
+      "total_growth_mb": 0.0625,
+      "snapshots": [
+        {
+          "timestamp": "2026-01-13T17:02:22.576819",
+          "phase": "baseline_start",
+          "rss_mb": 60.5,
+          "vms_mb": 401570.46875,
+          "available_mb": 13004.71875,
+          "percent_used": 60.3,
+          "swap_used_mb": 0.0,
+          "models_loaded": 0,
+          "memory_pressure": "medium"
+        },
+        {
+          "timestamp": "2026-01-13T17:02:27.578412",
+          "phase": "baseline_end",
+          "rss_mb": 60.5,
+          "vms_mb": 401570.46875,
+          "available_mb": 13397.8125,
+          "percent_used": 59.1,
+          "swap_used_mb": 0.0,
+          "models_loaded": 0,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:02:27.579277",
+          "phase": "minimal_start",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13397.8125,
+          "percent_used": 59.1,
+          "swap_used_mb": 0.0,
+          "models_loaded": 0,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:02:29.580806",
+          "phase": "minimal_end",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13398.46875,
+          "percent_used": 59.1,
+          "swap_used_mb": 0.0,
+          "models_loaded": 0,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:02:29.581541",
+          "phase": "essential_start",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13398.46875,
+          "percent_used": 59.1,
+          "swap_used_mb": 0.0,
+          "models_loaded": 0,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:02:30.582361",
+          "phase": "essential_model_1",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13399.15625,
+          "percent_used": 59.1,
+          "swap_used_mb": 0.0,
+          "models_loaded": 1,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:02:31.582673",
+          "phase": "essential_model_2",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13488.46875,
+          "percent_used": 58.8,
+          "swap_used_mb": 0.0,
+          "models_loaded": 2,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:02:32.584149",
+          "phase": "essential_model_3",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13487.515625,
+          "percent_used": 58.8,
+          "swap_used_mb": 0.0,
+          "models_loaded": 3,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:02:32.584284",
+          "phase": "essential_end",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13487.515625,
+          "percent_used": 58.8,
+          "swap_used_mb": 0.0,
+          "models_loaded": 3,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:02:32.585214",
+          "phase": "full_start",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13487.515625,
+          "percent_used": 58.8,
+          "swap_used_mb": 0.0,
+          "models_loaded": 3,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:02:34.086583",
+          "phase": "full_model_1",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13488.75,
+          "percent_used": 58.8,
+          "swap_used_mb": 0.0,
+          "models_loaded": 4,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:02:35.588017",
+          "phase": "full_model_2",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13488.265625,
+          "percent_used": 58.8,
+          "swap_used_mb": 0.0,
+          "models_loaded": 5,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:02:37.089666",
+          "phase": "full_model_3",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13487.203125,
+          "percent_used": 58.8,
+          "swap_used_mb": 0.0,
+          "models_loaded": 6,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:02:38.591153",
+          "phase": "full_model_4",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13485.046875,
+          "percent_used": 58.8,
+          "swap_used_mb": 0.0,
+          "models_loaded": 7,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:02:38.591276",
+          "phase": "full_end",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13485.0625,
+          "percent_used": 58.8,
+          "swap_used_mb": 0.0,
+          "models_loaded": 7,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:02:38.592065",
+          "phase": "leak_test_start",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13485.15625,
+          "percent_used": 58.8,
+          "swap_used_mb": 0.0,
+          "models_loaded": 7,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:02:48.593511",
+          "phase": "leak_test_sample",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13423.0625,
+          "percent_used": 59.0,
+          "swap_used_mb": 0.0,
+          "models_loaded": 7,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:02:58.595317",
+          "phase": "leak_test_sample",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13430.109375,
+          "percent_used": 59.0,
+          "swap_used_mb": 0.0,
+          "models_loaded": 7,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:03:08.597037",
+          "phase": "leak_test_sample",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 12959.375,
+          "percent_used": 60.5,
+          "swap_used_mb": 0.0,
+          "models_loaded": 7,
+          "memory_pressure": "medium"
+        },
+        {
+          "timestamp": "2026-01-13T17:03:18.598816",
+          "phase": "leak_test_sample",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13085.3125,
+          "percent_used": 60.1,
+          "swap_used_mb": 0.0,
+          "models_loaded": 7,
+          "memory_pressure": "medium"
+        },
+        {
+          "timestamp": "2026-01-13T17:03:28.599558",
+          "phase": "leak_test_sample",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13041.703125,
+          "percent_used": 60.2,
+          "swap_used_mb": 0.0,
+          "models_loaded": 7,
+          "memory_pressure": "medium"
+        },
+        {
+          "timestamp": "2026-01-13T17:03:38.601239",
+          "phase": "leak_test_sample",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13045.0,
+          "percent_used": 60.2,
+          "swap_used_mb": 0.0,
+          "models_loaded": 7,
+          "memory_pressure": "medium"
+        },
+        {
+          "timestamp": "2026-01-13T17:03:48.603338",
+          "phase": "leak_test_sample",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13518.265625,
+          "percent_used": 58.7,
+          "swap_used_mb": 0.0,
+          "models_loaded": 7,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:03:58.605069",
+          "phase": "leak_test_sample",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13548.4375,
+          "percent_used": 58.7,
+          "swap_used_mb": 0.0,
+          "models_loaded": 7,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:04:08.607864",
+          "phase": "leak_test_sample",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13558.71875,
+          "percent_used": 58.6,
+          "swap_used_mb": 0.0,
+          "models_loaded": 7,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:04:18.610044",
+          "phase": "leak_test_sample",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13555.109375,
+          "percent_used": 58.6,
+          "swap_used_mb": 0.0,
+          "models_loaded": 7,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:04:28.611905",
+          "phase": "leak_test_sample",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13579.375,
+          "percent_used": 58.6,
+          "swap_used_mb": 0.0,
+          "models_loaded": 7,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:04:38.613372",
+          "phase": "leak_test_sample",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13580.453125,
+          "percent_used": 58.6,
+          "swap_used_mb": 0.0,
+          "models_loaded": 7,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:04:38.613489",
+          "phase": "leak_test_end",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13580.453125,
+          "percent_used": 58.6,
+          "swap_used_mb": 0.0,
+          "models_loaded": 7,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:04:38.614555",
+          "phase": "before_unload",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13580.453125,
+          "percent_used": 58.6,
+          "swap_used_mb": 0.0,
+          "models_loaded": 7,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:04:39.616806",
+          "phase": "unload_1",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13578.234375,
+          "percent_used": 58.6,
+          "swap_used_mb": 0.0,
+          "models_loaded": 6,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:04:40.618145",
+          "phase": "unload_2",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13577.515625,
+          "percent_used": 58.6,
+          "swap_used_mb": 0.0,
+          "models_loaded": 5,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:04:41.620787",
+          "phase": "unload_3",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13578.921875,
+          "percent_used": 58.6,
+          "swap_used_mb": 0.0,
+          "models_loaded": 4,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:04:43.641293",
+          "phase": "after_cleanup",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13517.59375,
+          "percent_used": 58.7,
+          "swap_used_mb": 0.0,
+          "models_loaded": 4,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:04:43.641616",
+          "phase": "pool_test_start",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13517.59375,
+          "percent_used": 58.7,
+          "swap_used_mb": 0.0,
+          "models_loaded": 4,
+          "memory_pressure": "low"
+        },
+        {
+          "timestamp": "2026-01-13T17:04:45.643979",
+          "phase": "pool_test_end",
+          "rss_mb": 60.5625,
+          "vms_mb": 401579.46875,
+          "available_mb": 13517.3125,
+          "percent_used": 58.7,
+          "swap_used_mb": 0.0,
+          "models_loaded": 4,
+          "memory_pressure": "low"
+        }
+      ]
+    }
+  },
+  "end_time": "2026-01-13T17:04:45.644839"
+}

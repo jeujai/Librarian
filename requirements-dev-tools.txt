@@ -1,0 +1,24 @@
+# Development Tools Requirements
+# These are additional requirements for local development tools
+# Install with: pip install -r requirements-dev-tools.txt
+
+# Docker management
+docker>=6.1.0
+
+# HTTP client for health checks
+aiohttp>=3.8.0
+
+# YAML parsing for configuration
+PyYAML>=6.0
+
+# Network utilities
+netifaces>=0.11.0
+
+# JSON schema validation
+jsonschema>=4.17.0
+
+# Rich terminal output (optional, for better formatting)
+rich>=13.0.0
+
+# Click for CLI utilities (optional)
+click>=8.1.0

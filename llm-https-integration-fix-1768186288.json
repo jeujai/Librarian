@@ -1,0 +1,34 @@
+{
+  "timestamp": "2026-01-11T19:46:25.499356",
+  "operation": "fix_llm_and_https_integration",
+  "steps": {
+    "fix_iam_permissions": {
+      "success": true,
+      "policy_arn": "arn:aws:iam::591222106065:policy/MultimodalLibrarianSecretsManagerAccess",
+      "secrets_count": 9
+    },
+    "update_cloudfront_distribution": {
+      "success": true,
+      "old_origin": "multimodal-librarian-full-ml-249704554.us-east-1.elb.amazonaws.com",
+      "new_origin": "ml-shared-vpc-alb-1260972620.us-east-1.elb.amazonaws.com",
+      "status": "InProgress"
+    },
+    "restart_ecs_service": {
+      "success": true,
+      "deployment_id": "ecs-svc/9530682129159759021"
+    },
+    "wait_for_stabilization": {
+      "success": false,
+      "error": "Waiter ServicesStable failed: Max attempts exceeded",
+      "note": "Timeout - service may still be starting"
+    },
+    "test_connectivity": {
+      "success": true,
+      "http_status": 200,
+      "health_status": 200,
+      "https_status": 200,
+      "ai_chat_status": 404
+    }
+  },
+  "success": true
+}

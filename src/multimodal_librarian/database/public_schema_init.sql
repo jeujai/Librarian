@@ -1,0 +1,4 @@
+-- Public Schema Initialization for Multimodal Librarian
+-- NOTE: Public schema tables have been removed.
+-- The application uses the multimodal_librarian schema exclusively.
+-- This file is kept as a placeholder to avoid docker-compose mount errors.

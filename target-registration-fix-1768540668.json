@@ -1,0 +1,13 @@
+{
+  "timestamp": "2026-01-15T22:12:43.345712",
+  "steps": {},
+  "current_task_ip": "10.0.1.197",
+  "task_arn": "arn:aws:ecs:us-east-1:591222106065:task/multimodal-lib-prod-cluster/3a14bf2291394e649abbcc7daeb5b1d5",
+  "registered_ips": [
+    "10.0.2.194",
+    "10.0.1.197"
+  ],
+  "service_update": "success",
+  "target_registration": "timeout",
+  "status": "pending"
+}

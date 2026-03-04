@@ -1,0 +1,13 @@
+{
+  "timestamp": "2026-01-17T00:47:57.141943",
+  "old_task_definition": "multimodal-lib-prod-app:47",
+  "new_task_definition": "multimodal-lib-prod-app:48",
+  "renamed_variables": [
+    "DB_PORT \u2192 POSTGRES_PORT",
+    "DB_USER \u2192 POSTGRES_USER",
+    "DB_NAME \u2192 POSTGRES_DB",
+    "DB_HOST \u2192 POSTGRES_HOST"
+  ],
+  "cluster": "multimodal-lib-prod-cluster",
+  "service": "multimodal-lib-prod-service"
+}

@@ -1,0 +1,27 @@
+# Simple test container for ECS + ALB integration testing
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install minimal dependencies
+RUN pip install fastapi uvicorn
+
+# Create a simple test application
+RUN echo 'from fastapi import FastAPI\n\
+app = FastAPI()\n\
+\n\
+@app.get("/health")\n\
+async def health():\n\
+    return {"status": "ok", "message": "ECS + ALB integration working!"}\n\
+\n\
+@app.get("/health/simple")\n\
+async def simple_health():\n\
+    return {"status": "ok"}\n\
+\n\
+@app.get("/")\n\
+async def root():\n\
+    return {"message": "Multimodal Librarian Test Container", "status": "running"}' > main.py
+
+EXPOSE 8000
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

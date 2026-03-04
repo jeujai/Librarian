@@ -1,0 +1,98 @@
+{
+  "start_time": "2026-01-13T16:25:40.047925",
+  "base_url": "http://httpbin.org",
+  "test_type": "startup_phase_load",
+  "phases": {
+    "minimal": {
+      "phase_name": "MINIMAL",
+      "phase_duration_seconds": 30.633190870285034,
+      "total_requests": 222,
+      "successful_requests": 43,
+      "failed_requests": 179,
+      "avg_response_time_ms": 183.34485281695117,
+      "p95_response_time_ms": 616.5111064910889,
+      "p99_response_time_ms": 939.0451908111572,
+      "max_response_time_ms": 2802.3481369018555,
+      "error_rate_percent": 80.63063063063063,
+      "health_check_success_rate": 0.0,
+      "fallback_response_rate": 19.36936936936937,
+      "capability_availability": {
+        "health_check": true,
+        "basic_api": true,
+        "chat": false,
+        "document_processing": false,
+        "advanced_search": false
+      },
+      "errors": [
+        "HTTP 404: /api/status",
+        "HTTP 404: /health/minimal",
+        "HTTP 404: /health"
+      ]
+    },
+    "essential": {
+      "phase_name": "ESSENTIAL",
+      "phase_duration_seconds": 91.45784711837769,
+      "total_requests": 939,
+      "successful_requests": 0,
+      "failed_requests": 939,
+      "avg_response_time_ms": 158.56391121658146,
+      "p95_response_time_ms": 538.8648509979248,
+      "p99_response_time_ms": 794.8591709136963,
+      "max_response_time_ms": 1537.7180576324463,
+      "error_rate_percent": 100.0,
+      "health_check_success_rate": 0.0,
+      "fallback_response_rate": 0.0,
+      "capability_availability": {
+        "health_check": true,
+        "basic_api": true,
+        "chat": true,
+        "simple_search": true,
+        "document_processing": false,
+        "advanced_search": false
+      },
+      "errors": [
+        "HTTP 404: /api/search",
+        "HTTP 404: /api/chat",
+        "HTTP 404: /health/ready",
+        "HTTP 404: /api/conversations"
+      ]
+    },
+    "full": {
+      "phase_name": "FULL",
+      "phase_duration_seconds": 121.54631209373474,
+      "total_requests": 1454,
+      "successful_requests": 0,
+      "failed_requests": 1454,
+      "avg_response_time_ms": 161.26205094742807,
+      "p95_response_time_ms": 551.4719486236572,
+      "p99_response_time_ms": 932.7800273895264,
+      "max_response_time_ms": 1768.3727741241455,
+      "error_rate_percent": 100.0,
+      "health_check_success_rate": 0.0,
+      "fallback_response_rate": 0.0,
+      "capability_availability": {
+        "health_check": true,
+        "basic_api": true,
+        "chat": true,
+        "simple_search": true,
+        "document_processing": true,
+        "advanced_search": true
+      },
+      "errors": [
+        "HTTP 404: /health/full",
+        "HTTP 404: /api/search",
+        "HTTP 404: /api/documents",
+        "HTTP 404: /api/chat",
+        "HTTP 404: /api/conversations"
+      ]
+    }
+  },
+  "summary": {
+    "total_requests": 2615,
+    "total_successful": 43,
+    "overall_success_rate": 1.644359464627151,
+    "average_response_time_ms": 167.72360499365357,
+    "phases_tested": 3
+  },
+  "end_time": "2026-01-13T16:29:43.688337"
+}

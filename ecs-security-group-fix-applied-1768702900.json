@@ -1,0 +1,10 @@
+{
+  "timestamp": "2026-01-17T19:21:40.183066",
+  "alb_security_group": "sg-0135b368e20b7bd01",
+  "ecs_security_group": "sg-0c4dac025bda80435",
+  "vpc_id": "vpc-0b2186b38779e77f6",
+  "service_updated": true,
+  "deployment_triggered": true,
+  "cluster": "multimodal-lib-prod-cluster",
+  "service": "multimodal-lib-prod-service-alb"
+}

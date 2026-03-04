@@ -1,0 +1,167 @@
+# Cold Start Optimized Multi-stage Dockerfile for Multimodal Librarian
+# Focused on minimizing cold start times through aggressive caching and pre-warming
+
+# =============================================================================
+# DEPENDENCY CACHE STAGE - Pre-built dependencies for instant startup
+# =============================================================================
+FROM --platform=linux/amd64 python:3.11-slim as dependency-cache
+
+# Set environment variables for build optimization
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=0 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    DEBIAN_FRONTEND=noninteractive \
+    PYTHONPATH=/app/src
+
+# Install system dependencies in a single layer
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    curl \
+    git \
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    libglib2.0-0 \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Create cache directory structure
+WORKDIR /cache
+RUN mkdir -p /cache/packages /cache/models /cache/nltk_data
+
+# Copy requirements for better layer caching
+COPY requirements.txt requirements-dev.txt ./
+
+# Install Python dependencies with aggressive caching
+RUN pip install --upgrade pip setuptools wheel && \
+    pip install --target /cache/packages \
+    --cache-dir /cache/pip \
+    --find-links /cache/pip \
+    -r requirements.txt && \
+    pip install --target /cache/packages \
+    --cache-dir /cache/pip \
+    --find-links /cache/pip \
+    -r requirements-dev.txt
+
+# Pre-download and cache ML models and data
+RUN python3 -c "\
+import sys; \
+sys.path.insert(0, '/cache/packages'); \
+import os; \
+os.environ['TRANSFORMERS_CACHE'] = '/cache/models'; \
+os.environ['HF_HOME'] = '/cache/models'; \
+os.environ['TORCH_HOME'] = '/cache/models'; \
+os.environ['NLTK_DATA'] = '/cache/nltk_data'; \
+import concurrent.futures; \
+import subprocess; \
+def download_spacy(): subprocess.run(['python3', '-m', 'spacy', 'download', 'en_core_web_sm'], check=True); \
+def download_sentence_transformers(): \
+    from sentence_transformers import SentenceTransformer; \
+    SentenceTransformer('all-MiniLM-L6-v2'); \
+def download_nltk(): \
+    import nltk; \
+    nltk.download('punkt', download_dir='/cache/nltk_data'); \
+    nltk.download('stopwords', download_dir='/cache/nltk_data'); \
+    nltk.download('averaged_perceptron_tagger', download_dir='/cache/nltk_data'); \
+with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor: \
+    futures = [executor.submit(download_spacy), executor.submit(download_sentence_transformers), executor.submit(download_nltk)]; \
+    for future in concurrent.futures.as_completed(futures): \
+        try: future.result(); \
+        except Exception as e: print(f'Download failed: {e}'); \
+"
+
+# =============================================================================
+# RUNTIME BASE STAGE - Minimal runtime with pre-cached dependencies
+# =============================================================================
+FROM --platform=linux/amd64 python:3.11-slim as runtime-base
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app/src \
+    TORCH_HOME=/app/.cache/torch \
+    TRANSFORMERS_CACHE=/app/.cache/transformers \
+    HF_HOME=/app/.cache/huggingface \
+    NLTK_DATA=/app/.cache/nltk_data \
+    DEBIAN_FRONTEND=noninteractive
+
+# Install only essential runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    libpq5 \
+    libglib2.0-0 \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Set work directory
+WORKDIR /app
+
+# Copy pre-built packages from cache stage
+COPY --from=dependency-cache /cache/packages /usr/local/lib/python3.11/site-packages/
+COPY --from=dependency-cache /cache/models /app/.cache/
+COPY --from=dependency-cache /cache/nltk_data /app/.cache/nltk_data/
+
+# Create necessary directories with proper permissions
+RUN mkdir -p uploads media exports logs audit_logs \
+    .cache/torch .cache/transformers .cache/huggingface \
+    && chmod 755 uploads media exports logs audit_logs \
+    && chmod 755 .cache/torch .cache/transformers .cache/huggingface
+
+# =============================================================================
+# DEVELOPMENT STAGE - Optimized for fastest cold start
+# =============================================================================
+FROM runtime-base as development
+
+# Install minimal development tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    vim \
+    htop \
+    procps \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Copy project files
+COPY src/ ./src/
+COPY pyproject.toml ./
+
+# Install the package in development mode
+RUN pip install -e . --no-deps
+
+# Create non-root user for security
+RUN groupadd -r appuser && useradd -r -g appuser -s /bin/bash appuser \
+    && chown -R appuser:appuser /app
+
+# Switch to non-root user
+USER appuser
+
+# Set up development environment
+ENV PYTHONPATH=/app/src:/app \
+    ML_ENVIRONMENT=local \
+    DATABASE_TYPE=local \
+    DEBUG=true \
+    LOG_LEVEL=INFO \
+    STARTUP_MODE=fast
+
+# Expose ports
+EXPOSE 8000 5678
+
+# Ultra-fast health check optimized for cold start
+HEALTHCHECK --interval=5s --timeout=3s --start-period=10s --retries=2 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/simple', timeout=2).read()" || exit 1
+
+# Cold start optimized command with minimal startup overhead
+CMD ["python", "-m", "uvicorn", "multimodal_librarian.main:app", \
+     "--host", "0.0.0.0", "--port", "8000", \
+     "--reload", "--reload-dir", "/app/src", \
+     "--reload-include", "*.py", \
+     "--reload-exclude", "__pycache__", \
+     "--reload-exclude", "*.pyc", \
+     "--access-log", "--use-colors", \
+     "--loop", "uvloop", \
+     "--http", "httptools"]
+

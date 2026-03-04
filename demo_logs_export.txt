@@ -1,0 +1,287 @@
+Structured Logs Export - 2026-01-10T23:02:07.885781
+============================================================
+
+[2026-01-10T23:02:07.668331] INFO demo_service.basic_operation
+Correlation: 055b4d87-7a07-4a35-9dd9-48e4c56c7fb1
+Message: This is a basic info message
+Metadata: {"demo": true, "step": 1}
+----------------------------------------
+
+[2026-01-10T23:02:07.668446] WARNING demo_service.warning_operation
+Correlation: 055b4d87-7a07-4a35-9dd9-48e4c56c7fb1
+Message: This is a warning message
+Metadata: {"demo": true, "step": 2}
+----------------------------------------
+
+[2026-01-10T23:02:07.668492] INFO structured_logging.system_health
+Correlation: d8cbaee3-39c7-407e-ba81-2fb1eca899e3
+Message: Structured logging system health check
+Metadata: {"structured_logs": 1, "correlation_indexes": 1, "trace_indexes": 0, "user_indexes": 0, "service_indexes": 1, "aggregated_logs": 0, "processing_stats": {"total_logs_processed": 1, "logs_per_second": 2673.7967914438505, "average_processing_time_ms": 0.009083747863769531, "last_processing_time": "2026-01-10 23:02:07.668384"}, "archived_logs": 0}
+----------------------------------------
+
+[2026-01-10T23:02:07.668557] ERROR demo_service.error_operation
+Correlation: 055b4d87-7a07-4a35-9dd9-48e4c56c7fb1
+Message: This is an error message
+Metadata: {"demo": true, "step": 3, "error_details": "Simulated error"}
+----------------------------------------
+
+[2026-01-10T23:02:07.668692] INFO demo_service.successful_operation_start
+Correlation: a0c61803-2bdc-496d-acde-19774aa5ae13
+Message: Started operation: successful_operation
+Metadata: {"demo": true, "operation_type": "success"}
+----------------------------------------
+
+[2026-01-10T23:02:07.769504] INFO demo_service.intermediate_step
+Correlation: a0c61803-2bdc-496d-acde-19774aa5ae13
+Message: Performing intermediate processing
+Metadata: {"step": "processing", "progress": 50}
+----------------------------------------
+
+[2026-01-10T23:02:07.820766] INFO demo_service.intermediate_step
+Correlation: a0c61803-2bdc-496d-acde-19774aa5ae13
+Message: Finalizing operation
+Metadata: {"step": "finalizing", "progress": 100}
+----------------------------------------
+
+[2026-01-10T23:02:07.820932] INFO demo_service.successful_operation_complete
+Correlation: a0c61803-2bdc-496d-acde-19774aa5ae13
+Message: Completed operation: successful_operation
+Metadata: {"demo": true, "operation_type": "success", "success": true}
+----------------------------------------
+
+[2026-01-10T23:02:07.821091] INFO demo_service.failing_operation_start
+Correlation: b7e77187-1d5a-4c4e-a356-9af5dcd2dce8
+Message: Started operation: failing_operation
+Metadata: {"demo": true, "operation_type": "failure"}
+----------------------------------------
+
+[2026-01-10T23:02:07.872321] ERROR demo_service.failing_operation_error
+Correlation: b7e77187-1d5a-4c4e-a356-9af5dcd2dce8
+Message: Operation failed: failing_operation
+Metadata: {"demo": true, "operation_type": "failure", "success": false, "error": "Simulated operation failure"}
+----------------------------------------
+
+[2026-01-10T23:02:07.873170] INFO demo_api_gateway.handle_request
+Correlation: 71206c2d-9e9d-40bd-91c2-813ecc79c772
+Message: API request 1 processed
+Metadata: {"request_id": "req_1", "response_time_ms": 50, "status_code": 200}
+----------------------------------------
+
+[2026-01-10T23:02:07.873467] INFO demo_api_auth.authenticate_user
+Correlation: 420be4b3-ea3d-450c-9d19-9f3df1a8cae5
+Message: API request 2 processed
+Metadata: {"request_id": "req_2", "response_time_ms": 60, "status_code": 200}
+----------------------------------------
+
+[2026-01-10T23:02:07.873605] INFO demo_api_data.fetch_data
+Correlation: e28e149d-df31-4afc-b7eb-2654ffb6d4ba
+Message: API request 3 processed
+Metadata: {"request_id": "req_3", "response_time_ms": 70, "status_code": 200}
+----------------------------------------
+
+[2026-01-10T23:02:07.873727] INFO demo_api_gateway.process_response
+Correlation: 613eeee2-371f-407e-b77b-e31bded9877f
+Message: API request 4 processed
+Metadata: {"request_id": "req_4", "response_time_ms": 80, "status_code": 200}
+----------------------------------------
+
+[2026-01-10T23:02:07.873838] INFO demo_api_auth.handle_request
+Correlation: 063f193f-eb9b-4e16-9f40-3ee5f81bb898
+Message: API request 5 processed
+Metadata: {"request_id": "req_5", "response_time_ms": 90, "status_code": 200}
+----------------------------------------
+
+[2026-01-10T23:02:07.873945] INFO demo_api_data.authenticate_user
+Correlation: 081b1735-15a3-43c1-9d36-e238235953a6
+Message: API request 6 processed
+Metadata: {"request_id": "req_6", "response_time_ms": 100, "status_code": 200}
+----------------------------------------
+
+[2026-01-10T23:02:07.874058] INFO demo_api_gateway.fetch_data
+Correlation: 8d2122ac-044e-49f9-9885-61931d8e2451
+Message: API request 7 processed
+Metadata: {"request_id": "req_7", "response_time_ms": 110, "status_code": 200}
+----------------------------------------
+
+[2026-01-10T23:02:07.874161] INFO demo_api_auth.process_response
+Correlation: cd0adddd-5500-4dc8-8617-7e24e5710c52
+Message: API request 8 processed
+Metadata: {"request_id": "req_8", "response_time_ms": 120, "status_code": 200}
+----------------------------------------
+
+[2026-01-10T23:02:07.874282] INFO demo_api_data.handle_request
+Correlation: a332f2af-55f9-418b-8549-e0c2697571f4
+Message: API request 9 processed
+Metadata: {"request_id": "req_9", "response_time_ms": 130, "status_code": 500}
+----------------------------------------
+
+[2026-01-10T23:02:07.874381] INFO demo_api_gateway.authenticate_user
+Correlation: afa99968-17a3-4698-a38b-627e86064994
+Message: API request 10 processed
+Metadata: {"request_id": "req_10", "response_time_ms": 140, "status_code": 500}
+----------------------------------------
+
+[2026-01-10T23:02:07.874936] INFO web_service.operation_0
+Correlation: 888da8e9-9aa2-4588-9bc3-33b73f188378
+User: user_1
+Message: Operation 1 message
+Metadata: {"operation_id": "op_1", "batch_id": "batch_0", "priority": "high"}
+----------------------------------------
+
+[2026-01-10T23:02:07.875038] WARNING api_service.operation_1
+Correlation: dcacab86-7820-418c-969f-aa8168d10385
+User: user_2
+Message: Operation 2 message
+Metadata: {"operation_id": "op_2", "batch_id": "batch_0", "priority": "normal"}
+----------------------------------------
+
+[2026-01-10T23:02:07.875120] ERROR data_service.operation_2
+Correlation: 8cc61b24-0e3b-4a67-8a47-40a906eac02b
+User: user_3
+Message: Operation 3 message
+Metadata: {"operation_id": "op_3", "batch_id": "batch_0", "priority": "normal"}
+----------------------------------------
+
+[2026-01-10T23:02:07.875200] INFO auth_service.operation_3
+Correlation: 4e726fd9-8629-4a83-8e3f-9b36b71fed56
+User: user_1
+Message: Operation 4 message
+Metadata: {"operation_id": "op_4", "batch_id": "batch_0", "priority": "high"}
+----------------------------------------
+
+[2026-01-10T23:02:07.875269] WARNING web_service.operation_4
+Correlation: 773bbf1e-0667-4896-a08c-0f26f5553caa
+User: user_2
+Message: Operation 5 message
+Metadata: {"operation_id": "op_5", "batch_id": "batch_0", "priority": "normal"}
+----------------------------------------
+
+[2026-01-10T23:02:07.875336] ERROR api_service.operation_0
+Correlation: 3d16dbff-dcd8-4574-8230-4ea855156b74
+User: user_3
+Message: Operation 6 message
+Metadata: {"operation_id": "op_6", "batch_id": "batch_1", "priority": "normal"}
+----------------------------------------
+
+[2026-01-10T23:02:07.875403] INFO data_service.operation_1
+Correlation: 60b610de-aa49-4d05-a48a-b6f540bda4c1
+User: user_1
+Message: Operation 7 message
+Metadata: {"operation_id": "op_7", "batch_id": "batch_1", "priority": "high"}
+----------------------------------------
+
+[2026-01-10T23:02:07.875471] WARNING auth_service.operation_2
+Correlation: f8ec6102-3d97-466d-b7da-85be49e23f84
+User: user_2
+Message: Operation 8 message
+Metadata: {"operation_id": "op_8", "batch_id": "batch_1", "priority": "normal"}
+----------------------------------------
+
+[2026-01-10T23:02:07.875539] ERROR web_service.operation_3
+Correlation: a9f45786-3f52-46fd-b460-ed80364f8c2e
+User: user_3
+Message: Operation 9 message
+Metadata: {"operation_id": "op_9", "batch_id": "batch_1", "priority": "normal"}
+----------------------------------------
+
+[2026-01-10T23:02:07.875624] INFO api_service.operation_4
+Correlation: 733f72d9-b91d-4878-a992-1e77fef130b5
+User: user_1
+Message: Operation 10 message
+Metadata: {"operation_id": "op_10", "batch_id": "batch_1", "priority": "high"}
+----------------------------------------
+
+[2026-01-10T23:02:07.875692] WARNING data_service.operation_0
+Correlation: 49b69c78-4a9d-4e2b-9d66-12c3f00ffffe
+User: user_2
+Message: Operation 11 message
+Metadata: {"operation_id": "op_11", "batch_id": "batch_2", "priority": "normal"}
+----------------------------------------
+
+[2026-01-10T23:02:07.875759] ERROR auth_service.operation_1
+Correlation: e2bc9708-088e-4e75-a1fe-c123284c5735
+User: user_3
+Message: Operation 12 message
+Metadata: {"operation_id": "op_12", "batch_id": "batch_2", "priority": "normal"}
+----------------------------------------
+
+[2026-01-10T23:02:07.875824] INFO web_service.operation_2
+Correlation: 354cefed-1e85-4b9c-ab35-ff1f6205b5c9
+User: user_1
+Message: Operation 13 message
+Metadata: {"operation_id": "op_13", "batch_id": "batch_2", "priority": "high"}
+----------------------------------------
+
+[2026-01-10T23:02:07.875887] WARNING api_service.operation_3
+Correlation: 779fc47b-90c2-40ec-a952-72c693a952b1
+User: user_2
+Message: Operation 14 message
+Metadata: {"operation_id": "op_14", "batch_id": "batch_2", "priority": "normal"}
+----------------------------------------
+
+[2026-01-10T23:02:07.875954] ERROR data_service.operation_4
+Correlation: d5c0baf8-fd55-4599-a333-9f1cdc0ee39f
+User: user_3
+Message: Operation 15 message
+Metadata: {"operation_id": "op_15", "batch_id": "batch_2", "priority": "normal"}
+----------------------------------------
+
+[2026-01-10T23:02:07.876019] INFO auth_service.operation_0
+Correlation: 202424f4-a77d-4971-8c91-3714700abf4d
+User: user_1
+Message: Operation 16 message
+Metadata: {"operation_id": "op_16", "batch_id": "batch_3", "priority": "high"}
+----------------------------------------
+
+[2026-01-10T23:02:07.876090] WARNING web_service.operation_1
+Correlation: a00193ab-9817-4505-b0a8-c2e2206725c1
+User: user_2
+Message: Operation 17 message
+Metadata: {"operation_id": "op_17", "batch_id": "batch_3", "priority": "normal"}
+----------------------------------------
+
+[2026-01-10T23:02:07.876153] ERROR api_service.operation_2
+Correlation: 30d8c1a2-b419-4278-a7cc-87b4b2794547
+User: user_3
+Message: Operation 18 message
+Metadata: {"operation_id": "op_18", "batch_id": "batch_3", "priority": "normal"}
+----------------------------------------
+
+[2026-01-10T23:02:07.876219] INFO data_service.operation_3
+Correlation: e4b83c11-cfad-4a2a-87bd-77242f7aa1ad
+User: user_1
+Message: Operation 19 message
+Metadata: {"operation_id": "op_19", "batch_id": "batch_3", "priority": "high"}
+----------------------------------------
+
+[2026-01-10T23:02:07.876286] WARNING auth_service.operation_4
+Correlation: b331c0e9-9907-465e-910d-0a599554c057
+User: user_2
+Message: Operation 20 message
+Metadata: {"operation_id": "op_20", "batch_id": "batch_3", "priority": "normal"}
+----------------------------------------
+
+[2026-01-10T23:02:07.876594] INFO export_service.start_export_demo
+Correlation: export_demo_1768111327
+Message: Starting export demonstration
+Metadata: {"demo_type": "export", "step": 1}
+----------------------------------------
+
+[2026-01-10T23:02:07.876675] INFO export_service.process_data
+Correlation: export_demo_1768111327
+Message: Processing data for export
+Metadata: {"demo_type": "export", "step": 2, "records_processed": 100}
+----------------------------------------
+
+[2026-01-10T23:02:07.876740] WARNING export_service.validate_data
+Correlation: export_demo_1768111327
+Message: Some data validation warnings
+Metadata: {"demo_type": "export", "step": 3, "warnings": 2}
+----------------------------------------
+
+[2026-01-10T23:02:07.876800] INFO export_service.complete_export_demo
+Correlation: export_demo_1768111327
+Message: Export demonstration completed
+Metadata: {"demo_type": "export", "step": 4, "success": true}
+----------------------------------------
+

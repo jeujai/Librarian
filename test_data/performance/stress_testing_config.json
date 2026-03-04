@@ -1,0 +1,7 @@
+{
+  "max_concurrent_users": 100,
+  "ramp_up_time_minutes": 5,
+  "test_duration_minutes": 30,
+  "breaking_point_detection": true,
+  "recovery_testing": true
+}

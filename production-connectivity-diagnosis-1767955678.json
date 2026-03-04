@@ -1,0 +1,42 @@
+{
+  "timestamp": "2026-01-09T03:47:56.385127",
+  "load_balancer_status": {
+    "name": "multimodal-librarian-full-ml",
+    "state": "active",
+    "dns_name": "multimodal-librarian-full-ml-249704554.us-east-1.elb.amazonaws.com",
+    "scheme": "internet-facing",
+    "type": "application"
+  },
+  "target_group_health": {
+    "multimodal-librarian-full-ml": {
+      "healthy_targets": 0,
+      "total_targets": 0,
+      "health_details": []
+    }
+  },
+  "ecs_service_status": {
+    "multimodal-lib-prod-service": {
+      "status": "ACTIVE",
+      "running_count": 1,
+      "desired_count": 1,
+      "pending_count": 0
+    },
+    "CollaborativeEditorProdStack-ServerService5A7CA185-vv3Ih7aaI7I9": {
+      "status": "ACTIVE",
+      "running_count": 1,
+      "desired_count": 1,
+      "pending_count": 0
+    }
+  },
+  "security_groups": {
+    "MultimodalLibrarianFullML-SecurityAlbSecurityGroupCBBB4E39-OMWGaGFbrdw6": {
+      "group_id": "sg-092142f4a9aec28a0",
+      "https_allowed": true,
+      "http_allowed": true,
+      "rules_count": 2
+    }
+  },
+  "recommendations": [
+    "No healthy targets in multimodal-librarian-full-ml"
+  ]
+}

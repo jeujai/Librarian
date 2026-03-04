@@ -1,0 +1,99 @@
+{
+  "service_status": {
+    "status": "active",
+    "dashboards": 3,
+    "charts": 12,
+    "features_enabled": 6
+  },
+  "dashboard_management": {
+    "total_dashboards": 3,
+    "dashboard_names": [
+      "Real-time Performance",
+      "Performance Trends",
+      "Search Performance"
+    ],
+    "total_charts": 12
+  },
+  "realtime_dashboard": {
+    "chart_count": 4,
+    "chart_types": {
+      "line": 1,
+      "gauge": 1,
+      "bar": 1,
+      "alert_list": 1
+    },
+    "has_data": true
+  },
+  "performance_trends": {
+    "chart_count": 4,
+    "trend_features": [
+      "multi_series_trends",
+      "heatmap_visualization",
+      "area_charts"
+    ],
+    "has_historical_data": true
+  },
+  "search_performance": {
+    "chart_count": 4,
+    "search_features": [
+      "latency_analysis",
+      "cache_monitoring",
+      "service_breakdown",
+      "bottleneck_analysis"
+    ],
+    "monitors_search_health": true
+  },
+  "chart_data_generation": {
+    "response_time_trend": {
+      "category": "time_series",
+      "data_points": 30,
+      "has_data": true,
+      "chart_type": "line"
+    },
+    "search_performance_gauge": {
+      "category": "gauge",
+      "data_points": 1,
+      "has_data": true,
+      "chart_type": "gauge"
+    },
+    "system_resources": {
+      "category": "bar_chart",
+      "data_points": 3,
+      "has_data": true,
+      "chart_type": "bar"
+    },
+    "active_alerts": {
+      "category": "alert_list",
+      "data_points": 0,
+      "has_data": false,
+      "chart_type": "alert_list"
+    },
+    "cache_performance": {
+      "error": "Chart not found"
+    }
+  },
+  "dashboard_export": {
+    "filename": "dashboard_realtime_performance_20260110_140956.json",
+    "file_size_bytes": 7204,
+    "export_successful": true,
+    "contains_charts": 4
+  },
+  "performance_analysis": {
+    "realtime_metrics": {
+      "available": true,
+      "has_response_time": true,
+      "has_resource_usage": true,
+      "has_cache_metrics": true
+    },
+    "performance_trends": {
+      "available": true,
+      "has_hourly_data": true,
+      "period_hours": 24
+    },
+    "search_performance": {
+      "available": true,
+      "has_latency_metrics": false,
+      "has_quality_metrics": false
+    }
+  }
+}

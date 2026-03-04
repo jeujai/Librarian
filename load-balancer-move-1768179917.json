@@ -1,0 +1,49 @@
+{
+  "timestamp": "2026-01-11T18:05:14.861664",
+  "script_name": "Load Balancer VPC Move",
+  "steps_completed": [
+    {
+      "step": "Load balancer configuration analyzed",
+      "status": "completed",
+      "timestamp": "2026-01-11T18:05:16.644392",
+      "details": {
+        "Current VPC": "vpc-0bc85162dcdbcc986",
+        "Target VPC": "vpc-014ac5b9fc828c78f",
+        "Listeners": 1,
+        "DNS Name": "multimodal-librarian-full-ml-249704554.us-east-1.elb.amazonaws.com"
+      }
+    },
+    {
+      "step": "Public subnets identified in target VPC",
+      "status": "completed",
+      "timestamp": "2026-01-11T18:05:17.042051",
+      "details": {
+        "VPC": "vpc-014ac5b9fc828c78f",
+        "Total Subnets": 4,
+        "Public Subnets": 2,
+        "Selected": 2
+      }
+    },
+    {
+      "step": "Using existing security group",
+      "status": "completed",
+      "timestamp": "2026-01-11T18:05:17.249263",
+      "details": {
+        "Security Group ID": "sg-06c52a76b110298b3",
+        "VPC": "vpc-014ac5b9fc828c78f",
+        "Status": "Reusing existing security group"
+      }
+    }
+  ],
+  "errors": [
+    {
+      "error": "Failed to create target group: An error occurred (ValidationError) when calling the CreateTargetGroup operation: Target group name 'multimodal-librarian-shared-vpc-v2' cannot be longer than '32' characters",
+      "timestamp": "2026-01-11T18:05:17.352969"
+    },
+    {
+      "error": "Load balancer move failed: An error occurred (ValidationError) when calling the CreateTargetGroup operation: Target group name 'multimodal-librarian-shared-vpc-v2' cannot be longer than '32' characters",
+      "timestamp": "2026-01-11T18:05:17.353101"
+    }
+  ],
+  "resources_created": []
+}

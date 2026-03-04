@@ -1,0 +1,46 @@
+# AWS Production Deployment Configuration
+# Copy this file to terraform.tfvars and customize values
+
+# Core Configuration
+aws_region   = "us-east-1"
+environment  = "production"
+project_name = "multimodal-librarian"
+cost_center  = "engineering"
+owner        = "platform-team"
+
+# Network Configuration
+vpc_cidr             = "10.0.0.0/16"
+availability_zones   = ["us-east-1a", "us-east-1b", "us-east-1c"]
+public_subnet_cidrs  = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+private_subnet_cidrs = ["10.0.11.0/24", "10.0.12.0/24", "10.0.13.0/24"]
+
+# Database Configuration
+neptune_instance_type    = "db.r5.large"
+neptune_instance_count   = 2
+opensearch_instance_type = "t3.medium.search"
+opensearch_instance_count = 3
+
+# Application Configuration
+ecs_cpu        = 1024
+ecs_memory     = 2048
+min_capacity   = 2
+max_capacity   = 10
+container_port = 8000
+
+# Security Configuration
+enable_waf       = true
+enable_cloudtrail = true
+kms_key_rotation = true
+
+# Monitoring Configuration
+log_retention_days    = 30
+metric_retention_days = 90
+
+# Backup Configuration
+backup_region                = "us-west-2"
+neptune_backup_retention     = 7
+opensearch_snapshot_retention = 30
+
+# Cost Optimization
+enable_cost_optimization = true
+enable_reserved_instances = false

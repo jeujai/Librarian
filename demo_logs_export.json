@@ -1,0 +1,1325 @@
+{
+  "export_timestamp": "2026-01-10T23:02:07.882020",
+  "export_format": "json",
+  "time_period_hours": 1,
+  "correlation_id_filter": null,
+  "trace_id_filter": null,
+  "total_logs": 44,
+  "logs": [
+    {
+      "timestamp": "2026-01-10T23:02:07.668331",
+      "level": "INFO",
+      "service": "demo_service",
+      "operation": "basic_operation",
+      "message": "This is a basic info message",
+      "correlation_id": "055b4d87-7a07-4a35-9dd9-48e4c56c7fb1",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": null,
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": null,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "demo": true,
+        "step": 1
+      },
+      "tags": {
+        "category": "demo",
+        "type": "basic"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.668446",
+      "level": "WARNING",
+      "service": "demo_service",
+      "operation": "warning_operation",
+      "message": "This is a warning message",
+      "correlation_id": "055b4d87-7a07-4a35-9dd9-48e4c56c7fb1",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": null,
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": null,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "demo": true,
+        "step": 2
+      },
+      "tags": {
+        "category": "demo",
+        "type": "warning"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.668492",
+      "level": "INFO",
+      "service": "structured_logging",
+      "operation": "system_health",
+      "message": "Structured logging system health check",
+      "correlation_id": "d8cbaee3-39c7-407e-ba81-2fb1eca899e3",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": null,
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": null,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "structured_logs": 1,
+        "correlation_indexes": 1,
+        "trace_indexes": 0,
+        "user_indexes": 0,
+        "service_indexes": 1,
+        "aggregated_logs": 0,
+        "processing_stats": {
+          "total_logs_processed": 1,
+          "logs_per_second": 2673.7967914438505,
+          "average_processing_time_ms": 0.009083747863769531,
+          "last_processing_time": "2026-01-10 23:02:07.668384"
+        },
+        "archived_logs": 0
+      },
+      "tags": {
+        "category": "system_health",
+        "component": "structured_logging"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.668557",
+      "level": "ERROR",
+      "service": "demo_service",
+      "operation": "error_operation",
+      "message": "This is an error message",
+      "correlation_id": "055b4d87-7a07-4a35-9dd9-48e4c56c7fb1",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": null,
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": null,
+      "status_code": null,
+      "error_code": null,
+      "error_type": "DemoError",
+      "stack_trace": null,
+      "metadata": {
+        "demo": true,
+        "step": 3,
+        "error_details": "Simulated error"
+      },
+      "tags": {
+        "category": "demo",
+        "type": "error"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.668692",
+      "level": "INFO",
+      "service": "demo_service",
+      "operation": "successful_operation_start",
+      "message": "Started operation: successful_operation",
+      "correlation_id": "a0c61803-2bdc-496d-acde-19774aa5ae13",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": null,
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": null,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "demo": true,
+        "operation_type": "success"
+      },
+      "tags": {
+        "operation_phase": "start"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.769504",
+      "level": "INFO",
+      "service": "demo_service",
+      "operation": "intermediate_step",
+      "message": "Performing intermediate processing",
+      "correlation_id": "a0c61803-2bdc-496d-acde-19774aa5ae13",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": null,
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": null,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "step": "processing",
+        "progress": 50
+      },
+      "tags": {},
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.820766",
+      "level": "INFO",
+      "service": "demo_service",
+      "operation": "intermediate_step",
+      "message": "Finalizing operation",
+      "correlation_id": "a0c61803-2bdc-496d-acde-19774aa5ae13",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": null,
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": null,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "step": "finalizing",
+        "progress": 100
+      },
+      "tags": {},
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.820932",
+      "level": "INFO",
+      "service": "demo_service",
+      "operation": "successful_operation_complete",
+      "message": "Completed operation: successful_operation",
+      "correlation_id": "a0c61803-2bdc-496d-acde-19774aa5ae13",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": null,
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": 152.24409103393555,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "demo": true,
+        "operation_type": "success",
+        "success": true
+      },
+      "tags": {
+        "operation_phase": "complete",
+        "status": "success"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.821091",
+      "level": "INFO",
+      "service": "demo_service",
+      "operation": "failing_operation_start",
+      "message": "Started operation: failing_operation",
+      "correlation_id": "b7e77187-1d5a-4c4e-a356-9af5dcd2dce8",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": null,
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": null,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "demo": true,
+        "operation_type": "failure"
+      },
+      "tags": {
+        "operation_phase": "start"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.872321",
+      "level": "ERROR",
+      "service": "demo_service",
+      "operation": "failing_operation_error",
+      "message": "Operation failed: failing_operation",
+      "correlation_id": "b7e77187-1d5a-4c4e-a356-9af5dcd2dce8",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": null,
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": 51.25284194946289,
+      "status_code": null,
+      "error_code": null,
+      "error_type": "ValueError",
+      "stack_trace": "Simulated operation failure",
+      "metadata": {
+        "demo": true,
+        "operation_type": "failure",
+        "success": false,
+        "error": "Simulated operation failure"
+      },
+      "tags": {
+        "operation_phase": "error",
+        "status": "failed"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.873170",
+      "level": "INFO",
+      "service": "demo_api_gateway",
+      "operation": "handle_request",
+      "message": "API request 1 processed",
+      "correlation_id": "71206c2d-9e9d-40bd-91c2-813ecc79c772",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": null,
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": null,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "request_id": "req_1",
+        "response_time_ms": 50,
+        "status_code": 200
+      },
+      "tags": {
+        "category": "api_request",
+        "endpoint": "/api/v1/handle_request"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.873467",
+      "level": "INFO",
+      "service": "demo_api_auth",
+      "operation": "authenticate_user",
+      "message": "API request 2 processed",
+      "correlation_id": "420be4b3-ea3d-450c-9d19-9f3df1a8cae5",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": null,
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": null,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "request_id": "req_2",
+        "response_time_ms": 60,
+        "status_code": 200
+      },
+      "tags": {
+        "category": "api_request",
+        "endpoint": "/api/v1/authenticate_user"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.873605",
+      "level": "INFO",
+      "service": "demo_api_data",
+      "operation": "fetch_data",
+      "message": "API request 3 processed",
+      "correlation_id": "e28e149d-df31-4afc-b7eb-2654ffb6d4ba",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": null,
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": null,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "request_id": "req_3",
+        "response_time_ms": 70,
+        "status_code": 200
+      },
+      "tags": {
+        "category": "api_request",
+        "endpoint": "/api/v1/fetch_data"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.873727",
+      "level": "INFO",
+      "service": "demo_api_gateway",
+      "operation": "process_response",
+      "message": "API request 4 processed",
+      "correlation_id": "613eeee2-371f-407e-b77b-e31bded9877f",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": null,
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": null,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "request_id": "req_4",
+        "response_time_ms": 80,
+        "status_code": 200
+      },
+      "tags": {
+        "category": "api_request",
+        "endpoint": "/api/v1/process_response"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.873838",
+      "level": "INFO",
+      "service": "demo_api_auth",
+      "operation": "handle_request",
+      "message": "API request 5 processed",
+      "correlation_id": "063f193f-eb9b-4e16-9f40-3ee5f81bb898",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": null,
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": null,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "request_id": "req_5",
+        "response_time_ms": 90,
+        "status_code": 200
+      },
+      "tags": {
+        "category": "api_request",
+        "endpoint": "/api/v1/handle_request"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.873945",
+      "level": "INFO",
+      "service": "demo_api_data",
+      "operation": "authenticate_user",
+      "message": "API request 6 processed",
+      "correlation_id": "081b1735-15a3-43c1-9d36-e238235953a6",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": null,
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": null,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "request_id": "req_6",
+        "response_time_ms": 100,
+        "status_code": 200
+      },
+      "tags": {
+        "category": "api_request",
+        "endpoint": "/api/v1/authenticate_user"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.874058",
+      "level": "INFO",
+      "service": "demo_api_gateway",
+      "operation": "fetch_data",
+      "message": "API request 7 processed",
+      "correlation_id": "8d2122ac-044e-49f9-9885-61931d8e2451",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": null,
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": null,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "request_id": "req_7",
+        "response_time_ms": 110,
+        "status_code": 200
+      },
+      "tags": {
+        "category": "api_request",
+        "endpoint": "/api/v1/fetch_data"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.874161",
+      "level": "INFO",
+      "service": "demo_api_auth",
+      "operation": "process_response",
+      "message": "API request 8 processed",
+      "correlation_id": "cd0adddd-5500-4dc8-8617-7e24e5710c52",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": null,
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": null,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "request_id": "req_8",
+        "response_time_ms": 120,
+        "status_code": 200
+      },
+      "tags": {
+        "category": "api_request",
+        "endpoint": "/api/v1/process_response"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.874282",
+      "level": "INFO",
+      "service": "demo_api_data",
+      "operation": "handle_request",
+      "message": "API request 9 processed",
+      "correlation_id": "a332f2af-55f9-418b-8549-e0c2697571f4",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": null,
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": null,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "request_id": "req_9",
+        "response_time_ms": 130,
+        "status_code": 500
+      },
+      "tags": {
+        "category": "api_request",
+        "endpoint": "/api/v1/handle_request"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.874381",
+      "level": "INFO",
+      "service": "demo_api_gateway",
+      "operation": "authenticate_user",
+      "message": "API request 10 processed",
+      "correlation_id": "afa99968-17a3-4698-a38b-627e86064994",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": null,
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": null,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "request_id": "req_10",
+        "response_time_ms": 140,
+        "status_code": 500
+      },
+      "tags": {
+        "category": "api_request",
+        "endpoint": "/api/v1/authenticate_user"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.874936",
+      "level": "INFO",
+      "service": "web_service",
+      "operation": "operation_0",
+      "message": "Operation 1 message",
+      "correlation_id": "888da8e9-9aa2-4588-9bc3-33b73f188378",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": "user_1",
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": 50.0,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "operation_id": "op_1",
+        "batch_id": "batch_0",
+        "priority": "high"
+      },
+      "tags": {
+        "environment": "demo",
+        "component": "web"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.875038",
+      "level": "WARNING",
+      "service": "api_service",
+      "operation": "operation_1",
+      "message": "Operation 2 message",
+      "correlation_id": "dcacab86-7820-418c-969f-aa8168d10385",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": "user_2",
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": 55.0,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "operation_id": "op_2",
+        "batch_id": "batch_0",
+        "priority": "normal"
+      },
+      "tags": {
+        "environment": "demo",
+        "component": "api"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.875120",
+      "level": "ERROR",
+      "service": "data_service",
+      "operation": "operation_2",
+      "message": "Operation 3 message",
+      "correlation_id": "8cc61b24-0e3b-4a67-8a47-40a906eac02b",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": "user_3",
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": 60.0,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "operation_id": "op_3",
+        "batch_id": "batch_0",
+        "priority": "normal"
+      },
+      "tags": {
+        "environment": "demo",
+        "component": "data"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.875200",
+      "level": "INFO",
+      "service": "auth_service",
+      "operation": "operation_3",
+      "message": "Operation 4 message",
+      "correlation_id": "4e726fd9-8629-4a83-8e3f-9b36b71fed56",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": "user_1",
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": 65.0,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "operation_id": "op_4",
+        "batch_id": "batch_0",
+        "priority": "high"
+      },
+      "tags": {
+        "environment": "demo",
+        "component": "auth"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.875269",
+      "level": "WARNING",
+      "service": "web_service",
+      "operation": "operation_4",
+      "message": "Operation 5 message",
+      "correlation_id": "773bbf1e-0667-4896-a08c-0f26f5553caa",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": "user_2",
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": 70.0,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "operation_id": "op_5",
+        "batch_id": "batch_0",
+        "priority": "normal"
+      },
+      "tags": {
+        "environment": "demo",
+        "component": "web"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.875336",
+      "level": "ERROR",
+      "service": "api_service",
+      "operation": "operation_0",
+      "message": "Operation 6 message",
+      "correlation_id": "3d16dbff-dcd8-4574-8230-4ea855156b74",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": "user_3",
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": 75.0,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "operation_id": "op_6",
+        "batch_id": "batch_1",
+        "priority": "normal"
+      },
+      "tags": {
+        "environment": "demo",
+        "component": "api"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.875403",
+      "level": "INFO",
+      "service": "data_service",
+      "operation": "operation_1",
+      "message": "Operation 7 message",
+      "correlation_id": "60b610de-aa49-4d05-a48a-b6f540bda4c1",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": "user_1",
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": 80.0,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "operation_id": "op_7",
+        "batch_id": "batch_1",
+        "priority": "high"
+      },
+      "tags": {
+        "environment": "demo",
+        "component": "data"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.875471",
+      "level": "WARNING",
+      "service": "auth_service",
+      "operation": "operation_2",
+      "message": "Operation 8 message",
+      "correlation_id": "f8ec6102-3d97-466d-b7da-85be49e23f84",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": "user_2",
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": 85.0,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "operation_id": "op_8",
+        "batch_id": "batch_1",
+        "priority": "normal"
+      },
+      "tags": {
+        "environment": "demo",
+        "component": "auth"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.875539",
+      "level": "ERROR",
+      "service": "web_service",
+      "operation": "operation_3",
+      "message": "Operation 9 message",
+      "correlation_id": "a9f45786-3f52-46fd-b460-ed80364f8c2e",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": "user_3",
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": 90.0,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "operation_id": "op_9",
+        "batch_id": "batch_1",
+        "priority": "normal"
+      },
+      "tags": {
+        "environment": "demo",
+        "component": "web"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.875624",
+      "level": "INFO",
+      "service": "api_service",
+      "operation": "operation_4",
+      "message": "Operation 10 message",
+      "correlation_id": "733f72d9-b91d-4878-a992-1e77fef130b5",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": "user_1",
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": 95.0,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "operation_id": "op_10",
+        "batch_id": "batch_1",
+        "priority": "high"
+      },
+      "tags": {
+        "environment": "demo",
+        "component": "api"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.875692",
+      "level": "WARNING",
+      "service": "data_service",
+      "operation": "operation_0",
+      "message": "Operation 11 message",
+      "correlation_id": "49b69c78-4a9d-4e2b-9d66-12c3f00ffffe",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": "user_2",
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": 100.0,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "operation_id": "op_11",
+        "batch_id": "batch_2",
+        "priority": "normal"
+      },
+      "tags": {
+        "environment": "demo",
+        "component": "data"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.875759",
+      "level": "ERROR",
+      "service": "auth_service",
+      "operation": "operation_1",
+      "message": "Operation 12 message",
+      "correlation_id": "e2bc9708-088e-4e75-a1fe-c123284c5735",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": "user_3",
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": 105.0,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "operation_id": "op_12",
+        "batch_id": "batch_2",
+        "priority": "normal"
+      },
+      "tags": {
+        "environment": "demo",
+        "component": "auth"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.875824",
+      "level": "INFO",
+      "service": "web_service",
+      "operation": "operation_2",
+      "message": "Operation 13 message",
+      "correlation_id": "354cefed-1e85-4b9c-ab35-ff1f6205b5c9",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": "user_1",
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": 110.0,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "operation_id": "op_13",
+        "batch_id": "batch_2",
+        "priority": "high"
+      },
+      "tags": {
+        "environment": "demo",
+        "component": "web"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.875887",
+      "level": "WARNING",
+      "service": "api_service",
+      "operation": "operation_3",
+      "message": "Operation 14 message",
+      "correlation_id": "779fc47b-90c2-40ec-a952-72c693a952b1",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": "user_2",
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": 115.0,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "operation_id": "op_14",
+        "batch_id": "batch_2",
+        "priority": "normal"
+      },
+      "tags": {
+        "environment": "demo",
+        "component": "api"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.875954",
+      "level": "ERROR",
+      "service": "data_service",
+      "operation": "operation_4",
+      "message": "Operation 15 message",
+      "correlation_id": "d5c0baf8-fd55-4599-a333-9f1cdc0ee39f",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": "user_3",
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": 120.0,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "operation_id": "op_15",
+        "batch_id": "batch_2",
+        "priority": "normal"
+      },
+      "tags": {
+        "environment": "demo",
+        "component": "data"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.876019",
+      "level": "INFO",
+      "service": "auth_service",
+      "operation": "operation_0",
+      "message": "Operation 16 message",
+      "correlation_id": "202424f4-a77d-4971-8c91-3714700abf4d",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": "user_1",
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": 125.0,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "operation_id": "op_16",
+        "batch_id": "batch_3",
+        "priority": "high"
+      },
+      "tags": {
+        "environment": "demo",
+        "component": "auth"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.876090",
+      "level": "WARNING",
+      "service": "web_service",
+      "operation": "operation_1",
+      "message": "Operation 17 message",
+      "correlation_id": "a00193ab-9817-4505-b0a8-c2e2206725c1",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": "user_2",
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": 130.0,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "operation_id": "op_17",
+        "batch_id": "batch_3",
+        "priority": "normal"
+      },
+      "tags": {
+        "environment": "demo",
+        "component": "web"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.876153",
+      "level": "ERROR",
+      "service": "api_service",
+      "operation": "operation_2",
+      "message": "Operation 18 message",
+      "correlation_id": "30d8c1a2-b419-4278-a7cc-87b4b2794547",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": "user_3",
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": 135.0,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "operation_id": "op_18",
+        "batch_id": "batch_3",
+        "priority": "normal"
+      },
+      "tags": {
+        "environment": "demo",
+        "component": "api"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.876219",
+      "level": "INFO",
+      "service": "data_service",
+      "operation": "operation_3",
+      "message": "Operation 19 message",
+      "correlation_id": "e4b83c11-cfad-4a2a-87bd-77242f7aa1ad",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": "user_1",
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": 140.0,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "operation_id": "op_19",
+        "batch_id": "batch_3",
+        "priority": "high"
+      },
+      "tags": {
+        "environment": "demo",
+        "component": "data"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.876286",
+      "level": "WARNING",
+      "service": "auth_service",
+      "operation": "operation_4",
+      "message": "Operation 20 message",
+      "correlation_id": "b331c0e9-9907-465e-910d-0a599554c057",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": "user_2",
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": 145.0,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "operation_id": "op_20",
+        "batch_id": "batch_3",
+        "priority": "normal"
+      },
+      "tags": {
+        "environment": "demo",
+        "component": "auth"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.876594",
+      "level": "INFO",
+      "service": "export_service",
+      "operation": "start_export_demo",
+      "message": "Starting export demonstration",
+      "correlation_id": "export_demo_1768111327",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": null,
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": null,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "demo_type": "export",
+        "step": 1
+      },
+      "tags": {},
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.876675",
+      "level": "INFO",
+      "service": "export_service",
+      "operation": "process_data",
+      "message": "Processing data for export",
+      "correlation_id": "export_demo_1768111327",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": null,
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": null,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "demo_type": "export",
+        "step": 2,
+        "records_processed": 100
+      },
+      "tags": {},
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.876740",
+      "level": "WARNING",
+      "service": "export_service",
+      "operation": "validate_data",
+      "message": "Some data validation warnings",
+      "correlation_id": "export_demo_1768111327",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": null,
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": null,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "demo_type": "export",
+        "step": 3,
+        "warnings": 2
+      },
+      "tags": {},
+      "context": {}
+    },
+    {
+      "timestamp": "2026-01-10T23:02:07.876800",
+      "level": "INFO",
+      "service": "export_service",
+      "operation": "complete_export_demo",
+      "message": "Export demonstration completed",
+      "correlation_id": "export_demo_1768111327",
+      "trace_id": null,
+      "span_id": null,
+      "parent_span_id": null,
+      "user_id": null,
+      "session_id": null,
+      "request_id": null,
+      "duration_ms": null,
+      "status_code": null,
+      "error_code": null,
+      "error_type": null,
+      "stack_trace": null,
+      "metadata": {
+        "demo_type": "export",
+        "step": 4,
+        "success": true
+      },
+      "tags": {},
+      "context": {}
+    }
+  ],
+  "statistics": {
+    "time_period_hours": 1,
+    "total_logs": 44,
+    "logs_per_hour": 44.0,
+    "level_distribution": {
+      "INFO": 27,
+      "WARNING": 9,
+      "ERROR": 8
+    },
+    "service_distribution": {
+      "demo_service": 9,
+      "structured_logging": 1,
+      "demo_api_gateway": 4,
+      "demo_api_auth": 3,
+      "demo_api_data": 3,
+      "web_service": 5,
+      "api_service": 5,
+      "data_service": 5,
+      "auth_service": 5,
+      "export_service": 4
+    },
+    "top_operations": {
+      "operation_0": 4,
+      "operation_1": 4,
+      "operation_2": 4,
+      "operation_3": 4,
+      "operation_4": 4,
+      "handle_request": 3,
+      "authenticate_user": 3,
+      "intermediate_step": 2,
+      "fetch_data": 2,
+      "process_response": 2
+    },
+    "top_errors": {
+      "demo_service.error_operation.DemoError": 1,
+      "demo_service.failing_operation_error.ValueError": 1,
+      "data_service.operation_2": 1,
+      "api_service.operation_0": 1,
+      "web_service.operation_3": 1,
+      "auth_service.operation_1": 1,
+      "data_service.operation_4": 1,
+      "api_service.operation_2": 1
+    },
+    "active_users": 3,
+    "average_duration_ms": 97.88622422651811,
+    "processing_stats": {
+      "total_logs_processed": 44,
+      "logs_per_second": 16666.666666666668,
+      "average_processing_time_ms": 0.015734842076654255,
+      "last_processing_time": "2026-01-10 23:02:07.876810"
+    },
+    "aggregation_rules": 5,
+    "retention_policies": 3,
+    "archived_logs_count": 0
+  }
+}

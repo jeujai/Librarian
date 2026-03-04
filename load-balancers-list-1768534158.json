@@ -1,0 +1,99 @@
+{
+  "timestamp": "2026-01-15T20:29:17.794961",
+  "operation": "list_load_balancers",
+  "load_balancers": [
+    {
+      "name": "Collab-Serve-FkT4Ww8hCsOu",
+      "arn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:loadbalancer/app/Collab-Serve-FkT4Ww8hCsOu/a532af3fc0e69072",
+      "dns_name": "Collab-Serve-FkT4Ww8hCsOu-346902887.us-east-1.elb.amazonaws.com",
+      "state": "active",
+      "type": "application",
+      "scheme": "internet-facing",
+      "vpc_id": "vpc-014ac5b9fc828c78f",
+      "availability_zones": [
+        "us-east-1b",
+        "us-east-1a"
+      ],
+      "security_groups": [
+        "sg-05334ab1463567434"
+      ],
+      "created_time": "2025-12-31 22:08:53.037000+00:00",
+      "target_groups": [
+        {
+          "name": "Collab-Serve-NXSDKYXFHVLQ",
+          "arn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/Collab-Serve-NXSDKYXFHVLQ/0e30746fbabb1ce3",
+          "port": 3001,
+          "protocol": "HTTP",
+          "health_check_path": "/health",
+          "target_type": "ip",
+          "targets": []
+        }
+      ],
+      "listeners": [
+        {
+          "port": 80,
+          "protocol": "HTTP",
+          "ssl_policy": "N/A",
+          "certificate_arn": "N/A"
+        }
+      ],
+      "canonical_hosted_zone_id": "Z35SXDOTRQ7X7K"
+    },
+    {
+      "name": "multimodal-lib-prod-alb",
+      "arn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:loadbalancer/app/multimodal-lib-prod-alb/f24be2cfb7f2f8ec",
+      "dns_name": "multimodal-lib-prod-alb-1415728107.us-east-1.elb.amazonaws.com",
+      "state": "active",
+      "type": "application",
+      "scheme": "internet-facing",
+      "vpc_id": "vpc-0b2186b38779e77f6",
+      "availability_zones": [
+        "us-east-1b",
+        "us-east-1c",
+        "us-east-1a"
+      ],
+      "security_groups": [
+        "sg-0135b368e20b7bd01"
+      ],
+      "created_time": "2026-01-15 07:44:26.521000+00:00",
+      "target_groups": [
+        {
+          "name": "multimodal-lib-prod-tg",
+          "arn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517",
+          "port": 8000,
+          "protocol": "HTTP",
+          "health_check_path": "/api/health/minimal",
+          "target_type": "ip",
+          "targets": [
+            {
+              "id": "10.0.2.66",
+              "port": 8000,
+              "health_status": "unhealthy",
+              "description": "Request timed out"
+            },
+            {
+              "id": "10.0.1.213",
+              "port": 8000,
+              "health_status": "draining",
+              "description": "Target deregistration is in progress"
+            }
+          ]
+        }
+      ],
+      "listeners": [
+        {
+          "port": 80,
+          "protocol": "HTTP",
+          "ssl_policy": "N/A",
+          "certificate_arn": "N/A"
+        }
+      ],
+      "canonical_hosted_zone_id": "Z35SXDOTRQ7X7K"
+    }
+  ],
+  "summary": {
+    "total_load_balancers": 2,
+    "active_load_balancers": 2,
+    "inactive_load_balancers": 0
+  }
+}

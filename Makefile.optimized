@@ -1,0 +1,306 @@
+# Optimized Makefile for Multimodal Librarian Local Development
+# Focus on fast container startup and efficient development workflow
+
+.PHONY: help dev-local-optimized dev-setup-optimized dev-teardown-optimized
+.PHONY: build-optimized start-optimized stop-optimized restart-optimized
+.PHONY: benchmark-startup optimize-containers parallel-startup
+.PHONY: health-check-optimized monitor-startup logs-optimized status-optimized
+
+# Default target
+.DEFAULT_GOAL := help
+
+# Configuration
+COMPOSE_FILE_OPTIMIZED = docker-compose.optimized.yml
+COMPOSE_FILE_ORIGINAL = docker-compose.local.yml
+DOCKERFILE_OPTIMIZED = Dockerfile.optimized
+
+# Colors for output
+BLUE = \033[0;34m
+GREEN = \033[0;32m
+YELLOW = \033[1;33m
+RED = \033[0;31m
+NC = \033[0m # No Color
+
+# Helper function to print colored output
+define print_status
+	@echo "$(BLUE)[$(shell date '+%H:%M:%S')] $(1)$(NC)"
+endef
+
+define print_success
+	@echo "$(GREEN)[$(shell date '+%H:%M:%S')] ✅ $(1)$(NC)"
+endef
+
+define print_warning
+	@echo "$(YELLOW)[$(shell date '+%H:%M:%S')] ⚠️  $(1)$(NC)"
+endef
+
+define print_error
+	@echo "$(RED)[$(shell date '+%H:%M:%S')] ❌ $(1)$(NC)"
+endef
+
+## Help
+help: ## Show this help message
+	@echo "🚀 Multimodal Librarian - Optimized Local Development"
+	@echo
+	@echo "Container Startup Optimization Targets:"
+	@echo
+	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  $(BLUE)%-25s$(NC) %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@echo
+	@echo "Examples:"
+	@echo "  make dev-local-optimized     # Start optimized development environment"
+	@echo "  make benchmark-startup       # Benchmark startup performance"
+	@echo "  make parallel-startup        # Start services in parallel"
+	@echo "  make optimize-containers     # Apply all container optimizations"
+
+## Container Startup Optimization Targets
+
+dev-local-optimized: dev-setup-optimized build-optimized start-optimized ## Start optimized local development environment
+	$(call print_success,"Optimized development environment ready!")
+	@echo
+	@echo "🌐 Application URLs:"
+	@echo "  • Main Application:     http://localhost:8000"
+	@echo "  • Neo4j Browser:        http://localhost:7474"
+	@echo "  • pgAdmin:              http://localhost:5050"
+	@echo "  • Attu (Milvus):        http://localhost:3000"
+	@echo "  • MinIO Console:        http://localhost:9001"
+	@echo "  • Redis Commander:      http://localhost:8081"
+	@echo "  • Log Viewer:           http://localhost:8080"
+	@echo
+	@echo "📊 Performance Monitoring:"
+	@echo "  • make status-optimized     # Check service status"
+	@echo "  • make monitor-startup      # Monitor startup progress"
+	@echo "  • make logs-optimized       # View service logs"
+
+dev-setup-optimized: ## Set up optimized development environment
+	$(call print_status,"Setting up optimized development environment...")
+	@# Create necessary directories
+	@mkdir -p cache/models cache/pip cache/pytest
+	@mkdir -p data/postgres data/neo4j data/neo4j-logs data/milvus data/etcd data/minio data/redis
+	@# Copy environment file if it doesn't exist
+	@if [ ! -f .env.local ]; then \
+		cp .env.local.example .env.local; \
+		$(call print_success,"Created .env.local from example"); \
+	fi
+	@# Set up Docker BuildKit for better caching
+	@export DOCKER_BUILDKIT=1
+	@export COMPOSE_DOCKER_CLI_BUILD=1
+	$(call print_success,"Optimized development environment setup completed")
+
+build-optimized: ## Build optimized Docker images with caching
+	$(call print_status,"Building optimized Docker images...")
+	@export DOCKER_BUILDKIT=1
+	@export COMPOSE_DOCKER_CLI_BUILD=1
+	@docker compose -f $(COMPOSE_FILE_OPTIMIZED) build --parallel
+	$(call print_success,"Optimized images built successfully")
+
+start-optimized: ## Start services with optimizations
+	$(call print_status,"Starting services with optimizations...")
+	@./scripts/parallel-service-startup.sh --compose-file $(COMPOSE_FILE_OPTIMIZED) start
+	$(call print_success,"All optimized services started")
+
+stop-optimized: ## Stop all optimized services
+	$(call print_status,"Stopping optimized services...")
+	@docker compose -f $(COMPOSE_FILE_OPTIMIZED) down
+	$(call print_success,"All services stopped")
+
+restart-optimized: stop-optimized start-optimized ## Restart all optimized services
+	$(call print_success,"Services restarted with optimizations")
+
+dev-teardown-optimized: ## Tear down optimized development environment
+	$(call print_status,"Tearing down optimized development environment...")
+	@docker compose -f $(COMPOSE_FILE_OPTIMIZED) down -v
+	@docker system prune -f
+	$(call print_success,"Optimized environment torn down")
+
+## Performance and Monitoring Targets
+
+optimize-containers: ## Apply all container startup optimizations
+	$(call print_status,"Applying container startup optimizations...")
+	@./scripts/optimize-container-startup.sh optimize
+	$(call print_success,"Container optimizations applied")
+
+parallel-startup: ## Start services using parallel startup optimization
+	$(call print_status,"Starting services with parallel optimization...")
+	@./scripts/parallel-service-startup.sh --compose-file $(COMPOSE_FILE_OPTIMIZED) start
+	$(call print_success,"Parallel startup completed")
+
+benchmark-startup: ## Benchmark container startup performance
+	$(call print_status,"Benchmarking container startup performance...")
+	@./scripts/optimize-container-startup.sh benchmark
+	$(call print_success,"Startup benchmark completed")
+
+health-check-optimized: ## Run optimized health checks on all services
+	$(call print_status,"Running optimized health checks...")
+	@./scripts/optimize-health-checks.sh --compose-file $(COMPOSE_FILE_OPTIMIZED) check-all
+	$(call print_success,"Health checks completed")
+
+monitor-startup: ## Monitor startup progress in real-time
+	$(call print_status,"Monitoring startup progress...")
+	@./scripts/parallel-service-startup.sh --compose-file $(COMPOSE_FILE_OPTIMIZED) monitor
+
+status-optimized: ## Show optimized service status
+	$(call print_status,"Checking optimized service status...")
+	@./scripts/parallel-service-startup.sh --compose-file $(COMPOSE_FILE_OPTIMIZED) status
+	@echo
+	@./scripts/optimize-health-checks.sh --compose-file $(COMPOSE_FILE_OPTIMIZED) parallel
+
+logs-optimized: ## View logs from optimized services
+	$(call print_status,"Showing logs from optimized services...")
+	@docker compose -f $(COMPOSE_FILE_OPTIMIZED) logs -f --tail=100
+
+## Testing with Optimized Environment
+
+test-local-optimized: ## Run tests against optimized local services
+	$(call print_status,"Running tests against optimized local services...")
+	@export ML_ENVIRONMENT=local
+	@export DATABASE_TYPE=local
+	@pytest tests/ -v --tb=short
+	$(call print_success,"Tests completed against optimized environment")
+
+test-startup-performance: ## Test startup performance specifically
+	$(call print_status,"Testing startup performance...")
+	@python -m pytest tests/performance/test_startup_performance.py -v
+	$(call print_success,"Startup performance tests completed")
+
+## Database Management with Optimizations
+
+db-migrate-local-optimized: ## Run database migrations for optimized local environment
+	$(call print_status,"Running database migrations for optimized environment...")
+	@export ML_ENVIRONMENT=local
+	@export DATABASE_TYPE=local
+	@python -m src.multimodal_librarian.database.migrations
+	$(call print_success,"Database migrations completed")
+
+db-seed-local-optimized: ## Seed optimized local databases with test data
+	$(call print_status,"Seeding optimized local databases...")
+	@export ML_ENVIRONMENT=local
+	@export DATABASE_TYPE=local
+	@python scripts/seed-local-data.py
+	$(call print_success,"Database seeding completed")
+
+db-reset-optimized: ## Reset all databases in optimized environment
+	$(call print_status,"Resetting databases in optimized environment...")
+	@docker compose -f $(COMPOSE_FILE_OPTIMIZED) stop postgres neo4j milvus redis
+	@docker compose -f $(COMPOSE_FILE_OPTIMIZED) rm -f postgres neo4j milvus redis
+	@sudo rm -rf data/postgres data/neo4j data/milvus data/redis
+	@mkdir -p data/postgres data/neo4j data/milvus data/redis
+	@docker compose -f $(COMPOSE_FILE_OPTIMIZED) up -d postgres neo4j milvus redis
+	@sleep 10
+	@$(MAKE) db-migrate-local-optimized
+	@$(MAKE) db-seed-local-optimized
+	$(call print_success,"Databases reset and reseeded")
+
+## Cache Management
+
+cache-clear: ## Clear all caches for fresh startup
+	$(call print_status,"Clearing all caches...")
+	@rm -rf cache/models/* cache/pip/* cache/pytest/*
+	@./scripts/optimize-health-checks.sh clear-cache
+	$(call print_success,"All caches cleared")
+
+cache-warm: ## Warm up caches for faster subsequent startups
+	$(call print_status,"Warming up caches...")
+	@# Pre-download models
+	@docker compose -f $(COMPOSE_FILE_OPTIMIZED) exec multimodal-librarian python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+	@# Warm up health check cache
+	@./scripts/optimize-health-checks.sh --compose-file $(COMPOSE_FILE_OPTIMIZED) check-all
+	$(call print_success,"Caches warmed up")
+
+## Comparison and Analysis
+
+compare-startup: ## Compare startup times between original and optimized
+	$(call print_status,"Comparing startup times...")
+	@echo "Testing original configuration..."
+	@time $(MAKE) -f Makefile dev-local > /tmp/original_startup.log 2>&1 || true
+	@$(MAKE) -f Makefile dev-teardown > /dev/null 2>&1 || true
+	@echo "Testing optimized configuration..."
+	@time $(MAKE) dev-local-optimized > /tmp/optimized_startup.log 2>&1 || true
+	@echo "Comparison completed. Check /tmp/*_startup.log for details"
+	$(call print_success,"Startup comparison completed")
+
+analyze-performance: ## Analyze container performance metrics
+	$(call print_status,"Analyzing container performance...")
+	@docker stats --no-stream --format "table {{.Container}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}\t{{.BlockIO}}"
+	@echo
+	@./scripts/optimize-health-checks.sh --compose-file $(COMPOSE_FILE_OPTIMIZED) benchmark
+	$(call print_success,"Performance analysis completed")
+
+## Debugging and Troubleshooting
+
+debug-startup: ## Debug startup issues with detailed logging
+	$(call print_status,"Starting debug mode with detailed logging...")
+	@export COMPOSE_LOG_LEVEL=DEBUG
+	@docker compose -f $(COMPOSE_FILE_OPTIMIZED) up --remove-orphans
+
+debug-health-checks: ## Debug health check issues
+	$(call print_status,"Debugging health checks...")
+	@./scripts/optimize-health-checks.sh --compose-file $(COMPOSE_FILE_OPTIMIZED) monitor 60
+
+troubleshoot-startup: ## Troubleshoot common startup issues
+	$(call print_status,"Troubleshooting startup issues...")
+	@echo "🔍 Checking system requirements..."
+	@./scripts/optimize-container-startup.sh --help | head -20
+	@echo
+	@echo "🔍 Checking Docker resources..."
+	@docker system df
+	@echo
+	@echo "🔍 Checking service status..."
+	@$(MAKE) status-optimized
+	@echo
+	@echo "🔍 Checking recent logs..."
+	@docker compose -f $(COMPOSE_FILE_OPTIMIZED) logs --tail=20
+
+## Cleanup and Maintenance
+
+clean-optimized: ## Clean up optimization artifacts and caches
+	$(call print_status,"Cleaning up optimization artifacts...")
+	@./scripts/optimize-container-startup.sh clean
+	@docker system prune -f
+	@docker volume prune -f
+	$(call print_success,"Cleanup completed")
+
+reset-optimized: clean-optimized dev-setup-optimized ## Reset optimized environment completely
+	$(call print_success,"Optimized environment reset completed")
+
+## Documentation and Help
+
+show-optimization-status: ## Show current optimization status
+	$(call print_status,"Container Startup Optimization Status:")
+	@./scripts/optimize-container-startup.sh status
+
+show-performance-tips: ## Show performance optimization tips
+	@echo "🚀 Container Startup Performance Tips:"
+	@echo
+	@echo "1. Use optimized Docker images:"
+	@echo "   • Multi-stage builds with layer caching"
+	@echo "   • Pre-downloaded ML models"
+	@echo "   • Minimal base images"
+	@echo
+	@echo "2. Optimize resource allocation:"
+	@echo "   • Appropriate CPU/memory limits"
+	@echo "   • tmpfs volumes for temporary data"
+	@echo "   • Parallel service startup"
+	@echo
+	@echo "3. Improve health checks:"
+	@echo "   • Faster health check intervals"
+	@echo "   • Cached health check results"
+	@echo "   • Service-specific optimizations"
+	@echo
+	@echo "4. Use development optimizations:"
+	@echo "   • Disable expensive operations"
+	@echo "   • Reduce logging verbosity"
+	@echo "   • Skip non-essential services"
+	@echo
+	@echo "Current optimizations can be viewed with: make show-optimization-status"
+
+## Legacy Compatibility
+
+dev-local: ## Start original (non-optimized) local development environment
+	$(call print_warning,"Using original (non-optimized) configuration")
+	@docker compose -f $(COMPOSE_FILE_ORIGINAL) up -d
+	$(call print_success,"Original development environment started")
+
+dev-teardown: ## Tear down original development environment
+	$(call print_status,"Tearing down original development environment...")
+	@docker compose -f $(COMPOSE_FILE_ORIGINAL) down -v
+	$(call print_success,"Original environment torn down")

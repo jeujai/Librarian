@@ -1,0 +1,67 @@
+{
+  "service_scaling": {
+    "success": true,
+    "previous_desired_count": 1,
+    "new_desired_count": 1,
+    "response": {
+      "service_name": "multimodal-lib-prod-service",
+      "desired_count": 1,
+      "running_count": 0,
+      "pending_count": 1,
+      "status": "ACTIVE"
+    }
+  },
+  "nat_gateway_creation": {
+    "success": false,
+    "nat_gateway_id": null,
+    "subnet_id": null,
+    "allocation_id": null,
+    "error": "An error occurred (AddressLimitExceeded) when calling the AllocateAddress operation: The maximum number of addresses has been reached."
+  },
+  "monitoring": {
+    "startup_successful": false,
+    "monitoring_duration": 304.5143299102783,
+    "final_status": {
+      "running_count": 0,
+      "desired_count": 1,
+      "pending_count": 1,
+      "status": "ACTIVE"
+    },
+    "events": [
+      {
+        "time": "2026-01-09T03:07:56.910000-07:00",
+        "message": "(service multimodal-lib-prod-service) stopped 1 pending tasks."
+      },
+      {
+        "time": "2026-01-09T03:09:41.242000-07:00",
+        "message": "(service multimodal-lib-prod-service) was unable to place a task. Reason: ResourceInitializationError: unable to pull secrets or registry auth: unable to retrieve secret from asm: There is a connection issue between the task and AWS Secrets Manager. Check your task network configuration. failed to fetch secret arn:aws:secretsmanager:us-east-1:591222106065:secret:multimodal-lib-prod/neptune/connection-PZoQbU from secrets manager: operation error Secrets Manager: GetSecretValue, https response error StatusCode: 0, RequestID: , canceled, context deadline exceeded."
+      },
+      {
+        "time": "2026-01-09T03:10:11.279000-07:00",
+        "message": "(service multimodal-lib-prod-service) has started 1 tasks: (task d73b4cb737e645d0a6ad8a21833a0481)."
+      },
+      {
+        "time": "2026-01-09T03:09:41.242000-07:00",
+        "message": "(service multimodal-lib-prod-service) was unable to place a task. Reason: ResourceInitializationError: unable to pull secrets or registry auth: unable to retrieve secret from asm: There is a connection issue between the task and AWS Secrets Manager. Check your task network configuration. failed to fetch secret arn:aws:secretsmanager:us-east-1:591222106065:secret:multimodal-lib-prod/neptune/connection-PZoQbU from secrets manager: operation error Secrets Manager: GetSecretValue, https response error StatusCode: 0, RequestID: , canceled, context deadline exceeded."
+      },
+      {
+        "time": "2026-01-09T03:10:11.279000-07:00",
+        "message": "(service multimodal-lib-prod-service) has started 1 tasks: (task d73b4cb737e645d0a6ad8a21833a0481)."
+      }
+    ]
+  },
+  "summary": {
+    "service_scaling_success": true,
+    "nat_gateway_creation_success": false,
+    "service_startup_success": false,
+    "cost_impact": {},
+    "next_steps": [
+      "\u2705 Service scaled up successfully",
+      "\u274c NAT Gateway creation failed - check permissions",
+      "\u26a0\ufe0f  Service startup in progress - monitor CloudWatch logs",
+      "\ud83d\udd0d Run end-to-end tests to validate functionality",
+      "\ud83d\udcca Monitor service health and performance",
+      "\ud83d\udcb0 Track costs and optimize as needed"
+    ]
+  }
+}

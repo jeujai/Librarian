@@ -1,0 +1,9 @@
+{
+  "timestamp": "2026-01-14T12:00:03.042966",
+  "old_task_definition": "multimodal-lib-prod-app:17",
+  "new_task_definition": "multimodal-lib-prod-app:18",
+  "old_health_check": "curl -f http://localhost:8000/api/health/minimal || exit 1",
+  "new_health_check": "curl -f http://localhost:8000/health || exit 1",
+  "load_balancer_health_check": "/health",
+  "status": "success"
+}

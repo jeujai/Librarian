@@ -1,0 +1,597 @@
+{
+  "scale": "small",
+  "config": {
+    "collections": [
+      {
+        "name": "perf_small_1k",
+        "size": 1000,
+        "dimension": 384
+      },
+      {
+        "name": "perf_small_5k",
+        "size": 5000,
+        "dimension": 384
+      }
+    ],
+    "batch_sizes": [
+      100,
+      500,
+      1000
+    ],
+    "search_queries": 100,
+    "concurrent_threads": 2
+  },
+  "performance_summary": {
+    "total_vectors": 6000,
+    "total_queries": 200,
+    "total_generation_time": 0.28493523597717285,
+    "overall_vectors_per_second": 21057.416712339083,
+    "memory_usage_samples": [
+      {
+        "timestamp": 1769218823.865303,
+        "process_memory_mb": 86.875,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218823.870065,
+        "process_memory_mb": 88.34375,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218823.874203,
+        "process_memory_mb": 89.875,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218823.8781881,
+        "process_memory_mb": 91.421875,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218823.8821068,
+        "process_memory_mb": 92.953125,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218823.886994,
+        "process_memory_mb": 94.515625,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218823.890937,
+        "process_memory_mb": 96.046875,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218823.894891,
+        "process_memory_mb": 97.59375,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218823.8989189,
+        "process_memory_mb": 99.15625,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218823.902812,
+        "process_memory_mb": 100.6875,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218823.911117,
+        "process_memory_mb": 103.78125,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218823.91502,
+        "process_memory_mb": 105.3125,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218823.919109,
+        "process_memory_mb": 106.875,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218823.9231071,
+        "process_memory_mb": 108.390625,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218823.927071,
+        "process_memory_mb": 109.953125,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218823.930979,
+        "process_memory_mb": 111.5,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218823.9348989,
+        "process_memory_mb": 113.046875,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218823.939733,
+        "process_memory_mb": 114.59375,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218823.9436228,
+        "process_memory_mb": 116.125,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218823.9475331,
+        "process_memory_mb": 117.703125,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218823.951466,
+        "process_memory_mb": 119.234375,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218823.955327,
+        "process_memory_mb": 120.765625,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218823.960733,
+        "process_memory_mb": 122.34375,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218823.9661891,
+        "process_memory_mb": 123.8125,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218823.97199,
+        "process_memory_mb": 125.359375,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218823.976512,
+        "process_memory_mb": 126.90625,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218823.980602,
+        "process_memory_mb": 128.453125,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218823.984684,
+        "process_memory_mb": 129.96875,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218823.988837,
+        "process_memory_mb": 131.53125,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218823.9940548,
+        "process_memory_mb": 133.03125,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218823.9999418,
+        "process_memory_mb": 134.5625,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218824.004222,
+        "process_memory_mb": 136.125,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218824.0090492,
+        "process_memory_mb": 137.671875,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218824.013323,
+        "process_memory_mb": 139.1875,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218824.019997,
+        "process_memory_mb": 140.734375,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218824.025494,
+        "process_memory_mb": 142.28125,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218824.031347,
+        "process_memory_mb": 143.859375,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218824.0372312,
+        "process_memory_mb": 145.359375,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218824.041423,
+        "process_memory_mb": 146.9375,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218824.0456178,
+        "process_memory_mb": 148.5,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218824.049977,
+        "process_memory_mb": 149.984375,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218824.054296,
+        "process_memory_mb": 151.515625,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218824.058866,
+        "process_memory_mb": 153.078125,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218824.06306,
+        "process_memory_mb": 154.640625,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218824.0686169,
+        "process_memory_mb": 156.15625,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218824.072608,
+        "process_memory_mb": 157.703125,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218824.076867,
+        "process_memory_mb": 159.265625,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218824.080968,
+        "process_memory_mb": 160.78125,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218824.08495,
+        "process_memory_mb": 162.328125,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218824.0891929,
+        "process_memory_mb": 163.890625,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218824.0939982,
+        "process_memory_mb": 165.4375,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218824.098243,
+        "process_memory_mb": 166.96875,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218824.1022232,
+        "process_memory_mb": 168.5,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218824.106453,
+        "process_memory_mb": 170.0,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218824.110521,
+        "process_memory_mb": 171.5625,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218824.1144938,
+        "process_memory_mb": 173.125,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218824.118557,
+        "process_memory_mb": 174.640625,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218824.123399,
+        "process_memory_mb": 176.1875,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218824.1275132,
+        "process_memory_mb": 177.71875,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      },
+      {
+        "timestamp": 1769218824.131391,
+        "process_memory_mb": 179.265625,
+        "system_memory_percent": 77.4,
+        "cpu_percent": 0.0
+      }
+    ],
+    "estimated_total_memory_mb": 10.791778564453125,
+    "generation_end_time": "2026-01-23T18:40:24.134945"
+  },
+  "generation_metadata": {
+    "start_time": "2026-01-23T18:40:23.849935",
+    "generator_version": "1.0.0",
+    "scale": "small"
+  },
+  "collections_summary": [
+    {
+      "name": "perf_small_1k",
+      "config": {
+        "name": "perf_small_1k",
+        "size": 1000,
+        "dimension": 384
+      },
+      "performance_metrics": {
+        "total_vectors": 1000,
+        "generation_time_seconds": 0.052854061126708984,
+        "vectors_per_second": 18920.022013117654,
+        "average_batch_time": 0.004106283187866211,
+        "batch_times": [
+          0.00439000129699707,
+          0.004438877105712891,
+          0.0039942264556884766,
+          0.003923177719116211,
+          0.003885030746459961,
+          0.004734992980957031,
+          0.0039103031158447266,
+          0.003921985626220703,
+          0.003999948501586914,
+          0.003864288330078125
+        ],
+        "memory_per_vector_bytes": 1886,
+        "estimated_total_memory_mb": 1.7986297607421875,
+        "domain_distribution": {
+          "technology": 0.10571333189915506,
+          "science": 0.007201348179526511,
+          "business": 0.039116310551214485,
+          "education": 0.005166588019715259,
+          "healthcare": 0.24953433649579254,
+          "finance": 0.08587736279163555,
+          "entertainment": 0.09746110358893405,
+          "sports": 0.02636684385648751,
+          "travel": 0.04046424040802593,
+          "food": 0.0005753718618580371,
+          "art": 0.06709088651153301,
+          "music": 0.07567018489339689,
+          "literature": 0.14165910719729252,
+          "history": 0.04179382459507194,
+          "politics": 0.016309159150360717
+        }
+      },
+      "query_count": 100
+    },
+    {
+      "name": "perf_small_5k",
+      "config": {
+        "name": "perf_small_5k",
+        "size": 5000,
+        "dimension": 384
+      },
+      "performance_metrics": {
+        "total_vectors": 5000,
+        "generation_time_seconds": 0.2251749038696289,
+        "vectors_per_second": 22204.96118383994,
+        "average_batch_time": 0.004423861503601074,
+        "batch_times": [
+          0.003905057907104492,
+          0.0038678646087646484,
+          0.004056215286254883,
+          0.0039691925048828125,
+          0.00392603874206543,
+          0.0038788318634033203,
+          0.0038919448852539062,
+          0.004792928695678711,
+          0.003858804702758789,
+          0.003879070281982422,
+          0.003901958465576172,
+          0.0038330554962158203,
+          0.005321025848388672,
+          0.005362987518310547,
+          0.005708932876586914,
+          0.004466056823730469,
+          0.0040531158447265625,
+          0.004046916961669922,
+          0.004118204116821289,
+          0.0049591064453125,
+          0.005702972412109375,
+          0.0042040348052978516,
+          0.00474095344543457,
+          0.004213094711303711,
+          0.0064771175384521484,
+          0.005368709564208984,
+          0.00569915771484375,
+          0.005752086639404297,
+          0.004138946533203125,
+          0.00414729118347168,
+          0.004305124282836914,
+          0.004283905029296875,
+          0.004513978958129883,
+          0.004158973693847656,
+          0.0054798126220703125,
+          0.003954887390136719,
+          0.004214048385620117,
+          0.004068851470947266,
+          0.003949165344238281,
+          0.004196882247924805,
+          0.004765987396240234,
+          0.0042057037353515625,
+          0.003950834274291992,
+          0.004190921783447266,
+          0.004034996032714844,
+          0.003942966461181641,
+          0.0040130615234375,
+          0.004804134368896484,
+          0.004070281982421875,
+          0.003846883773803711
+        ],
+        "memory_per_vector_bytes": 1886,
+        "estimated_total_memory_mb": 8.993148803710938,
+        "domain_distribution": {
+          "technology": 0.13451373070682063,
+          "science": 0.10275088310221367,
+          "business": 0.013572516783756426,
+          "education": 0.03367982197364096,
+          "healthcare": 0.0025657355349102307,
+          "finance": 0.04462850701591172,
+          "entertainment": 0.021845697011808107,
+          "sports": 0.008890287899724675,
+          "travel": 0.03113732472295178,
+          "food": 0.10341243693878391,
+          "art": 0.33744496601660484,
+          "music": 0.14963763655112428,
+          "literature": 0.0030726353689368726,
+          "history": 0.005982607874225324,
+          "politics": 0.006865212498586591
+        }
+      },
+      "query_count": 100
+    }
+  ],
+  "test_scenarios": [
+    {
+      "name": "Batch Insertion Performance",
+      "description": "Test vector insertion performance with different batch sizes",
+      "type": "insertion",
+      "metrics": [
+        "throughput",
+        "latency",
+        "memory_usage",
+        "cpu_usage"
+      ]
+    },
+    {
+      "name": "Search Performance Scaling",
+      "description": "Test search performance as collection size increases",
+      "type": "search",
+      "metrics": [
+        "query_latency",
+        "recall_accuracy",
+        "throughput",
+        "memory_usage"
+      ]
+    },
+    {
+      "name": "Concurrent Access Performance",
+      "description": "Test performance under concurrent read/write operations",
+      "type": "concurrent",
+      "metrics": [
+        "concurrent_throughput",
+        "contention_latency",
+        "error_rate"
+      ]
+    },
+    {
+      "name": "Memory Usage Scaling",
+      "description": "Test memory usage patterns with increasing data size",
+      "type": "memory",
+      "metrics": [
+        "memory_per_vector",
+        "memory_growth_rate",
+        "gc_frequency"
+      ]
+    },
+    {
+      "name": "Index Performance Impact",
+      "description": "Test performance impact of different index configurations",
+      "type": "indexing",
+      "metrics": [
+        "index_build_time",
+        "search_speedup",
+        "memory_overhead"
+      ]
+    },
+    {
+      "name": "Dimension Scaling Performance",
+      "description": "Test performance impact of different vector dimensions",
+      "type": "dimension_scaling",
+      "metrics": [
+        "dimension_latency_scaling",
+        "memory_scaling",
+        "accuracy_impact"
+      ]
+    }
+  ]
+}

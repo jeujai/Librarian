@@ -1,0 +1,21 @@
+{
+  "triggers": [
+    {
+      "event": "document_upload_complete",
+      "question": "How was your document upload experience?",
+      "options": [
+        "Great \ud83d\ude0a",
+        "Okay \ud83d\ude10",
+        "Poor \ud83d\ude1e"
+      ]
+    },
+    {
+      "event": "chat_response_received",
+      "question": "Was this response helpful?",
+      "options": [
+        "Yes \ud83d\udc4d",
+        "No \ud83d\udc4e"
+      ]
+    }
+  ]
+}

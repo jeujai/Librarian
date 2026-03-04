@@ -1,0 +1,69 @@
+{
+  "deployment_time": "2026-01-14T19:05:07.582065",
+  "steps": [
+    {
+      "step": "ecr_repository_found",
+      "status": "success",
+      "message": "ECR repository found: 591222106065.dkr.ecr.us-east-1.amazonaws.com/multimodal-librarian"
+    },
+    {
+      "step": "ecr_login_token",
+      "status": "success",
+      "message": "ECR login token obtained"
+    },
+    {
+      "step": "docker_login",
+      "status": "success",
+      "message": "Successfully logged into ECR"
+    },
+    {
+      "step": "docker_build",
+      "status": "success",
+      "message": "Docker image built: 591222106065.dkr.ecr.us-east-1.amazonaws.com/multimodal-librarian:latest"
+    },
+    {
+      "step": "docker_push_latest",
+      "status": "success",
+      "message": "Latest image pushed: 591222106065.dkr.ecr.us-east-1.amazonaws.com/multimodal-librarian:latest"
+    },
+    {
+      "step": "docker_push_timestamped",
+      "status": "success",
+      "message": "Timestamped image pushed: 591222106065.dkr.ecr.us-east-1.amazonaws.com/multimodal-librarian:20260114-190509"
+    },
+    {
+      "step": "task_definition_update",
+      "status": "success",
+      "message": "Task definition updated: arn:aws:ecs:us-east-1:591222106065:task-definition/multimodal-lib-prod-app:26",
+      "health_check_config": {
+        "path": "/api/health/minimal",
+        "interval": 30,
+        "timeout": 15,
+        "retries": 5,
+        "start_period": 300
+      }
+    },
+    {
+      "step": "alb_health_check_update",
+      "status": "success",
+      "message": "ALB target group health check updated"
+    },
+    {
+      "step": "ecs_service_update",
+      "status": "success",
+      "message": "ECS service update initiated for multimodal-lib-prod-service"
+    },
+    {
+      "step": "deployment_monitoring",
+      "status": "warning",
+      "message": "Deployment monitoring failed: Waiter ServicesStable failed: Max attempts exceeded"
+    },
+    {
+      "step": "deployment_verification",
+      "status": "warning",
+      "message": "Service status: 0/1 tasks running"
+    }
+  ],
+  "success": true,
+  "errors": []
+}

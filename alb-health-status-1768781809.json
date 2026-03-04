@@ -1,0 +1,39 @@
+{
+  "timestamp": "2026-01-18T17:16:49.671422",
+  "target_group_arn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg-v2/7b63a6337a5c7a34",
+  "target_group_name": "multimodal-lib-prod-tg-v2",
+  "health_check_config": {
+    "path": "/health/simple",
+    "protocol": "HTTP",
+    "port": "traffic-port",
+    "interval": 30,
+    "timeout": 20,
+    "healthy_threshold": 2,
+    "unhealthy_threshold": 3,
+    "matcher": {
+      "HttpCode": "200"
+    }
+  },
+  "targets": [
+    {
+      "id": "10.0.3.8",
+      "port": 8000,
+      "state": "healthy",
+      "reason": null,
+      "description": null
+    },
+    {
+      "id": "10.0.2.233",
+      "port": 8000,
+      "state": "draining",
+      "reason": "Target.DeregistrationInProgress",
+      "description": "Target deregistration is in progress"
+    }
+  ],
+  "summary": {
+    "healthy": 1,
+    "unhealthy": 0,
+    "draining": 1,
+    "total": 2
+  }
+}

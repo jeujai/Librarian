@@ -1,0 +1,42 @@
+{
+  "success": true,
+  "timestamp": "2026-01-15T22:57:45.295306",
+  "target_group": {
+    "arn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg-v2/7b63a6337a5c7a34",
+    "name": "multimodal-lib-prod-tg-v2",
+    "protocol": "HTTP",
+    "port": 8000,
+    "vpc_id": "vpc-0b2186b38779e77f6",
+    "target_type": "ip"
+  },
+  "health_check": {
+    "enabled": true,
+    "protocol": "HTTP",
+    "path": "/api/health/simple",
+    "port": "traffic-port",
+    "interval_seconds": 30,
+    "timeout_seconds": 29,
+    "healthy_threshold": 2,
+    "unhealthy_threshold": 2,
+    "matcher": "200"
+  },
+  "configuration_used": {
+    "name": "multimodal-lib-prod-tg-v2",
+    "protocol": "HTTP",
+    "port": 8000,
+    "vpc_id": "vpc-0b2186b38779e77f6",
+    "target_type": "ip",
+    "health_check": {
+      "enabled": true,
+      "protocol": "HTTP",
+      "path": "/api/health/simple",
+      "interval_seconds": 30,
+      "timeout_seconds": 29,
+      "healthy_threshold_count": 2,
+      "unhealthy_threshold_count": 2,
+      "matcher": {
+        "http_code": "200"
+      }
+    }
+  }
+}

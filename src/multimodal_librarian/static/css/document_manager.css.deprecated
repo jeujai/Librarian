@@ -1,0 +1,19 @@
+/**
+ * DEPRECATED: Document Manager Styles
+ * 
+ * This file has been deprecated as of the unified-chat-document-upload feature.
+ * The separate Document Library panel has been removed in favor of the unified
+ * chat-integrated experience per Requirement 7.1.
+ * 
+ * Document management UI is now provided by:
+ * - DocumentListPanel (document-list-panel.js) - compact panel in chat
+ * - Processing status cards in chat.css
+ * 
+ * This file is kept for reference only and is no longer loaded by the application.
+ * 
+ * @deprecated Use chat.css styles for document management UI
+ * @see chat.css
+ */
+
+/* Original styles preserved below for reference */
+/* DO NOT USE - This CSS is no longer active */

@@ -1,0 +1,113 @@
+{
+  "deployment_time": "2026-01-18T19:08:44.449296",
+  "configuration": {
+    "task_memory_mb": 8192,
+    "task_cpu_units": 4096,
+    "desired_count": 1,
+    "cluster_name": "multimodal-lib-prod-cluster",
+    "service_name": "multimodal-lib-prod-service-alb",
+    "task_family": "multimodal-lib-prod-app",
+    "container_name": "multimodal-lib-prod-app",
+    "notes": {
+      "memory_history": [
+        {
+          "date": "2026-01-15",
+          "memory_mb": 16384,
+          "reason": "Increased from 8GB to 16GB to resolve OOM kills during background initialization. Fast startup works but background tasks loading models/services consume too much memory."
+        },
+        {
+          "date": "2026-01-15",
+          "memory_mb": 8192,
+          "reason": "Increased from 4GB to 8GB to resolve OOM kills during ML model loading. PyTorch + Transformers + Sentence Transformers require ~4.2GB at peak."
+        },
+        {
+          "date": "2026-01-14",
+          "memory_mb": 4096,
+          "reason": "Initial production deployment. Experienced OOM kills after ~6 minutes."
+        },
+        {
+          "date": "2026-01-14 21:58:10",
+          "memory_mb": 8192,
+          "cpu_units": 2048,
+          "reason": "Increased from 8192MB to 8192MB via increase-task-memory.py"
+        }
+      ],
+      "optimization_opportunities": [
+        "Implement lazy model loading to reduce peak memory",
+        "Use model quantization to reduce model size",
+        "Consider smaller model variants (e.g., paraphrase-MiniLM-L3-v2)",
+        "Implement model unloading for unused models",
+        "Implement gradual background loading with memory monitoring",
+        "Reduce memory back to 8GB once background loading is optimized"
+      ]
+    }
+  },
+  "steps": [
+    {
+      "step": "ecr_repository_found",
+      "status": "success",
+      "message": "ECR repository found: 591222106065.dkr.ecr.us-east-1.amazonaws.com/multimodal-librarian"
+    },
+    {
+      "step": "ecr_login_token",
+      "status": "success",
+      "message": "ECR login token obtained"
+    },
+    {
+      "step": "docker_login",
+      "status": "success",
+      "message": "Successfully logged into ECR"
+    },
+    {
+      "step": "docker_build",
+      "status": "success",
+      "message": "Docker image built: 591222106065.dkr.ecr.us-east-1.amazonaws.com/multimodal-librarian:latest"
+    },
+    {
+      "step": "docker_push_latest",
+      "status": "success",
+      "message": "Latest image pushed: 591222106065.dkr.ecr.us-east-1.amazonaws.com/multimodal-librarian:latest"
+    },
+    {
+      "step": "docker_push_timestamped",
+      "status": "success",
+      "message": "Timestamped image pushed: 591222106065.dkr.ecr.us-east-1.amazonaws.com/multimodal-librarian:20260118-190845"
+    },
+    {
+      "step": "task_definition_update",
+      "status": "success",
+      "message": "Task definition updated: arn:aws:ecs:us-east-1:591222106065:task-definition/multimodal-lib-prod-app:69",
+      "memory_mb": 8192,
+      "cpu_units": 4096,
+      "health_check_config": {
+        "path": "/health/minimal",
+        "interval": 30,
+        "timeout": 15,
+        "retries": 5,
+        "start_period": 300
+      }
+    },
+    {
+      "step": "alb_health_check_update",
+      "status": "success",
+      "message": "ALB target group health check updated"
+    },
+    {
+      "step": "ecs_service_update",
+      "status": "success",
+      "message": "ECS service update initiated for multimodal-lib-prod-service-alb"
+    },
+    {
+      "step": "deployment_monitoring",
+      "status": "warning",
+      "message": "Deployment monitoring failed: Waiter ServicesStable failed: Max attempts exceeded"
+    },
+    {
+      "step": "deployment_verification",
+      "status": "success",
+      "message": "Service healthy: 1/1 tasks running"
+    }
+  ],
+  "success": true,
+  "errors": []
+}

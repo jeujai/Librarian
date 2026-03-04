@@ -1,0 +1,77 @@
+{
+  "family": "multimodal-librarian-full-ml",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "8192",
+  "memory": "16384",
+  "executionRoleArn": "arn:aws:iam::591222106065:role/ecsTaskExecutionRole",
+  "containerDefinitions": [
+    {
+      "name": "multimodal-librarian-full-ml",
+      "image": "591222106065.dkr.ecr.us-east-1.amazonaws.com/multimodal-librarian-full-ml:full-ml",
+      "portMappings": [
+        {
+          "containerPort": 8000,
+          "protocol": "tcp"
+        }
+      ],
+      "essential": true,
+      "environment": [
+        {
+          "name": "DEBUG",
+          "value": "false"
+        },
+        {
+          "name": "LOG_LEVEL",
+          "value": "INFO"
+        },
+        {
+          "name": "API_HOST",
+          "value": "0.0.0.0"
+        },
+        {
+          "name": "API_PORT",
+          "value": "8000"
+        },
+        {
+          "name": "API_WORKERS",
+          "value": "4"
+        },
+        {
+          "name": "CHUNK_SIZE",
+          "value": "512"
+        },
+        {
+          "name": "CHUNK_OVERLAP",
+          "value": "50"
+        },
+        {
+          "name": "EMBEDDING_MODEL",
+          "value": "all-MiniLM-L6-v2"
+        },
+        {
+          "name": "MAX_FILE_SIZE",
+          "value": "104857600"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/aws/ecs/multimodal-librarian-full-ml",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      },
+      "healthCheck": {
+        "command": [
+          "CMD-SHELL",
+          "curl -f http://localhost:8000/health/simple || exit 1"
+        ],
+        "interval": 30,
+        "timeout": 10,
+        "retries": 3,
+        "startPeriod": 120
+      }
+    }
+  ]
+}

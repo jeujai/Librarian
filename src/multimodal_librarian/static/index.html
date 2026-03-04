@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multimodal Librarian - Chat Interface</title>
+    <link rel="stylesheet" href="/static/css/chat.css">
+    <!-- document_manager.css removed - document management now integrated into chat UI -->
+    <link rel="stylesheet" href="/static/css/quality-indicators.css">
+    <link rel="stylesheet" href="/static/css/citation-popup.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <div class="chat-container" role="main" aria-label="Chat interface">
+        <!-- Header -->
+        <header class="chat-header">
+            <div class="header-content">
+                <div class="header-left">
+                    <h1>Multimodal Librarian</h1>
+                    <div class="connection-status" id="connectionStatus" aria-live="polite">
+                        <span class="status-indicator" id="statusIndicator"></span>
+                        <span class="status-text" id="statusText">Connecting...</span>
+                    </div>
+                </div>
+                <div class="header-right">
+                    <button class="header-btn" id="newChatBtn" aria-label="Start new conversation"
+                        title="Start new conversation (Ctrl+K)">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <path d="M12 5v14M5 12h14"></path>
+                        </svg>
+                        <span class="btn-text">New Chat</span>
+                    </button>
+                    <button class="header-btn" id="exportBtn" aria-label="Export conversation"
+                        title="Export conversation (Ctrl+E)">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-15"></path>
+                            <polyline points="7,10 12,15 17,10"></polyline>
+                            <line x1="12" y1="15" x2="12" y2="3"></line>
+                        </svg>
+                        <span class="btn-text">Export</span>
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Chat Messages Area -->
+        <main class="chat-messages" id="chatMessages" role="log" aria-live="polite" aria-label="Conversation history">
+            <div class="welcome-message">
+                <div class="message system-message">
+                    <div class="message-content">
+                        <h2>Welcome to Multimodal Librarian!</h2>
+                        <p>I'm here to help you explore your knowledge base. You can:</p>
+                        <ul>
+                            <li>Ask questions about your uploaded books</li>
+                            <li>Upload new documents by dragging and dropping</li>
+                            <li>Paste images, text, or data directly into the chat</li>
+                            <li>Export responses in various formats</li>
+                        </ul>
+                        <p>Start by typing a message or uploading a document!</p>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Input Area -->
+        <div class="chat-input-container">
+            <!-- File Upload Progress -->
+            <div class="upload-progress" id="uploadProgress" style="display: none;" role="status" aria-live="polite">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <div class="progress-text" id="progressText">Uploading...</div>
+            </div>
+
+            <!-- Processing Indicator -->
+            <div class="processing-indicator" id="processingIndicator" style="display: none;" role="status"
+                aria-live="polite">
+                <div class="spinner"></div>
+                <span>Processing your request...</span>
+            </div>
+
+            <!-- Input Form -->
+            <form class="chat-input-form" id="chatForm">
+                <div class="input-wrapper">
+                    <!-- File Upload Button -->
+                    <button type="button" class="upload-btn" id="uploadBtn" aria-label="Upload file"
+                        title="Upload file">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="7,10 12,15 17,10"></polyline>
+                            <line x1="12" y1="15" x2="12" y2="3"></line>
+                        </svg>
+                    </button>
+
+                    <!-- Text Input -->
+                    <textarea id="messageInput" class="message-input"
+                        placeholder="Type your message here... (Ctrl+Enter to send)" rows="2" aria-label="Message input"
+                        aria-describedby="inputHelp" maxlength="4000"></textarea>
+
+                    <!-- Send Button -->
+                    <button type="submit" class="send-btn" id="sendBtn" aria-label="Send message"
+                        title="Send message (Ctrl+Enter)">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <line x1="22" y1="2" x2="11" y2="13"></line>
+                            <polygon points="22,2 15,22 11,13 2,9 22,2"></polygon>
+                        </svg>
+                    </button>
+                </div>
+
+                <!-- Input Help Text -->
+                <div class="input-help" id="inputHelp">
+                    You can paste images, drag & drop files, or type your message. Use Ctrl+Enter to send.
+                    <span class="character-count" id="characterCount" aria-live="polite">0/4000</span>
+                </div>
+            </form>
+
+            <!-- Hidden File Input -->
+            <input type="file" id="fileInput" multiple accept="*/*" style="display: none;" aria-label="File input">
+        </div>
+
+        <!-- Drag and Drop Overlay -->
+        <div class="drag-overlay" id="dragOverlay" style="display: none;">
+            <div class="drag-content">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="7,10 12,15 17,10"></polyline>
+                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                </svg>
+                <h3>Drop files here to upload</h3>
+                <p>Supports documents, images, and data files</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="/static/js/websocket.js"></script>
+    <script src="/static/js/filehandler.js"></script>
+    <script src="/static/js/chat-upload-handler.js"></script>
+    <script src="/static/js/document-list-panel.js"></script>
+    <!-- document_upload.js removed - document management now integrated into chat via ChatUploadHandler and DocumentListPanel -->
+    <script src="/static/js/loading-states.js"></script>
+    <script src="/static/js/expectation-manager.js"></script>
+    <script src="/static/js/limitation-messages.js"></script>
+    <!-- Citation components - must load before chat.js (Requirements: 1.1) -->
+    <script src="/static/js/citation-popup.js?v=2"></script>
+    <script src="/static/js/citation-renderer.js"></script>
+    <script src="/static/js/chat.js"></script>
+</body>
+
+</html>

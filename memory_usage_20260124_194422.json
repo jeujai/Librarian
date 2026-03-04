@@ -1,0 +1,740 @@
+{
+  "monitoring_session": {
+    "start_time": "2026-01-24T19:44:22.726676",
+    "end_time": "2026-01-24T19:45:22.805415",
+    "duration_minutes": 1.00131245,
+    "interval_seconds": 2,
+    "total_samples": 30,
+    "leak_detection_enabled": true
+  },
+  "summary": {
+    "system": {
+      "sample_count": 30,
+      "avg_memory_mb": 9671.677604166667,
+      "peak_memory_mb": 9928.28125,
+      "min_memory_mb": 9422.703125,
+      "avg_memory_percent": 76.01,
+      "peak_memory_percent": 76.8,
+      "min_memory_percent": 75.3,
+      "memory_growth_mb": 45.234375,
+      "alert_count": 30,
+      "first_timestamp": "2026-01-24T19:44:22.751397",
+      "last_timestamp": "2026-01-24T19:45:20.802449",
+      "avg_swap_percent": 91.0,
+      "peak_swap_percent": 91.0,
+      "swap_used": true
+    }
+  },
+  "detailed_snapshots": {
+    "system": [
+      {
+        "timestamp": "2026-01-24T19:44:22.751397",
+        "source": "system",
+        "total_memory_mb": 32768.0,
+        "used_memory_mb": 9779.21875,
+        "available_memory_mb": 7693.71875,
+        "memory_percent": 76.5,
+        "swap_used_mb": 7454.5625,
+        "swap_percent": 91.0,
+        "cached_memory_mb": 0.0,
+        "buffer_memory_mb": 0.0,
+        "shared_memory_mb": 0.0,
+        "alerts": [
+          "Swap memory in use: 91.0%"
+        ],
+        "custom_metrics": {
+          "total_physical_memory_gb": 32.0,
+          "memory_pressure_ratio": 1.2710652764633488,
+          "swap_in_use": true,
+          "memory_fragmentation_ratio": 0.0636444091796875,
+          "effective_memory_usage": 29.843807220458984
+        }
+      },
+      {
+        "timestamp": "2026-01-24T19:44:24.753421",
+        "source": "system",
+        "total_memory_mb": 32768.0,
+        "used_memory_mb": 9670.046875,
+        "available_memory_mb": 7803.59375,
+        "memory_percent": 76.2,
+        "swap_used_mb": 7454.5625,
+        "swap_percent": 91.0,
+        "cached_memory_mb": 0.0,
+        "buffer_memory_mb": 0.0,
+        "shared_memory_mb": 0.0,
+        "alerts": [
+          "Swap memory in use: 91.0%"
+        ],
+        "custom_metrics": {
+          "total_physical_memory_gb": 32.0,
+          "memory_pressure_ratio": 1.2391786636765914,
+          "swap_in_use": true,
+          "memory_fragmentation_ratio": 0.05695962905883789,
+          "effective_memory_usage": 29.51064109802246
+        }
+      },
+      {
+        "timestamp": "2026-01-24T19:44:26.755364",
+        "source": "system",
+        "total_memory_mb": 32768.0,
+        "used_memory_mb": 9650.125,
+        "available_memory_mb": 7826.5625,
+        "memory_percent": 76.1,
+        "swap_used_mb": 7454.5625,
+        "swap_percent": 91.0,
+        "cached_memory_mb": 0.0,
+        "buffer_memory_mb": 0.0,
+        "shared_memory_mb": 0.0,
+        "alerts": [
+          "Swap memory in use: 91.0%"
+        ],
+        "custom_metrics": {
+          "total_physical_memory_gb": 32.0,
+          "memory_pressure_ratio": 1.2329966061090039,
+          "swap_in_use": true,
+          "memory_fragmentation_ratio": 0.05565071105957031,
+          "effective_memory_usage": 29.449844360351562
+        }
+      },
+      {
+        "timestamp": "2026-01-24T19:44:28.757179",
+        "source": "system",
+        "total_memory_mb": 32768.0,
+        "used_memory_mb": 9622.171875,
+        "available_memory_mb": 7865.578125,
+        "memory_percent": 76.0,
+        "swap_used_mb": 7454.5625,
+        "swap_percent": 91.0,
+        "cached_memory_mb": 0.0,
+        "buffer_memory_mb": 0.0,
+        "shared_memory_mb": 0.0,
+        "alerts": [
+          "Swap memory in use: 91.0%"
+        ],
+        "custom_metrics": {
+          "total_physical_memory_gb": 32.0,
+          "memory_pressure_ratio": 1.2233267182760326,
+          "swap_in_use": true,
+          "memory_fragmentation_ratio": 0.05360698699951172,
+          "effective_memory_usage": 29.364538192749023
+        }
+      },
+      {
+        "timestamp": "2026-01-24T19:44:30.759049",
+        "source": "system",
+        "total_memory_mb": 32768.0,
+        "used_memory_mb": 9682.71875,
+        "available_memory_mb": 7814.1875,
+        "memory_percent": 76.2,
+        "swap_used_mb": 7454.5625,
+        "swap_percent": 91.0,
+        "cached_memory_mb": 0.0,
+        "buffer_memory_mb": 0.0,
+        "shared_memory_mb": 0.0,
+        "alerts": [
+          "Swap memory in use: 91.0%"
+        ],
+        "custom_metrics": {
+          "total_physical_memory_gb": 32.0,
+          "memory_pressure_ratio": 1.239120350004399,
+          "swap_in_use": true,
+          "memory_fragmentation_ratio": 0.057023048400878906,
+          "effective_memory_usage": 29.549312591552734
+        }
+      },
+      {
+        "timestamp": "2026-01-24T19:44:32.760635",
+        "source": "system",
+        "total_memory_mb": 32768.0,
+        "used_memory_mb": 9457.5625,
+        "available_memory_mb": 8039.65625,
+        "memory_percent": 75.5,
+        "swap_used_mb": 7454.5625,
+        "swap_percent": 91.0,
+        "cached_memory_mb": 0.0,
+        "buffer_memory_mb": 0.0,
+        "shared_memory_mb": 0.0,
+        "alerts": [
+          "Swap memory in use: 91.0%"
+        ],
+        "custom_metrics": {
+          "total_physical_memory_gb": 32.0,
+          "memory_pressure_ratio": 1.1763640391963275,
+          "swap_in_use": true,
+          "memory_fragmentation_ratio": 0.04327106475830078,
+          "effective_memory_usage": 28.86219024658203
+        }
+      },
+      {
+        "timestamp": "2026-01-24T19:44:34.762159",
+        "source": "system",
+        "total_memory_mb": 32768.0,
+        "used_memory_mb": 9422.703125,
+        "available_memory_mb": 8080.0625,
+        "memory_percent": 75.3,
+        "swap_used_mb": 7454.5625,
+        "swap_percent": 91.0,
+        "cached_memory_mb": 0.0,
+        "buffer_memory_mb": 0.0,
+        "shared_memory_mb": 0.0,
+        "alerts": [
+          "Swap memory in use: 91.0%"
+        ],
+        "custom_metrics": {
+          "total_physical_memory_gb": 32.0,
+          "memory_pressure_ratio": 1.1661671088559031,
+          "swap_in_use": true,
+          "memory_fragmentation_ratio": 0.04097414016723633,
+          "effective_memory_usage": 28.755807876586914
+        }
+      },
+      {
+        "timestamp": "2026-01-24T19:44:36.763265",
+        "source": "system",
+        "total_memory_mb": 32768.0,
+        "used_memory_mb": 9928.28125,
+        "available_memory_mb": 7617.640625,
+        "memory_percent": 76.8,
+        "swap_used_mb": 7454.5625,
+        "swap_percent": 91.0,
+        "cached_memory_mb": 0.0,
+        "buffer_memory_mb": 0.0,
+        "shared_memory_mb": 0.0,
+        "alerts": [
+          "Swap memory in use: 91.0%"
+        ],
+        "custom_metrics": {
+          "total_physical_memory_gb": 32.0,
+          "memory_pressure_ratio": 1.3033275969224394,
+          "swap_in_use": true,
+          "memory_fragmentation_ratio": 0.07051515579223633,
+          "effective_memory_usage": 30.298709869384766
+        }
+      },
+      {
+        "timestamp": "2026-01-24T19:44:38.764754",
+        "source": "system",
+        "total_memory_mb": 32768.0,
+        "used_memory_mb": 9536.796875,
+        "available_memory_mb": 7905.375,
+        "memory_percent": 75.9,
+        "swap_used_mb": 7454.5625,
+        "swap_percent": 91.0,
+        "cached_memory_mb": 0.0,
+        "buffer_memory_mb": 0.0,
+        "shared_memory_mb": 0.0,
+        "alerts": [
+          "Swap memory in use: 91.0%"
+        ],
+        "custom_metrics": {
+          "total_physical_memory_gb": 32.0,
+          "memory_pressure_ratio": 1.2063686890248724,
+          "swap_in_use": true,
+          "memory_fragmentation_ratio": 0.049787044525146484,
+          "effective_memory_usage": 29.103994369506836
+        }
+      },
+      {
+        "timestamp": "2026-01-24T19:44:40.766366",
+        "source": "system",
+        "total_memory_mb": 32768.0,
+        "used_memory_mb": 9536.359375,
+        "available_memory_mb": 7926.953125,
+        "memory_percent": 75.8,
+        "swap_used_mb": 7454.5625,
+        "swap_percent": 91.0,
+        "cached_memory_mb": 0.0,
+        "buffer_memory_mb": 0.0,
+        "shared_memory_mb": 0.0,
+        "alerts": [
+          "Swap memory in use: 91.0%"
+        ],
+        "custom_metrics": {
+          "total_physical_memory_gb": 32.0,
+          "memory_pressure_ratio": 1.2030296161237866,
+          "swap_in_use": true,
+          "memory_fragmentation_ratio": 0.04911518096923828,
+          "effective_memory_usage": 29.102659225463867
+        }
+      },
+      {
+        "timestamp": "2026-01-24T19:44:42.768029",
+        "source": "system",
+        "total_memory_mb": 32768.0,
+        "used_memory_mb": 9580.875,
+        "available_memory_mb": 7891.890625,
+        "memory_percent": 75.9,
+        "swap_used_mb": 7454.5625,
+        "swap_percent": 91.0,
+        "cached_memory_mb": 0.0,
+        "buffer_memory_mb": 0.0,
+        "shared_memory_mb": 0.0,
+        "alerts": [
+          "Swap memory in use: 91.0%"
+        ],
+        "custom_metrics": {
+          "total_physical_memory_gb": 32.0,
+          "memory_pressure_ratio": 1.2140151777635666,
+          "swap_in_use": true,
+          "memory_fragmentation_ratio": 0.0515437126159668,
+          "effective_memory_usage": 29.238510131835938
+        }
+      },
+      {
+        "timestamp": "2026-01-24T19:44:44.769624",
+        "source": "system",
+        "total_memory_mb": 32768.0,
+        "used_memory_mb": 9596.4375,
+        "available_memory_mb": 7889.6875,
+        "memory_percent": 75.9,
+        "swap_used_mb": 7454.5625,
+        "swap_percent": 91.0,
+        "cached_memory_mb": 0.0,
+        "buffer_memory_mb": 0.0,
+        "shared_memory_mb": 0.0,
+        "alerts": [
+          "Swap memory in use: 91.0%"
+        ],
+        "custom_metrics": {
+          "total_physical_memory_gb": 32.0,
+          "memory_pressure_ratio": 1.216326692280271,
+          "swap_in_use": true,
+          "memory_fragmentation_ratio": 0.05208587646484375,
+          "effective_memory_usage": 29.28600311279297
+        }
+      },
+      {
+        "timestamp": "2026-01-24T19:44:46.771166",
+        "source": "system",
+        "total_memory_mb": 32768.0,
+        "used_memory_mb": 9573.265625,
+        "available_memory_mb": 7917.703125,
+        "memory_percent": 75.8,
+        "swap_used_mb": 7454.5625,
+        "swap_percent": 91.0,
+        "cached_memory_mb": 0.0,
+        "buffer_memory_mb": 0.0,
+        "shared_memory_mb": 0.0,
+        "alerts": [
+          "Swap memory in use: 91.0%"
+        ],
+        "custom_metrics": {
+          "total_physical_memory_gb": 32.0,
+          "memory_pressure_ratio": 1.2090963091016373,
+          "swap_in_use": true,
+          "memory_fragmentation_ratio": 0.05052375793457031,
+          "effective_memory_usage": 29.215288162231445
+        }
+      },
+      {
+        "timestamp": "2026-01-24T19:44:48.773051",
+        "source": "system",
+        "total_memory_mb": 32768.0,
+        "used_memory_mb": 9578.796875,
+        "available_memory_mb": 7912.6875,
+        "memory_percent": 75.9,
+        "swap_used_mb": 7454.5625,
+        "swap_percent": 91.0,
+        "cached_memory_mb": 0.0,
+        "buffer_memory_mb": 0.0,
+        "shared_memory_mb": 0.0,
+        "alerts": [
+          "Swap memory in use: 91.0%"
+        ],
+        "custom_metrics": {
+          "total_physical_memory_gb": 32.0,
+          "memory_pressure_ratio": 1.2105617560405362,
+          "swap_in_use": true,
+          "memory_fragmentation_ratio": 0.05084562301635742,
+          "effective_memory_usage": 29.232168197631836
+        }
+      },
+      {
+        "timestamp": "2026-01-24T19:44:50.774686",
+        "source": "system",
+        "total_memory_mb": 32768.0,
+        "used_memory_mb": 9592.1875,
+        "available_memory_mb": 7901.90625,
+        "memory_percent": 75.9,
+        "swap_used_mb": 7454.5625,
+        "swap_percent": 91.0,
+        "cached_memory_mb": 0.0,
+        "buffer_memory_mb": 0.0,
+        "shared_memory_mb": 0.0,
+        "alerts": [
+          "Swap memory in use: 91.0%"
+        ],
+        "custom_metrics": {
+          "total_physical_memory_gb": 32.0,
+          "memory_pressure_ratio": 1.2139080364310826,
+          "swap_in_use": true,
+          "memory_fragmentation_ratio": 0.051583290100097656,
+          "effective_memory_usage": 29.273033142089844
+        }
+      },
+      {
+        "timestamp": "2026-01-24T19:44:52.776389",
+        "source": "system",
+        "total_memory_mb": 32768.0,
+        "used_memory_mb": 9603.828125,
+        "available_memory_mb": 7900.234375,
+        "memory_percent": 75.9,
+        "swap_used_mb": 7454.5625,
+        "swap_percent": 91.0,
+        "cached_memory_mb": 0.0,
+        "buffer_memory_mb": 0.0,
+        "shared_memory_mb": 0.0,
+        "alerts": [
+          "Swap memory in use: 91.0%"
+        ],
+        "custom_metrics": {
+          "total_physical_memory_gb": 32.0,
+          "memory_pressure_ratio": 1.215638380981577,
+          "swap_in_use": true,
+          "memory_fragmentation_ratio": 0.05198955535888672,
+          "effective_memory_usage": 29.308557510375977
+        }
+      },
+      {
+        "timestamp": "2026-01-24T19:44:54.777142",
+        "source": "system",
+        "total_memory_mb": 32768.0,
+        "used_memory_mb": 9607.796875,
+        "available_memory_mb": 7900.03125,
+        "memory_percent": 75.9,
+        "swap_used_mb": 7454.5625,
+        "swap_percent": 91.0,
+        "cached_memory_mb": 0.0,
+        "buffer_memory_mb": 0.0,
+        "shared_memory_mb": 0.0,
+        "alerts": [
+          "Swap memory in use: 91.0%"
+        ],
+        "custom_metrics": {
+          "total_physical_memory_gb": 32.0,
+          "memory_pressure_ratio": 1.2161720088132564,
+          "swap_in_use": true,
+          "memory_fragmentation_ratio": 0.05211687088012695,
+          "effective_memory_usage": 29.320669174194336
+        }
+      },
+      {
+        "timestamp": "2026-01-24T19:44:56.779057",
+        "source": "system",
+        "total_memory_mb": 32768.0,
+        "used_memory_mb": 9624.734375,
+        "available_memory_mb": 7920.671875,
+        "memory_percent": 75.8,
+        "swap_used_mb": 7454.5625,
+        "swap_percent": 91.0,
+        "cached_memory_mb": 0.0,
+        "buffer_memory_mb": 0.0,
+        "shared_memory_mb": 0.0,
+        "alerts": [
+          "Swap memory in use: 91.0%"
+        ],
+        "custom_metrics": {
+          "total_physical_memory_gb": 32.0,
+          "memory_pressure_ratio": 1.2151411555601146,
+          "swap_in_use": true,
+          "memory_fragmentation_ratio": 0.05200386047363281,
+          "effective_memory_usage": 29.372358322143555
+        }
+      },
+      {
+        "timestamp": "2026-01-24T19:44:58.780996",
+        "source": "system",
+        "total_memory_mb": 32768.0,
+        "used_memory_mb": 9600.375,
+        "available_memory_mb": 7948.515625,
+        "memory_percent": 75.7,
+        "swap_used_mb": 7454.5625,
+        "swap_percent": 91.0,
+        "cached_memory_mb": 0.0,
+        "buffer_memory_mb": 0.0,
+        "shared_memory_mb": 0.0,
+        "alerts": [
+          "Swap memory in use: 91.0%"
+        ],
+        "custom_metrics": {
+          "total_physical_memory_gb": 32.0,
+          "memory_pressure_ratio": 1.207819856301786,
+          "swap_in_use": true,
+          "memory_fragmentation_ratio": 0.05041074752807617,
+          "effective_memory_usage": 29.298019409179688
+        }
+      },
+      {
+        "timestamp": "2026-01-24T19:45:00.782684",
+        "source": "system",
+        "total_memory_mb": 32768.0,
+        "used_memory_mb": 9629.8125,
+        "available_memory_mb": 7920.578125,
+        "memory_percent": 75.8,
+        "swap_used_mb": 7454.5625,
+        "swap_percent": 91.0,
+        "cached_memory_mb": 0.0,
+        "buffer_memory_mb": 0.0,
+        "shared_memory_mb": 0.0,
+        "alerts": [
+          "Swap memory in use: 91.0%"
+        ],
+        "custom_metrics": {
+          "total_physical_memory_gb": 32.0,
+          "memory_pressure_ratio": 1.2157966688826771,
+          "swap_in_use": true,
+          "memory_fragmentation_ratio": 0.05216169357299805,
+          "effective_memory_usage": 29.387855529785156
+        }
+      },
+      {
+        "timestamp": "2026-01-24T19:45:02.784614",
+        "source": "system",
+        "total_memory_mb": 32768.0,
+        "used_memory_mb": 9679.6875,
+        "available_memory_mb": 7870.90625,
+        "memory_percent": 76.0,
+        "swap_used_mb": 7454.5625,
+        "swap_percent": 91.0,
+        "cached_memory_mb": 0.0,
+        "buffer_memory_mb": 0.0,
+        "shared_memory_mb": 0.0,
+        "alerts": [
+          "Swap memory in use: 91.0%"
+        ],
+        "custom_metrics": {
+          "total_physical_memory_gb": 32.0,
+          "memory_pressure_ratio": 1.2298059705640632,
+          "swap_in_use": true,
+          "memory_fragmentation_ratio": 0.055199623107910156,
+          "effective_memory_usage": 29.540061950683594
+        }
+      },
+      {
+        "timestamp": "2026-01-24T19:45:04.786422",
+        "source": "system",
+        "total_memory_mb": 32768.0,
+        "used_memory_mb": 9753.140625,
+        "available_memory_mb": 7845.734375,
+        "memory_percent": 76.1,
+        "swap_used_mb": 7454.5625,
+        "swap_percent": 91.0,
+        "cached_memory_mb": 0.0,
+        "buffer_memory_mb": 0.0,
+        "shared_memory_mb": 0.0,
+        "alerts": [
+          "Swap memory in use: 91.0%"
+        ],
+        "custom_metrics": {
+          "total_physical_memory_gb": 32.0,
+          "memory_pressure_ratio": 1.2431137939206616,
+          "swap_in_use": true,
+          "memory_fragmentation_ratio": 0.05820941925048828,
+          "effective_memory_usage": 29.764223098754883
+        }
+      },
+      {
+        "timestamp": "2026-01-24T19:45:06.788594",
+        "source": "system",
+        "total_memory_mb": 32768.0,
+        "used_memory_mb": 9800.03125,
+        "available_memory_mb": 7805.296875,
+        "memory_percent": 76.2,
+        "swap_used_mb": 7454.5625,
+        "swap_percent": 91.0,
+        "cached_memory_mb": 0.0,
+        "buffer_memory_mb": 0.0,
+        "shared_memory_mb": 0.0,
+        "alerts": [
+          "Swap memory in use: 91.0%"
+        ],
+        "custom_metrics": {
+          "total_physical_memory_gb": 32.0,
+          "memory_pressure_ratio": 1.2555616278208508,
+          "swap_in_use": true,
+          "memory_fragmentation_ratio": 0.06087446212768555,
+          "effective_memory_usage": 29.90732192993164
+        }
+      },
+      {
+        "timestamp": "2026-01-24T19:45:08.790727",
+        "source": "system",
+        "total_memory_mb": 32768.0,
+        "used_memory_mb": 9804.859375,
+        "available_memory_mb": 7801.453125,
+        "memory_percent": 76.2,
+        "swap_used_mb": 7454.5625,
+        "swap_percent": 91.0,
+        "cached_memory_mb": 0.0,
+        "buffer_memory_mb": 0.0,
+        "shared_memory_mb": 0.0,
+        "alerts": [
+          "Swap memory in use: 91.0%"
+        ],
+        "custom_metrics": {
+          "total_physical_memory_gb": 32.0,
+          "memory_pressure_ratio": 1.2567991139471213,
+          "swap_in_use": true,
+          "memory_fragmentation_ratio": 0.06113910675048828,
+          "effective_memory_usage": 29.922056198120117
+        }
+      },
+      {
+        "timestamp": "2026-01-24T19:45:10.792818",
+        "source": "system",
+        "total_memory_mb": 32768.0,
+        "used_memory_mb": 9779.34375,
+        "available_memory_mb": 7827.515625,
+        "memory_percent": 76.1,
+        "swap_used_mb": 7454.5625,
+        "swap_percent": 91.0,
+        "cached_memory_mb": 0.0,
+        "buffer_memory_mb": 0.0,
+        "shared_memory_mb": 0.0,
+        "alerts": [
+          "Swap memory in use: 91.0%"
+        ],
+        "custom_metrics": {
+          "total_physical_memory_gb": 32.0,
+          "memory_pressure_ratio": 1.249354740189356,
+          "swap_in_use": true,
+          "memory_fragmentation_ratio": 0.059565067291259766,
+          "effective_memory_usage": 29.844188690185547
+        }
+      },
+      {
+        "timestamp": "2026-01-24T19:45:12.795026",
+        "source": "system",
+        "total_memory_mb": 32768.0,
+        "used_memory_mb": 9821.421875,
+        "available_memory_mb": 7788.59375,
+        "memory_percent": 76.2,
+        "swap_used_mb": 7454.5625,
+        "swap_percent": 91.0,
+        "cached_memory_mb": 0.0,
+        "buffer_memory_mb": 0.0,
+        "shared_memory_mb": 0.0,
+        "alerts": [
+          "Swap memory in use: 91.0%"
+        ],
+        "custom_metrics": {
+          "total_physical_memory_gb": 32.0,
+          "memory_pressure_ratio": 1.261000662025799,
+          "swap_in_use": true,
+          "memory_fragmentation_ratio": 0.062036991119384766,
+          "effective_memory_usage": 29.97260093688965
+        }
+      },
+      {
+        "timestamp": "2026-01-24T19:45:14.797060",
+        "source": "system",
+        "total_memory_mb": 32768.0,
+        "used_memory_mb": 9810.28125,
+        "available_memory_mb": 7800.21875,
+        "memory_percent": 76.2,
+        "swap_used_mb": 7454.5625,
+        "swap_percent": 91.0,
+        "cached_memory_mb": 0.0,
+        "buffer_memory_mb": 0.0,
+        "shared_memory_mb": 0.0,
+        "alerts": [
+          "Swap memory in use: 91.0%"
+        ],
+        "custom_metrics": {
+          "total_physical_memory_gb": 32.0,
+          "memory_pressure_ratio": 1.2576930935430497,
+          "swap_in_use": true,
+          "memory_fragmentation_ratio": 0.06134223937988281,
+          "effective_memory_usage": 29.938602447509766
+        }
+      },
+      {
+        "timestamp": "2026-01-24T19:45:16.799255",
+        "source": "system",
+        "total_memory_mb": 32768.0,
+        "used_memory_mb": 9786.953125,
+        "available_memory_mb": 7823.25,
+        "memory_percent": 76.1,
+        "swap_used_mb": 7454.5625,
+        "swap_percent": 91.0,
+        "cached_memory_mb": 0.0,
+        "buffer_memory_mb": 0.0,
+        "shared_memory_mb": 0.0,
+        "alerts": [
+          "Swap memory in use: 91.0%"
+        ],
+        "custom_metrics": {
+          "total_physical_memory_gb": 32.0,
+          "memory_pressure_ratio": 1.251008612149682,
+          "swap_in_use": true,
+          "memory_fragmentation_ratio": 0.05992746353149414,
+          "effective_memory_usage": 29.86741065979004
+        }
+      },
+      {
+        "timestamp": "2026-01-24T19:45:18.800395",
+        "source": "system",
+        "total_memory_mb": 32768.0,
+        "used_memory_mb": 9816.0625,
+        "available_memory_mb": 7792.625,
+        "memory_percent": 76.2,
+        "swap_used_mb": 7454.5625,
+        "swap_percent": 91.0,
+        "cached_memory_mb": 0.0,
+        "buffer_memory_mb": 0.0,
+        "shared_memory_mb": 0.0,
+        "alerts": [
+          "Swap memory in use: 91.0%"
+        ],
+        "custom_metrics": {
+          "total_physical_memory_gb": 32.0,
+          "memory_pressure_ratio": 1.2596605765066329,
+          "swap_in_use": true,
+          "memory_fragmentation_ratio": 0.06175041198730469,
+          "effective_memory_usage": 29.95624542236328
+        }
+      },
+      {
+        "timestamp": "2026-01-24T19:45:20.802449",
+        "source": "system",
+        "total_memory_mb": 32768.0,
+        "used_memory_mb": 9824.453125,
+        "available_memory_mb": 7786.4375,
+        "memory_percent": 76.2,
+        "swap_used_mb": 7454.5625,
+        "swap_percent": 91.0,
+        "cached_memory_mb": 0.0,
+        "buffer_memory_mb": 0.0,
+        "shared_memory_mb": 0.0,
+        "alerts": [
+          "Swap memory in use: 91.0%"
+        ],
+        "custom_metrics": {
+          "total_physical_memory_gb": 32.0,
+          "memory_pressure_ratio": 1.2617391618439113,
+          "swap_in_use": true,
+          "memory_fragmentation_ratio": 0.0621953010559082,
+          "effective_memory_usage": 29.98185157775879
+        }
+      }
+    ]
+  },
+  "detected_leaks": [],
+  "all_alerts": [
+    "Swap memory in use: 91.0%"
+  ],
+  "recommendations": [
+    "Frequent swap usage detected - consider increasing RAM or optimizing applications"
+  ],
+  "peak_memory_usage": {
+    "system": 9928.28125
+  },
+  "memory_efficiency_analysis": {
+    "system": {
+      "average_utilization_percent": 29.51561768849691,
+      "peak_utilization_percent": 30.298709869384766,
+      "memory_stability": "stable",
+      "total_memory_gb": 32.0
+    }
+  }
+}

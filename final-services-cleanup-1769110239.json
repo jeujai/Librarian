@@ -1,0 +1,369 @@
+{
+  "timestamp": "2026-01-22T12:30:39.654103",
+  "cleanup_type": "final_services_cleanup",
+  "estimated_monthly_savings": 0.29766546012833717,
+  "estimated_annual_savings": 3.571985521540046,
+  "resources_processed": 52,
+  "successful_actions": 2,
+  "failed_actions": 1,
+  "detailed_results": [
+    {
+      "timestamp": "2026-01-22T12:30:36.678232",
+      "action": "found_waf_acl",
+      "resource": "CreatedByCloudFront-c8567f8e",
+      "status": "cloudfront_scope",
+      "details": "id: 28f66d10-0ac2-4e69-b02b-ff1cefecdb59"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:36.767863",
+      "action": "analyze_waf_acl",
+      "resource": "CreatedByCloudFront-c8567f8e",
+      "status": "analyzed",
+      "details": "rules_count: 4"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:36.873889",
+      "action": "check_waf_associations",
+      "resource": "CreatedByCloudFront-c8567f8e",
+      "status": "error",
+      "details": "An error occurred (ValidationException) when calling the ListResourcesForWebACL operation: 1 validation error detected: Value 'CLOUDFRONT' at 'resourceType' failed to satisfy constraint: Member must satisfy enum value set: [APPLICATION_LOAD_BALANCER, COGNITO_USER_POOL, APP_RUNNER_SERVICE, AMPLIFY, VERIFIED_ACCESS_INSTANCE, APPSYNC, API_GATEWAY]"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:37.476588",
+      "action": "found_ecr_repo",
+      "resource": "multimodal-librarian",
+      "status": "analyzing"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:37.749078",
+      "action": "analyze_ecr_images",
+      "resource": "multimodal-librarian",
+      "status": "keeping_all",
+      "details": "image_count: 5 (\u2264 5)"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:37.749127",
+      "action": "found_ecr_repo",
+      "resource": "collaborative-editor",
+      "status": "analyzing"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:37.971155",
+      "action": "analyze_ecr_images",
+      "resource": "collaborative-editor",
+      "status": "keeping_all",
+      "details": "image_count: 3 (\u2264 5)"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:37.971195",
+      "action": "found_ecr_repo",
+      "resource": "collaborative-editor-server",
+      "status": "analyzing"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:38.266026",
+      "action": "analyze_ecr_images",
+      "resource": "collaborative-editor-server",
+      "status": "keeping_all",
+      "details": "image_count: 5 (\u2264 5)"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:38.266071",
+      "action": "found_ecr_repo",
+      "resource": "cdk-hnb659fds-container-assets-591222106065-us-east-1",
+      "status": "analyzing"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:38.765898",
+      "action": "mark_for_deletion",
+      "resource": "cdk-hnb659fds-container-assets-591222106065-us-east-1",
+      "status": "old_image",
+      "details": "tags: ['2de20a7ac766e76d730b9e49f704af605ba010ffbbe30dbc39b8d075259e47cb'], size: 67639379 bytes"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:38.765924",
+      "action": "mark_for_deletion",
+      "resource": "cdk-hnb659fds-container-assets-591222106065-us-east-1",
+      "status": "old_image",
+      "details": "tags: ['b5cc60210bcd621772e7db03c64049e0f10ef7bdfd36f84699adbe9c76979ea2'], size: 72367615 bytes"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:38.765930",
+      "action": "mark_for_deletion",
+      "resource": "cdk-hnb659fds-container-assets-591222106065-us-east-1",
+      "status": "old_image",
+      "details": "tags: ['8238b7c96ee611fad18bf990961022e7639f889c25689b12f33e8fdf753b5acc'], size: 84831432 bytes"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:38.765933",
+      "action": "mark_for_deletion",
+      "resource": "cdk-hnb659fds-container-assets-591222106065-us-east-1",
+      "status": "old_image",
+      "details": "tags: ['d58138ccccb7b18d6ee7d59b068f51c57c698dbfd38d6c43af23334bbaacfbf7'], size: 87780374 bytes"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:38.765936",
+      "action": "mark_for_deletion",
+      "resource": "cdk-hnb659fds-container-assets-591222106065-us-east-1",
+      "status": "old_image",
+      "details": "tags: ['3b2c7b1b39228590d98c9789f4c7cb6f2d1beb604400b723a5bbefe4bb62e570'], size: 88018659 bytes"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:38.765939",
+      "action": "mark_for_deletion",
+      "resource": "cdk-hnb659fds-container-assets-591222106065-us-east-1",
+      "status": "old_image",
+      "details": "tags: ['e871afb538e5cd5a0d40f8d8ec60cf9262bf5d1b9a4791c6a21f125ebcf911be'], size: 88019395 bytes"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:38.765942",
+      "action": "mark_for_deletion",
+      "resource": "cdk-hnb659fds-container-assets-591222106065-us-east-1",
+      "status": "old_image",
+      "details": "tags: ['c53e0430961630e822a52254eb7214ba77d7ffc04d17e54aa49d9af9b303959a'], size: 88019109 bytes"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:38.765944",
+      "action": "mark_for_deletion",
+      "resource": "cdk-hnb659fds-container-assets-591222106065-us-east-1",
+      "status": "old_image",
+      "details": "tags: ['d2fdbf4a4709a6201caf132a52f93351fd91e155b8b4497b1c84e4a7cf126126'], size: 88019300 bytes"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:38.765947",
+      "action": "mark_for_deletion",
+      "resource": "cdk-hnb659fds-container-assets-591222106065-us-east-1",
+      "status": "old_image",
+      "details": "tags: ['ba2ea97e01c920ea0eb2a099c0edc2c5e1837b218e3f4c8fcdec294f020f2802'], size: 93088659 bytes"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:38.765982",
+      "action": "mark_for_deletion",
+      "resource": "cdk-hnb659fds-container-assets-591222106065-us-east-1",
+      "status": "old_image",
+      "details": "tags: ['a615031be53cbf1a437d639555e2fc7597ffac11b17e5eb00cfd81907c0c0e15'], size: 93088649 bytes"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:38.765994",
+      "action": "mark_for_deletion",
+      "resource": "cdk-hnb659fds-container-assets-591222106065-us-east-1",
+      "status": "old_image",
+      "details": "tags: ['8fe43f95572be1b620f09fe1f8d536d063be916125395dede582096ac31c234b'], size: 93089679 bytes"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:38.765999",
+      "action": "mark_for_deletion",
+      "resource": "cdk-hnb659fds-container-assets-591222106065-us-east-1",
+      "status": "old_image",
+      "details": "tags: ['a23f3aab7900c19d564bb1afefa34c18fd084d2c8913165a2d9a411762026acc'], size: 93088883 bytes"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:38.766002",
+      "action": "mark_for_deletion",
+      "resource": "cdk-hnb659fds-container-assets-591222106065-us-east-1",
+      "status": "old_image",
+      "details": "tags: ['b065e97fe7cf6fd0e4373116a17b73c970d8a389b371a9c72c86e9a6bdbb91dc'], size: 48814262 bytes"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:38.766005",
+      "action": "mark_for_deletion",
+      "resource": "cdk-hnb659fds-container-assets-591222106065-us-east-1",
+      "status": "old_image",
+      "details": "tags: ['ad101b244f5a7f24af4e773107104ffc69d1b47ff4db8b64914ee43c80aded47'], size: 48814254 bytes"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:38.766008",
+      "action": "mark_for_deletion",
+      "resource": "cdk-hnb659fds-container-assets-591222106065-us-east-1",
+      "status": "old_image",
+      "details": "tags: ['751ab278dfd21713a233d0bb65cbdb8bce1cf17248dbc5427ca072b66ed7f5c6'], size: 93088773 bytes"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:38.766011",
+      "action": "mark_for_deletion",
+      "resource": "cdk-hnb659fds-container-assets-591222106065-us-east-1",
+      "status": "old_image",
+      "details": "tags: ['8a56c0046f73979b3b5d54d55b0c68f5fc65abb0c19e1dc577d14f357907b286'], size: 93126305 bytes"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:38.766018",
+      "action": "mark_for_deletion",
+      "resource": "cdk-hnb659fds-container-assets-591222106065-us-east-1",
+      "status": "old_image",
+      "details": "tags: ['152610c0ddb812da78cfe52365851e477b3070d658965f5fdbefbf1fb1e6047e'], size: 93127105 bytes"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:38.766021",
+      "action": "mark_for_deletion",
+      "resource": "cdk-hnb659fds-container-assets-591222106065-us-east-1",
+      "status": "old_image",
+      "details": "tags: ['0aa601d3c7ff9c689a4fade6873fd6ac514717b8521635b06a45c9e65ad8dfa4', 'server-thumbnail-fix-1766095362'], size: 88999495 bytes"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:38.766058",
+      "action": "mark_for_deletion",
+      "resource": "cdk-hnb659fds-container-assets-591222106065-us-east-1",
+      "status": "old_image",
+      "details": "tags: ['server-enhanced-deletion-1766126310'], size: 89004244 bytes"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:38.766068",
+      "action": "mark_for_deletion",
+      "resource": "cdk-hnb659fds-container-assets-591222106065-us-east-1",
+      "status": "old_image",
+      "details": "tags: ['3ad033639b63a32cee6ccebac1ea2ae6fbf3e9aa1a46dd58d1bc12829eaf5c02'], size: 94170639 bytes"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:38.766072",
+      "action": "mark_for_deletion",
+      "resource": "cdk-hnb659fds-container-assets-591222106065-us-east-1",
+      "status": "old_image",
+      "details": "tags: ['371921cd76d445adbcb6e77f5b07da6657643f7333f8fd9ab54359d0004dc22c'], size: 94170724 bytes"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:38.766075",
+      "action": "mark_for_deletion",
+      "resource": "cdk-hnb659fds-container-assets-591222106065-us-east-1",
+      "status": "old_image",
+      "details": "tags: ['5689e7fcbeba10ee0a1108efd5381b7d99bb84f57d833f65f07a213dee76bd5a'], size: 94172167 bytes"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:38.766078",
+      "action": "mark_for_deletion",
+      "resource": "cdk-hnb659fds-container-assets-591222106065-us-east-1",
+      "status": "old_image",
+      "details": "tags: ['f0d6be370dbae41f4799aaea9c563d06c8e0853212c7fd867f81b95c806cd2ca'], size: 94211174 bytes"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:38.766081",
+      "action": "mark_for_deletion",
+      "resource": "cdk-hnb659fds-container-assets-591222106065-us-east-1",
+      "status": "old_image",
+      "details": "tags: ['73acb8a4e6459488d99d4401bfaa4e0fd2f4f8a7b06a0bb8d66ede34e739d895'], size: 94226239 bytes"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:38.766084",
+      "action": "mark_for_deletion",
+      "resource": "cdk-hnb659fds-container-assets-591222106065-us-east-1",
+      "status": "old_image",
+      "details": "tags: ['5dbe7e3db92f0a1b93b6b59eab4faae5fa11fc5767050e1b2fb279a311de5a19'], size: 94227174 bytes"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:38.766086",
+      "action": "mark_for_deletion",
+      "resource": "cdk-hnb659fds-container-assets-591222106065-us-east-1",
+      "status": "old_image",
+      "details": "tags: ['73ce2e6cedd2e4d7950536124ca6353ab0e621fc0481a65ff0cd6c5494ffbdf4'], size: 94227223 bytes"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:38.766089",
+      "action": "mark_for_deletion",
+      "resource": "cdk-hnb659fds-container-assets-591222106065-us-east-1",
+      "status": "old_image",
+      "details": "tags: ['91b081b1249005cc82295843239c7b25f75dbc70d4825192c2fd31f0bbca98ed'], size: 94224417 bytes"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:38.766092",
+      "action": "mark_for_deletion",
+      "resource": "cdk-hnb659fds-container-assets-591222106065-us-east-1",
+      "status": "old_image",
+      "details": "tags: ['76af704ff9d3832811546d5bf075920805de6503fa6a7e2dbc8205c049bd3add'], size: 94246569 bytes"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:38.766094",
+      "action": "mark_for_deletion",
+      "resource": "cdk-hnb659fds-container-assets-591222106065-us-east-1",
+      "status": "old_image",
+      "details": "tags: ['8e33ebbca4be3f6d938efa721eae081643cbfe1af3cdf0f0b4ac3c1245467e01'], size: 94506022 bytes"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:38.766097",
+      "action": "mark_for_deletion",
+      "resource": "cdk-hnb659fds-container-assets-591222106065-us-east-1",
+      "status": "old_image",
+      "details": "tags: ['7b0866e894c4b62d9f2489e502891b40ae87576f6a9c2a4fca0a4e8bf0b5c416'], size: 94506343 bytes"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:38.766099",
+      "action": "mark_for_deletion",
+      "resource": "cdk-hnb659fds-container-assets-591222106065-us-east-1",
+      "status": "old_image",
+      "details": "tags: ['81b84915c397fd0c2d02cb60ae967fcc786a8304bd832c479c1d8e5101ec08aa'], size: 94508124 bytes"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:38.766102",
+      "action": "mark_for_deletion",
+      "resource": "cdk-hnb659fds-container-assets-591222106065-us-east-1",
+      "status": "old_image",
+      "details": "tags: ['3d17b8d721b8005665cc1ca93b2023ad935c04cc18bf85048897b840f7b473c7'], size: 94511706 bytes"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:38.766125",
+      "action": "mark_for_deletion",
+      "resource": "cdk-hnb659fds-container-assets-591222106065-us-east-1",
+      "status": "old_image",
+      "details": "tags: ['60d02c2d0b7cf2397abadd3dc9dc6331f2c484d680046237e4822b22602647f8'], size: 94539815 bytes"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:38.766130",
+      "action": "mark_for_deletion",
+      "resource": "cdk-hnb659fds-container-assets-591222106065-us-east-1",
+      "status": "old_image",
+      "details": "tags: ['3fe19c9d99b39c30b888cf8e8f82f3634c7b2800d5ea5074d3f392a13d47ff80'], size: 94561539 bytes"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:38.766133",
+      "action": "mark_for_deletion",
+      "resource": "cdk-hnb659fds-container-assets-591222106065-us-east-1",
+      "status": "old_image",
+      "details": "tags: ['1f23f19bfb3466684c227adc1f0e8c4e3aa8c33567ddeb827c4f0bd306388ec1'], size: 94561600 bytes"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:38.766136",
+      "action": "mark_for_deletion",
+      "resource": "cdk-hnb659fds-container-assets-591222106065-us-east-1",
+      "status": "old_image",
+      "details": "tags: ['8dad4649836a33eebb28b1c8329803dadc550ca9d5650d55043be5666c322b64'], size: 94561495 bytes"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:39.097222",
+      "action": "delete_ecr_images",
+      "resource": "cdk-hnb659fds-container-assets-591222106065-us-east-1",
+      "status": "batch_deleted",
+      "details": "deleted: 37, failed: 0"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:39.097262",
+      "action": "found_ecr_repo",
+      "resource": "multimodal-librarian-full-ml",
+      "status": "analyzing"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:39.419264",
+      "action": "analyze_ecr_images",
+      "resource": "multimodal-librarian-full-ml",
+      "status": "keeping_all",
+      "details": "image_count: 5 (\u2264 5)"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:39.419304",
+      "action": "found_ecr_repo",
+      "resource": "multimodal-lib-prod-app",
+      "status": "analyzing"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:39.653050",
+      "action": "analyze_ecr_images",
+      "resource": "multimodal-lib-prod-app",
+      "status": "keeping_all",
+      "details": "image_count: 2 (\u2264 5)"
+    },
+    {
+      "timestamp": "2026-01-22T12:30:39.653077",
+      "action": "calculate_savings",
+      "resource": "ecr_cleanup",
+      "status": "completed",
+      "details": "deleted_gb: 2.98, estimated_savings: $0.30/month"
+    }
+  ]
+}

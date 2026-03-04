@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multimodal Librarian - Knowledge Management</title>
+    <link rel="stylesheet" href="/static/css/unified_interface.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container" role="application" aria-label="Multimodal Librarian">
+        <!-- Sidebar Navigation -->
+        <nav class="sidebar" role="navigation" aria-label="Main navigation">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+                        <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+                    </svg>
+                    <span class="logo-text">Multimodal Librarian</span>
+                </div>
+                <div class="connection-status" id="connectionStatus" aria-live="polite">
+                    <span class="status-indicator" id="statusIndicator"></span>
+                    <span class="status-text" id="statusText">Connecting...</span>
+                </div>
+            </div>
+            
+            <div class="sidebar-nav">
+                <button class="nav-item active" data-view="chat" aria-label="Chat interface">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                    </svg>
+                    <span class="nav-text">Chat</span>
+                </button>
+                
+                <button class="nav-item" data-view="documents" aria-label="Document management">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <polyline points="14,2 14,8 20,8"></polyline>
+                    </svg>
+                    <span class="nav-text">Documents</span>
+                    <span class="nav-badge" id="documentCount">0</span>
+                </button>
+                
+                <button class="nav-item" data-view="search" aria-label="Search documents">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8"></circle>
+                        <path d="M21 21l-4.35-4.35"></path>
+                    </svg>
+                    <span class="nav-text">Search</span>
+                </button>
+            </div>
+            
+            <div class="sidebar-footer">
+                <button class="nav-item" id="settingsBtn" aria-label="Settings">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <path d="M12 1v6m0 6v6m11-7h-6m-6 0H1"></path>
+                    </svg>
+                    <span class="nav-text">Settings</span>
+                </button>
+            </div>
+        </nav>
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <!-- Chat View -->
+            <div class="view-container chat-view active" id="chatView" role="main" aria-label="Chat interface">
+                <!-- Chat Header -->
+                <header class="view-header">
+                    <div class="header-left">
+                        <h1>AI Chat</h1>
+                        <div class="header-subtitle">Ask questions about your documents</div>
+                    </div>
+                    <div class="header-actions">
+                        <button class="action-btn" id="newChatBtn" aria-label="Start new conversation" title="Start new conversation (Ctrl+K)">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M12 5v14M5 12h14"></path>
+                            </svg>
+                            <span class="btn-text">New Chat</span>
+                        </button>
+                        <button class="action-btn" id="exportBtn" aria-label="Export conversation" title="Export conversation (Ctrl+E)">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                <polyline points="7,10 12,15 17,10"></polyline>
+                                <line x1="12" y1="15" x2="12" y2="3"></line>
+                            </svg>
+                            <span class="btn-text">Export</span>
+                        </button>
+                    </div>
+                </header>
+
+                <!-- Chat Messages -->
+                <div class="chat-messages" id="chatMessages" role="log" aria-live="polite" aria-label="Conversation history">
+                    <div class="welcome-message">
+                        <div class="message system-message">
+                            <div class="message-content">
+                                <h2>Welcome to Multimodal Librarian!</h2>
+                                <p>I'm your AI assistant with access to your document library. I can help you:</p>
+                                <ul>
+                                    <li>Answer questions about your uploaded documents</li>
+                                    <li>Find specific information across your knowledge base</li>
+                                    <li>Provide citations and sources for my responses</li>
+                                    <li>Help you explore and understand your documents</li>
+                                </ul>
+                                <p>Upload documents using the Documents tab, then ask me anything!</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Chat Input -->
+                <div class="chat-input-container">
+                    <!-- Processing Indicator -->
+                    <div class="processing-indicator" id="processingIndicator" style="display: none;" role="status" aria-live="polite">
+                        <div class="spinner"></div>
+                        <span>Processing your request...</span>
+                    </div>
+
+                    <!-- Input Form -->
+                    <form class="chat-input-form" id="chatForm">
+                        <div class="input-wrapper">
+                            <!-- Quick Actions -->
+                            <button type="button" class="quick-action-btn" id="uploadQuickBtn" aria-label="Upload document" title="Upload document">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                    <polyline points="7,10 12,15 17,10"></polyline>
+                                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                                </svg>
+                            </button>
+
+                            <!-- Text Input -->
+                            <textarea 
+                                id="messageInput" 
+                                class="message-input" 
+                                placeholder="Ask me about your documents... (Ctrl+Enter to send)"
+                                rows="1"
+                                aria-label="Message input"
+                                maxlength="4000"
+                            ></textarea>
+
+                            <!-- Send Button -->
+                            <button type="submit" class="send-btn" id="sendBtn" aria-label="Send message" title="Send message (Ctrl+Enter)">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <line x1="22" y1="2" x2="11" y2="13"></line>
+                                    <polygon points="22,2 15,22 11,13 2,9 22,2"></polygon>
+                                </svg>
+                            </button>
+                        </div>
+
+                        <!-- Input Help -->
+                        <div class="input-help">
+                            <span>Ask questions about your documents or upload new ones</span>
+                            <span class="character-count" id="characterCount" aria-live="polite">0/4000</span>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Documents View -->
+            <div class="view-container documents-view" id="documentsView" role="main" aria-label="Document management">
+                <!-- Documents Header -->
+                <header class="view-header">
+                    <div class="header-left">
+                        <h1>Document Library</h1>
+                        <div class="header-subtitle">Manage your knowledge base</div>
+                    </div>
+                    <div class="header-actions">
+                        <button class="action-btn primary" id="uploadDocumentBtn" aria-label="Upload documents">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                <polyline points="7,10 12,15 17,10"></polyline>
+                                <line x1="12" y1="15" x2="12" y2="3"></line>
+                            </svg>
+                            <span class="btn-text">Upload</span>
+                        </button>
+                        <button class="action-btn" id="refreshDocumentsBtn" aria-label="Refresh documents">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="23,4 23,10 17,10"></polyline>
+                                <polyline points="1,20 1,14 7,14"></polyline>
+                                <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"></path>
+                            </svg>
+                            <span class="btn-text">Refresh</span>
+                        </button>
+                    </div>
+                </header>
+
+                <!-- Document Controls -->
+                <div class="document-controls">
+                    <div class="search-section">
+                        <div class="search-box">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="11" cy="11" r="8"></circle>
+                                <path d="M21 21l-4.35-4.35"></path>
+                            </svg>
+                            <input type="text" id="documentSearchInput" placeholder="Search documents..." class="search-input">
+                        </div>
+                        <select id="statusFilter" class="filter-select" aria-label="Filter by status">
+                            <option value="">All Documents</option>
+                            <option value="uploaded">Uploaded</option>
+                            <option value="processing">Processing</option>
+                            <option value="completed">Completed</option>
+                            <option value="failed">Failed</option>
+                        </select>
+                    </div>
+                    
+                    <div class="view-controls">
+                        <div class="view-toggle" role="radiogroup" aria-label="View mode">
+                            <button class="view-btn active" id="gridViewBtn" data-view="grid" aria-label="Grid view">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <rect x="3" y="3" width="7" height="7"></rect>
+                                    <rect x="14" y="3" width="7" height="7"></rect>
+                                    <rect x="14" y="14" width="7" height="7"></rect>
+                                    <rect x="3" y="14" width="7" height="7"></rect>
+                                </svg>
+                            </button>
+                            <button class="view-btn" id="listViewBtn" data-view="list" aria-label="List view">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <line x1="8" y1="6" x2="21" y2="6"></line>
+                                    <line x1="8" y1="12" x2="21" y2="12"></line>
+                                    <line x1="8" y1="18" x2="21" y2="18"></line>
+                                    <line x1="3" y1="6" x2="3.01" y2="6"></line>
+                                    <line x1="3" y1="12" x2="3.01" y2="12"></line>
+                                    <line x1="3" y1="18" x2="3.01" y2="18"></line>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Document Stats -->
+                <div class="document-stats" id="documentStats">
+                    <div class="stat-item">
+                        <span class="stat-value" id="totalDocuments">0</span>
+                        <span class="stat-label">Documents</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-value" id="totalSize">0 MB</span>
+                        <span class="stat-label">Total Size</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-value" id="processingCount">0</span>
+                        <span class="stat-label">Processing</span>
+                    </div>
+                </div>
+
+                <!-- Document List -->
+                <div class="document-list-container">
+                    <div id="documentList" class="document-list grid-view">
+                        <!-- Documents will be loaded here -->
+                    </div>
+                    
+                    <!-- Loading State -->
+                    <div class="loading-state" id="documentsLoading" style="display: none;">
+                        <div class="spinner large"></div>
+                        <p>Loading documents...</p>
+                    </div>
+                    
+                    <!-- Empty State -->
+                    <div class="empty-state" id="documentsEmpty" style="display: none;">
+                        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                            <polyline points="14,2 14,8 20,8"></polyline>
+                        </svg>
+                        <h3>No documents found</h3>
+                        <p>Upload your first document to get started with AI-powered document chat</p>
+                        <button class="action-btn primary" onclick="document.getElementById('uploadDocumentBtn').click()">
+                            Upload Document
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Search View -->
+            <div class="view-container search-view" id="searchView" role="main" aria-label="Document search">
+                <!-- Search Header -->
+                <header class="view-header">
+                    <div class="header-left">
+                        <h1>Search Documents</h1>
+                        <div class="header-subtitle">Find information across your knowledge base</div>
+                    </div>
+                </header>
+
+                <!-- Search Interface -->
+                <div class="search-interface">
+                    <div class="search-box large">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="11" cy="11" r="8"></circle>
+                            <path d="M21 21l-4.35-4.35"></path>
+                        </svg>
+                        <input type="text" id="globalSearchInput" placeholder="Search across all documents..." class="search-input large">
+                        <button class="search-btn" id="globalSearchBtn" aria-label="Search">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="11" cy="11" r="8"></circle>
+                                <path d="M21 21l-4.35-4.35"></path>
+                            </svg>
+                        </button>
+                    </div>
+                    
+                    <!-- Search Results -->
+                    <div class="search-results" id="searchResults">
+                        <!-- Results will be displayed here -->
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Upload Modal -->
+        <div class="modal" id="uploadModal" style="display: none;" role="dialog" aria-labelledby="uploadModalTitle" aria-modal="true">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="uploadModalTitle">Upload Documents</h3>
+                    <button class="modal-close" id="uploadModalClose" aria-label="Close upload dialog">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <!-- Upload Area -->
+                    <div class="upload-area" id="uploadArea">
+                        <div class="upload-content">
+                            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                <polyline points="7,10 12,15 17,10"></polyline>
+                                <line x1="12" y1="15" x2="12" y2="3"></line>
+                            </svg>
+                            <h3>Upload PDF Documents</h3>
+                            <p>Drag and drop files here or click to browse</p>
+                            <button type="button" class="upload-browse-btn">Browse Files</button>
+                        </div>
+                        <input type="file" id="fileInput" multiple accept=".pdf,application/pdf" style="display: none;">
+                    </div>
+                    
+                    <!-- Upload Progress -->
+                    <div id="uploadProgress" class="upload-progress" style="display: none;">
+                        <div class="progress-header">
+                            <span id="progressText">Uploading...</span>
+                            <span id="progressPercent">0%</span>
+                        </div>
+                        <div class="progress-bar-container">
+                            <div id="progressBar" class="progress-bar-fill"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-backdrop"></div>
+        </div>
+
+        <!-- Document Detail Modal -->
+        <div class="modal" id="documentModal" style="display: none;" role="dialog" aria-labelledby="documentModalTitle" aria-modal="true">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="documentModalTitle">Document Details</h3>
+                    <button class="modal-close" id="documentModalClose" aria-label="Close document details">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
+                </div>
+                <div class="modal-body" id="documentModalBody">
+                    <!-- Document details will be loaded here -->
+                </div>
+                <div class="modal-footer">
+                    <button class="action-btn" id="chatAboutDocBtn">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                        </svg>
+                        Chat About This Document
+                    </button>
+                    <button class="action-btn" id="downloadDocBtn">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="7,10 12,15 17,10"></polyline>
+                            <line x1="12" y1="15" x2="12" y2="3"></line>
+                        </svg>
+                        Download
+                    </button>
+                    <button class="action-btn danger" id="deleteDocBtn">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="3,6 5,6 21,6"></polyline>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                        </svg>
+                        Delete
+                    </button>
+                </div>
+            </div>
+            <div class="modal-backdrop"></div>
+        </div>
+
+        <!-- Toast Container -->
+        <div class="toast-container" id="toastContainer" aria-live="polite" aria-atomic="true">
+            <!-- Toast notifications will appear here -->
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="/static/js/websocket.js"></script>
+    <script src="/static/js/filehandler.js"></script>
+    <script src="/static/js/unified_interface.js"></script>
+</body>
+</html>

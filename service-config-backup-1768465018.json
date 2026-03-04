@@ -1,0 +1,34 @@
+{
+  "taskDefinition": "arn:aws:ecs:us-east-1:591222106065:task-definition/multimodal-lib-prod-app:36",
+  "desiredCount": 1,
+  "launchType": "FARGATE",
+  "platformVersion": "LATEST",
+  "networkConfiguration": {
+    "awsvpcConfiguration": {
+      "subnets": [
+        "subnet-02f4d9ecb751beb27",
+        "subnet-0c352188f5398a718"
+      ],
+      "securityGroups": [
+        "sg-0393d472e770ed1a3"
+      ],
+      "assignPublicIp": "ENABLED"
+    }
+  },
+  "deploymentConfiguration": {
+    "deploymentCircuitBreaker": {
+      "enable": false,
+      "rollback": false
+    },
+    "maximumPercent": 200,
+    "minimumHealthyPercent": 100,
+    "strategy": "ROLLING",
+    "bakeTimeInMinutes": 0
+  },
+  "placementConstraints": [],
+  "placementStrategy": [],
+  "schedulingStrategy": "REPLICA",
+  "enableECSManagedTags": false,
+  "propagateTags": "NONE",
+  "enableExecuteCommand": false
+}

@@ -1,0 +1,541 @@
+{
+  "Compute Resources": {
+    "ec2_instances": {
+      "us-east-1": {
+        "running": [],
+        "stopped": [
+          {
+            "id": "i-0255d25fd1950ed2d",
+            "type": "t3.medium",
+            "state": "stopped",
+            "launch_time": "2026-01-06T23:24:55+00:00",
+            "tags": {
+              "Project": "multimodal-librarian",
+              "Name": "neo4j-simple-multimodal-librarian",
+              "Component": "neo4j-simple"
+            }
+          }
+        ],
+        "total": 1
+      },
+      "us-west-2": {
+        "running": [
+          {
+            "id": "i-07ef59c28ef2bf9c4",
+            "type": "t3.micro",
+            "state": "running",
+            "launch_time": "2026-01-22T17:59:18+00:00",
+            "tags": {
+              "aws:autoscaling:groupName": "awseb-e-ssmaisb6jp-stack-AWSEBAutoScalingGroup-86yOUEm9nxho",
+              "elasticbeanstalk:environment-id": "e-ssmaisb6jp",
+              "Name": "collaborative-editor-env",
+              "aws:cloudformation:stack-id": "arn:aws:cloudformation:us-west-2:591222106065:stack/awseb-e-ssmaisb6jp-stack/8a326290-d934-11f0-acd6-06331476a97f",
+              "aws:cloudformation:logical-id": "AWSEBAutoScalingGroup",
+              "aws:cloudformation:stack-name": "awseb-e-ssmaisb6jp-stack",
+              "aws:ec2launchtemplate:version": "1",
+              "aws:ec2launchtemplate:id": "lt-04a4a31a2654f95d8",
+              "elasticbeanstalk:environment-name": "collaborative-editor-env"
+            }
+          }
+        ],
+        "stopped": [],
+        "total": 1
+      }
+    },
+    "ecs_services": {
+      "us-east-1": [],
+      "us-west-2": []
+    },
+    "lambda_functions": {
+      "us-east-1": [
+        {
+          "name": "GetBizRule",
+          "runtime": "java8",
+          "last_modified": "2018-06-08T20:17:38.174+0000",
+          "memory_size": 512,
+          "timeout": 15
+        },
+        {
+          "name": "MultimodalLibrarianFullML-CustomVpcRestrictDefault-0BdkrpWhUjus",
+          "runtime": "nodejs20.x",
+          "last_modified": "2026-01-06T00:31:37.998+0000",
+          "memory_size": 128,
+          "timeout": 900
+        },
+        {
+          "name": "GetBiiizRule",
+          "runtime": "java8",
+          "last_modified": "2018-06-08T20:26:29.027+0000",
+          "memory_size": 512,
+          "timeout": 15
+        },
+        {
+          "name": "SavePerson",
+          "runtime": "java8",
+          "last_modified": "2018-04-04T22:48:39.179+0000",
+          "memory_size": 512,
+          "timeout": 15
+        },
+        {
+          "name": "GetBusinessRule",
+          "runtime": "java8",
+          "last_modified": "2018-06-08T18:12:29.265+0000",
+          "memory_size": 512,
+          "timeout": 15
+        },
+        {
+          "name": "SaveBusinessRule",
+          "runtime": "java8",
+          "last_modified": "2018-04-07T02:35:37.690+0000",
+          "memory_size": 512,
+          "timeout": 15
+        }
+      ],
+      "us-west-2": []
+    },
+    "status": "healthy"
+  },
+  "Database Services": {
+    "rds_instances": {
+      "us-east-1": [],
+      "us-west-2": []
+    },
+    "opensearch_domains": {
+      "us-east-1": [],
+      "us-west-2": []
+    },
+    "neptune_clusters": {
+      "us-east-1": [],
+      "us-west-2": []
+    },
+    "status": "healthy"
+  },
+  "Storage Services": {
+    "s3_buckets": [
+      {
+        "name": "cdk-hnb659fds-assets-591222106065-us-east-1",
+        "creation_date": "2025-12-20T19:36:10+00:00",
+        "region": "us-east-1",
+        "size_gb": 0.0
+      },
+      {
+        "name": "elasticbeanstalk-us-west-2-591222106065",
+        "creation_date": "2025-12-14T21:33:16+00:00",
+        "region": "us-west-2",
+        "size_gb": 0.0
+      },
+      {
+        "name": "multimodal-lib-prod-cloudtrail-logs-50fcb7c1",
+        "creation_date": "2026-01-22T08:18:22+00:00",
+        "region": "us-east-1",
+        "size_gb": 0.0
+      }
+    ],
+    "ebs_volumes": {
+      "us-east-1": [
+        {
+          "id": "vol-0529d1c95f2fdc4a0",
+          "size": 30,
+          "state": "in-use",
+          "volume_type": "gp3",
+          "encrypted": false,
+          "attachments": 1
+        }
+      ],
+      "us-west-2": [
+        {
+          "id": "vol-0dbe527836198fd62",
+          "size": 8,
+          "state": "in-use",
+          "volume_type": "gp3",
+          "encrypted": false,
+          "attachments": 1
+        }
+      ]
+    },
+    "status": "healthy"
+  },
+  "Networking": {
+    "vpcs": {
+      "us-east-1": [
+        {
+          "id": "vpc-0bc85162dcdbcc986",
+          "cidr_block": "10.0.0.0/16",
+          "state": "available",
+          "is_default": false,
+          "subnets": 3,
+          "tags": {
+            "Component": "Networking",
+            "aws:cloudformation:stack-name": "MultimodalLibrarianFullML",
+            "Environment": "full-ml",
+            "CostCenter": "Learning",
+            "Owner": "Student",
+            "DatabaseStack": "Complete",
+            "aws:cloudformation:stack-id": "arn:aws:cloudformation:us-east-1:591222106065:stack/MultimodalLibrarianFullML/f12fc8c0-ea96-11f0-a402-0e197c3315cb",
+            "aws:cloudformation:logical-id": "VpcC3027511",
+            "Name": "MultimodalLibrarianFullML/Vpc/Vpc",
+            "ManagedBy": "CDK",
+            "Project": "multimodal-librarian"
+          }
+        },
+        {
+          "id": "vpc-0b2186b38779e77f6",
+          "cidr_block": "10.0.0.0/16",
+          "state": "available",
+          "is_default": false,
+          "subnets": 3,
+          "tags": {
+            "CostCenter": "engineering",
+            "Environment": "prod",
+            "Owner": "platform-team",
+            "Name": "multimodal-lib-prod-vpc",
+            "CreatedBy": "aws-production-deployment-spec",
+            "ManagedBy": "terraform",
+            "Project": "multimodal-lib"
+          }
+        },
+        {
+          "id": "vpc-014ac5b9fc828c78f",
+          "cidr_block": "10.0.0.0/16",
+          "state": "available",
+          "is_default": false,
+          "subnets": 0,
+          "tags": {
+            "HighAvailability": "true",
+            "aws:cloudformation:logical-id": "EditorVPC93027506",
+            "Name": "CollaborativeEditorProdStack/EditorVPC",
+            "aws:cloudformation:stack-id": "arn:aws:cloudformation:us-east-1:591222106065:stack/CollaborativeEditorProdStack/2c32aec0-e695-11f0-a00b-0e06cbd79b19",
+            "Environment": "production",
+            "aws:cloudformation:stack-name": "CollaborativeEditorProdStack",
+            "Project": "collaborative-editor"
+          }
+        },
+        {
+          "id": "vpc-02a53879",
+          "cidr_block": "172.31.0.0/16",
+          "state": "available",
+          "is_default": true,
+          "subnets": 6,
+          "tags": {}
+        }
+      ],
+      "us-west-2": [
+        {
+          "id": "vpc-01fb768db042b9e0d",
+          "cidr_block": "172.31.0.0/16",
+          "state": "available",
+          "is_default": true,
+          "subnets": 4,
+          "tags": {}
+        }
+      ]
+    },
+    "nat_gateways": {
+      "us-east-1": [
+        {
+          "id": "nat-057025a3296d82cb2",
+          "state": "deleted",
+          "vpc_id": "vpc-0b2186b38779e77f6",
+          "subnet_id": "subnet-0c352188f5398a718",
+          "create_time": "2026-01-12T10:05:01+00:00"
+        }
+      ],
+      "us-west-2": []
+    },
+    "internet_gateways": {
+      "us-east-1": [
+        {
+          "id": "igw-3248fd4a",
+          "attachments": 1,
+          "tags": {}
+        }
+      ],
+      "us-west-2": [
+        {
+          "id": "igw-01bde384e3d339790",
+          "attachments": 1,
+          "tags": {}
+        }
+      ]
+    },
+    "status": "healthy"
+  },
+  "Load Balancers": {
+    "application_load_balancers": {
+      "us-east-1": [],
+      "us-west-2": []
+    },
+    "network_load_balancers": {
+      "us-east-1": [],
+      "us-west-2": []
+    },
+    "status": "healthy"
+  },
+  "Security Groups": {
+    "security_groups": {
+      "us-east-1": [
+        {
+          "id": "sg-07efd393129cae5d7",
+          "name": "MultimodalLibrarianFullML-SecurityAppSecurityGroup0AA0C6ED-aGohZcBvGQ1q",
+          "description": "Security group for application containers",
+          "vpc_id": "vpc-0bc85162dcdbcc986",
+          "inbound_rules": 5,
+          "outbound_rules": 1
+        },
+        {
+          "id": "sg-0456eb51a3c574652",
+          "name": "default",
+          "description": "default VPC security group",
+          "vpc_id": "vpc-0bc85162dcdbcc986",
+          "inbound_rules": 0,
+          "outbound_rules": 0
+        },
+        {
+          "id": "sg-0b01cf4957cb2be65",
+          "name": "multimodal-lib-prod-alb-20260122081027951900000009",
+          "description": "Managed by Terraform",
+          "vpc_id": "vpc-0b2186b38779e77f6",
+          "inbound_rules": 2,
+          "outbound_rules": 1
+        },
+        {
+          "id": "sg-97e7dbe1",
+          "name": "default",
+          "description": "default VPC security group",
+          "vpc_id": "vpc-02a53879",
+          "inbound_rules": 1,
+          "outbound_rules": 1
+        },
+        {
+          "id": "sg-0ef638d48668fcbb6",
+          "name": "multimodal-lib-prod-vpc-endpoints",
+          "description": "Security group for VPC endpoints in multimodal-lib-prod",
+          "vpc_id": "vpc-0b2186b38779e77f6",
+          "inbound_rules": 1,
+          "outbound_rules": 1
+        },
+        {
+          "id": "sg-09b4846c0a660311b",
+          "name": "multimodal-lib-prod-ecs-2026012208103081910000000a",
+          "description": "Managed by Terraform",
+          "vpc_id": "vpc-0b2186b38779e77f6",
+          "inbound_rules": 1,
+          "outbound_rules": 1
+        },
+        {
+          "id": "sg-0aa3c36bef3c376e9",
+          "name": "vpc-endpoints-1768004681",
+          "description": "Security group for VPC endpoints",
+          "vpc_id": "vpc-0bc85162dcdbcc986",
+          "inbound_rules": 1,
+          "outbound_rules": 1
+        },
+        {
+          "id": "sg-06c52a76b110298b3",
+          "name": "multimodal-librarian-alb-shared-vpc",
+          "description": "Security group for Multimodal Librarian ALB in shared VPC",
+          "vpc_id": "vpc-014ac5b9fc828c78f",
+          "inbound_rules": 2,
+          "outbound_rules": 1
+        },
+        {
+          "id": "sg-046d0c09acd59d83d",
+          "name": "neo4j-security-group-simple",
+          "description": "Simple security group for Neo4j database",
+          "vpc_id": "vpc-0bc85162dcdbcc986",
+          "inbound_rules": 3,
+          "outbound_rules": 1
+        },
+        {
+          "id": "sg-07ddf848ba88df531",
+          "name": "default",
+          "description": "default VPC security group",
+          "vpc_id": "vpc-0b2186b38779e77f6",
+          "inbound_rules": 1,
+          "outbound_rules": 1
+        },
+        {
+          "id": "sg-0bf9a9d6e8aa77863",
+          "name": "default",
+          "description": "default VPC security group",
+          "vpc_id": "vpc-014ac5b9fc828c78f",
+          "inbound_rules": 2,
+          "outbound_rules": 1
+        },
+        {
+          "id": "sg-0cee28bdb3ec57732",
+          "name": "multimodal-lib-prod-opensearch-2026010801442335240000000b",
+          "description": "Managed by Terraform",
+          "vpc_id": "vpc-0b2186b38779e77f6",
+          "inbound_rules": 1,
+          "outbound_rules": 1
+        },
+        {
+          "id": "sg-012e02ed219b41ecb",
+          "name": "multimodal-lib-prod-efs-2026012208103400830000000b",
+          "description": "Managed by Terraform",
+          "vpc_id": "vpc-0b2186b38779e77f6",
+          "inbound_rules": 1,
+          "outbound_rules": 1
+        },
+        {
+          "id": "sg-0231498cba0c6b983",
+          "name": "multimodal-lib-prod-neptune-2026010801442335240000000c",
+          "description": "Managed by Terraform",
+          "vpc_id": "vpc-0b2186b38779e77f6",
+          "inbound_rules": 1,
+          "outbound_rules": 1
+        },
+        {
+          "id": "sg-092142f4a9aec28a0",
+          "name": "MultimodalLibrarianFullML-SecurityAlbSecurityGroupCBBB4E39-OMWGaGFbrdw6",
+          "description": "Security group for Application Load Balancer",
+          "vpc_id": "vpc-0bc85162dcdbcc986",
+          "inbound_rules": 2,
+          "outbound_rules": 1
+        }
+      ],
+      "us-west-2": [
+        {
+          "id": "sg-0ec0615606c110286",
+          "name": "awseb-e-ssmaisb6jp-stack-AWSEBSecurityGroup-H3AJC7RGOt84",
+          "description": "SecurityGroup for ElasticBeanstalk environment.",
+          "vpc_id": "vpc-01fb768db042b9e0d",
+          "inbound_rules": 1,
+          "outbound_rules": 1
+        },
+        {
+          "id": "sg-0be299a0cbd310e68",
+          "name": "default",
+          "description": "default VPC security group",
+          "vpc_id": "vpc-01fb768db042b9e0d",
+          "inbound_rules": 1,
+          "outbound_rules": 1
+        }
+      ]
+    },
+    "status": "healthy"
+  },
+  "IAM Resources": {
+    "roles": [
+      {
+        "name": "multimodal-librarian-full-ml-ec2-role",
+        "arn": "arn:aws:iam::591222106065:role/multimodal-librarian-full-ml-ec2-role",
+        "create_date": "2026-01-06T00:31:05+00:00",
+        "path": "/"
+      },
+      {
+        "name": "VPCFlowLogsRole-multimodal-lib",
+        "arn": "arn:aws:iam::591222106065:role/VPCFlowLogsRole-multimodal-lib",
+        "create_date": "2026-01-16T04:53:48+00:00",
+        "path": "/"
+      }
+    ],
+    "policies": [
+      {
+        "name": "MultimodalLibrarianSecretsManagerAccess",
+        "arn": "arn:aws:iam::591222106065:policy/MultimodalLibrarianSecretsManagerAccess",
+        "create_date": "2026-01-10T03:49:57+00:00",
+        "attachment_count": 1
+      },
+      {
+        "name": "MultimodalLibrarianOpenSearchAccess",
+        "arn": "arn:aws:iam::591222106065:policy/MultimodalLibrarianOpenSearchAccess",
+        "create_date": "2026-01-20T19:03:10+00:00",
+        "attachment_count": 1
+      }
+    ],
+    "users": [],
+    "status": "healthy"
+  },
+  "Cost Analysis": {
+    "monthly_costs": {
+      "total": 516.91,
+      "by_service": {
+        "AWS CloudFormation": 0.0,
+        "AWS CloudTrail": 0.030321,
+        "AWS Cost Explorer": 0.04,
+        "AWS Glue": 0.0,
+        "AWS Key Management Service": 0.45026881,
+        "AWS Lambda": 0.0,
+        "AWS Secrets Manager": 2.0827297961,
+        "AWS Security Hub": 0.0,
+        "AWS WAF": 4.5046636704,
+        "Amazon CloudFront": 0.0004177867,
+        "Amazon DynamoDB": 0.0004991875,
+        "Amazon EC2 Container Registry (ECR)": 2.9880428289,
+        "Amazon ElastiCache": 27.285,
+        "EC2 - Other": 93.413731384,
+        "Amazon Elastic Compute Cloud - Compute": 7.955826632,
+        "Amazon Elastic Container Service": 100.5619141704,
+        "Amazon Elastic File System": 3.703e-07,
+        "Amazon Elastic Load Balancing": 29.6396601533,
+        "Amazon GuardDuty": 0.0,
+        "Amazon Inspector": 0.0,
+        "Amazon Location Service": 1e-05,
+        "Amazon Neptune": 115.786076628,
+        "Amazon OpenSearch Service": 13.0897770775,
+        "Amazon Relational Database Service": 9.4651347116,
+        "Amazon Simple Notification Service": 0.0,
+        "Amazon Simple Queue Service": 0.0,
+        "Amazon Simple Storage Service": 0.1533901103,
+        "Amazon Virtual Private Cloud": 69.6395805937,
+        "AmazonCloudWatch": 2.1916441454,
+        "CloudFront Flat-Rate Plans": 15.0,
+        "Tax": 22.63
+      },
+      "period": "2026-01-01 to 2026-01-22"
+    },
+    "daily_costs": {
+      "yesterday": 22.63,
+      "date": "2026-01-21"
+    },
+    "status": "healthy"
+  },
+  "restoration_plan": {
+    "critical_missing": [
+      {
+        "component": "PostgreSQL Database",
+        "description": "No RDS instances found",
+        "impact": "Application data storage unavailable",
+        "priority": "CRITICAL"
+      },
+      {
+        "component": "OpenSearch Domain",
+        "description": "No OpenSearch domains found",
+        "impact": "Vector search and RAG functionality unavailable",
+        "priority": "HIGH"
+      }
+    ],
+    "recommended_actions": [
+      {
+        "action": "Create Application Load Balancer",
+        "description": "ALB needed for application traffic distribution",
+        "estimated_cost": "$20/month",
+        "priority": "HIGH"
+      }
+    ],
+    "estimated_costs": {
+      "monthly_minimum": 145,
+      "breakdown": {
+        "RDS (db.t3.micro)": 15,
+        "OpenSearch (t3.small.search)": 25,
+        "ECS Fargate": 30,
+        "ALB": 20,
+        "NAT Gateway": 45,
+        "Data Transfer": 10
+      },
+      "note": "Costs are estimates and may vary based on usage"
+    },
+    "priority_order": [
+      "Restore PostgreSQL Database (RDS)",
+      "Deploy Application (ECS/EC2)",
+      "Create OpenSearch Domain",
+      "Set up Load Balancer",
+      "Configure NAT Gateway",
+      "Verify Security Groups",
+      "Test End-to-End Connectivity"
+    ]
+  },
+  "assessment_timestamp": "2026-01-22T11:35:47.975554"
+}

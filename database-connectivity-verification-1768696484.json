@@ -1,0 +1,57 @@
+{
+  "timestamp": "2026-01-17T17:34:42.356252",
+  "checks": {
+    "service": {
+      "status": "PASS",
+      "task_definition": "arn:aws:ecs:us-east-1:591222106065:task-definition/multimodal-lib-prod-app:58",
+      "running_count": 1,
+      "desired_count": 1
+    },
+    "task_definition": {
+      "status": "PASS",
+      "has_postgres_vars": true,
+      "has_db_vars": true,
+      "environment": {
+        "POSTGRES_HOST": "ml-librarian-postgres-prod.cq1iiac2gfkf.us-east-1.rds.amazonaws.com",
+        "POSTGRES_PORT": "5432",
+        "POSTGRES_DB": "multimodal_librarian",
+        "POSTGRES_USER": "postgres",
+        "DB_HOST": "ml-librarian-postgres-prod.cq1iiac2gfkf.us-east-1.rds.amazonaws.com",
+        "DB_PORT": "5432",
+        "DB_NAME": "multimodal_librarian",
+        "DB_USER": "postgres"
+      },
+      "secrets": {
+        "POSTGRES_PASSWORD": "arn:aws:secretsmanager:us-east-1:591222106065:secret:multimodal-librarian/learning/database-TSnLsl:password::",
+        "DB_PASSWORD": "arn:aws:secretsmanager:us-east-1:591222106065:secret:multimodal-librarian/learning/database-TSnLsl:password::"
+      }
+    },
+    "rds": {
+      "status": "PASS",
+      "instance_id": "ml-librarian-postgres-prod",
+      "endpoint": "ml-librarian-postgres-prod.cq1iiac2gfkf.us-east-1.rds.amazonaws.com",
+      "port": 5432,
+      "db_status": "available",
+      "vpc_id": "vpc-0b2186b38779e77f6",
+      "security_groups": [
+        "sg-06444720c970a9054"
+      ]
+    },
+    "network": {
+      "status": "PASS",
+      "vpc_match": true,
+      "security_group_allowed": true,
+      "task_vpc": "vpc-0b2186b38779e77f6",
+      "rds_vpc": "vpc-0b2186b38779e77f6",
+      "task_security_groups": [
+        "sg-0135b368e20b7bd01"
+      ],
+      "rds_security_group": "sg-06444720c970a9054"
+    },
+    "secrets_manager": {
+      "status": "FAIL",
+      "error": "An error occurred (ResourceNotFoundException) when calling the GetSecretValue operation: Secrets Manager can't find the specified secret."
+    }
+  },
+  "overall_status": "FAIL"
+}

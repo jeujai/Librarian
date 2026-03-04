@@ -1,0 +1,35 @@
+{
+  "profile": "development",
+  "success": true,
+  "steps_completed": 3,
+  "total_steps": 3,
+  "step_results": {
+    "Document Embeddings": {
+      "success": true,
+      "return_code": 0,
+      "execution_time": 0.49797677993774414,
+      "command": "/Users/jeujaiwu/librarian/venv/bin/python /Users/jeujaiwu/librarian/scripts/seed-vector-document-embeddings.py --count 25",
+      "output_lines": 78
+    },
+    "Similarity Search Scenarios": {
+      "success": true,
+      "return_code": 0,
+      "execution_time": 0.37894392013549805,
+      "command": "/Users/jeujaiwu/librarian/venv/bin/python /Users/jeujaiwu/librarian/scripts/seed-vector-similarity-scenarios.py --scenarios 10",
+      "output_lines": 79
+    },
+    "Performance Testing Vectors": {
+      "success": true,
+      "return_code": 0,
+      "execution_time": 0.6544969081878662,
+      "command": "/Users/jeujaiwu/librarian/venv/bin/python /Users/jeujaiwu/librarian/scripts/seed-vector-performance-data.py --scale small",
+      "output_lines": 80,
+      "vectors_generated": 1000
+    }
+  },
+  "errors": [],
+  "start_time": "2026-01-23T18:40:22.665492",
+  "generation_summary": {},
+  "total_time": 1.5324361324310303,
+  "end_time": "2026-01-23T18:40:24.197994"
+}

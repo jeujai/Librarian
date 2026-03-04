@@ -1,0 +1,19 @@
+{
+  "timestamp": "2026-01-18T16:39:58.606330",
+  "target_group_arn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg-v2/7b63a6337a5c7a34",
+  "target_group_name": "multimodal-lib-prod-tg-v2",
+  "old_path": "/api/health/simple",
+  "new_path": "/health/simple",
+  "health_check_config": {
+    "path": "/health/simple",
+    "protocol": "HTTP",
+    "port": "traffic-port",
+    "interval": 30,
+    "timeout": 20,
+    "healthy_threshold": 2,
+    "unhealthy_threshold": 3,
+    "matcher": {
+      "HttpCode": "200"
+    }
+  }
+}

@@ -1,0 +1,113 @@
+{
+  "timestamp": "2026-01-09T01:58:54.255249",
+  "test_categories": {
+    "Alerting Service Health": {
+      "tests": [
+        {
+          "test_name": "Alerting Service Health Check",
+          "success": false,
+          "details": "Error: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/monitoring/health (Caused by NewConnectionError(\"HTTPConnection(host='localhost', port=8000): Failed to establish a new connection: [Errno 61] Connection refused\"))",
+          "timestamp": "2026-01-09T01:58:54.260297"
+        }
+      ],
+      "passed": 0,
+      "failed": 1,
+      "success_rate": 0.0
+    },
+    "Dashboard Service Health": {
+      "tests": [
+        {
+          "test_name": "Dashboard Service Health Check",
+          "success": false,
+          "details": "Error: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/monitoring/health (Caused by NewConnectionError(\"HTTPConnection(host='localhost', port=8000): Failed to establish a new connection: [Errno 61] Connection refused\"))",
+          "timestamp": "2026-01-09T01:58:54.261459"
+        }
+      ],
+      "passed": 0,
+      "failed": 1,
+      "success_rate": 0.0
+    },
+    "Alert Management API": {
+      "tests": [
+        {
+          "test_name": "Alert Management API",
+          "success": false,
+          "details": "Error: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/monitoring/alerts/active (Caused by NewConnectionError(\"HTTPConnection(host='localhost', port=8000): Failed to establish a new connection: [Errno 61] Connection refused\"))",
+          "timestamp": "2026-01-09T01:58:54.262418"
+        }
+      ],
+      "passed": 0,
+      "failed": 1,
+      "success_rate": 0.0
+    },
+    "Dashboard API": {
+      "tests": [
+        {
+          "test_name": "Dashboard API",
+          "success": false,
+          "details": "Error: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/monitoring/dashboards (Caused by NewConnectionError(\"HTTPConnection(host='localhost', port=8000): Failed to establish a new connection: [Errno 61] Connection refused\"))",
+          "timestamp": "2026-01-09T01:58:54.263196"
+        }
+      ],
+      "passed": 0,
+      "failed": 1,
+      "success_rate": 0.0
+    },
+    "Metric Recording": {
+      "tests": [
+        {
+          "test_name": "Metric Recording",
+          "success": false,
+          "details": "Error: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/monitoring/metrics/record (Caused by NewConnectionError(\"HTTPConnection(host='localhost', port=8000): Failed to establish a new connection: [Errno 61] Connection refused\"))",
+          "timestamp": "2026-01-09T01:58:54.263930"
+        }
+      ],
+      "passed": 0,
+      "failed": 1,
+      "success_rate": 0.0
+    },
+    "Dashboard Web Interface": {
+      "tests": [
+        {
+          "test_name": "Dashboard Web Interface",
+          "success": false,
+          "details": "Error: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /monitoring (Caused by NewConnectionError(\"HTTPConnection(host='localhost', port=8000): Failed to establish a new connection: [Errno 61] Connection refused\"))",
+          "timestamp": "2026-01-09T01:58:54.264773"
+        }
+      ],
+      "passed": 0,
+      "failed": 1,
+      "success_rate": 0.0
+    },
+    "Main Application Integration": {
+      "tests": [
+        {
+          "test_name": "Main Application Integration",
+          "success": false,
+          "details": "Error: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /features (Caused by NewConnectionError(\"HTTPConnection(host='localhost', port=8000): Failed to establish a new connection: [Errno 61] Connection refused\"))",
+          "timestamp": "2026-01-09T01:58:54.266010"
+        }
+      ],
+      "passed": 0,
+      "failed": 1,
+      "success_rate": 0.0
+    },
+    "Background Alert Evaluation": {
+      "tests": [
+        {
+          "test_name": "Background Alert Evaluation",
+          "success": false,
+          "details": "Error: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/monitoring/metrics/record (Caused by NewConnectionError(\"HTTPConnection(host='localhost', port=8000): Failed to establish a new connection: [Errno 61] Connection refused\"))",
+          "timestamp": "2026-01-09T01:58:54.267060"
+        }
+      ],
+      "passed": 0,
+      "failed": 1,
+      "success_rate": 0.0
+    }
+  },
+  "overall_success": false,
+  "total_tests": 8,
+  "passed_tests": 0,
+  "failed_tests": 8
+}

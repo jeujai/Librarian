@@ -1,0 +1,30 @@
+{
+  "name": "Sarah Chen",
+  "role": "PhD Student in Computer Science",
+  "background": "Researching machine learning applications in healthcare",
+  "technical_level": "High",
+  "goals": [
+    "Quickly review and analyze research papers",
+    "Find connections between different studies",
+    "Generate literature review summaries",
+    "Identify research gaps and opportunities"
+  ],
+  "pain_points": [
+    "Information overload from too many papers",
+    "Difficulty tracking citations and sources",
+    "Time-consuming manual analysis",
+    "Inconsistent note-taking across documents"
+  ],
+  "usage_patterns": [
+    "Uploads 5-10 papers per research session",
+    "Asks detailed technical questions",
+    "Needs precise citations for academic writing",
+    "Works in focused 2-3 hour sessions"
+  ],
+  "success_metrics": [
+    "Reduces literature review time by 50%",
+    "Finds relevant connections between papers",
+    "Generates accurate citations automatically",
+    "Improves research productivity"
+  ]
+}

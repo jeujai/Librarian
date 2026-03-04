@@ -1,0 +1,12 @@
+{
+  "task_definition_arn": "arn:aws:ecs:us-east-1:123456789012:task-definition/multimodal-librarian:1",
+  "iam_role_arn": "arn:aws:iam::123456789012:role/multimodal-librarian-task-role",
+  "load_balancer_arn": "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/multimodal-librarian-lb/1234567890123456",
+  "target_environment": "production",
+  "region": "us-east-1",
+  "ssl_certificate_arn": "arn:aws:acm:us-east-1:123456789012:certificate/12345678-1234-1234-1234-123456789012",
+  "additional_config": {
+    "validation_timeout": 300,
+    "retry_attempts": 3
+  }
+}

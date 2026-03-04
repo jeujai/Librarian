@@ -1,0 +1,34 @@
+{
+    "family": "multimodal-librarian-full-ml-web",
+    "taskRoleArn": "arn:aws:iam::591222106065:role/MultimodalLibrarianFullML-TaskDefinitionsWebTaskDefinitionT-Ej8Ej8Ej8Ej8",
+    "executionRoleArn": "arn:aws:iam::591222106065:role/MultimodalLibrarianFullML-TaskDefinitionsWebTaskDefinitionE-Ej8Ej8Ej8Ej8",
+    "networkMode": "awsvpc",
+    "requiresCompatibilities": ["FARGATE"],
+    "cpu": "1024",
+    "memory": "2048",
+    "containerDefinitions": [
+        {
+            "name": "multimodal-librarian-web",
+            "image": "python:3.11-slim",
+            "essential": true,
+            "portMappings": [
+                {
+                    "containerPort": 8000,
+                    "protocol": "tcp"
+                }
+            ],
+            "command": [
+                "sh", "-c", 
+                "pip install fastapi uvicorn && echo 'from fastapi import FastAPI; app = FastAPI(); @app.get(\"/health\"); def health(): return {\"status\": \"ok\"}' > main.py && uvicorn main:app --host 0.0.0.0 --port 8000"
+            ],
+            "logConfiguration": {
+                "logDriver": "awslogs",
+                "options": {
+                    "awslogs-group": "/aws/ecs/multimodal-librarian-full-ml",
+                    "awslogs-region": "us-east-1",
+                    "awslogs-stream-prefix": "web"
+                }
+            }
+        }
+    ]
+}

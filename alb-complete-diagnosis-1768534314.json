@@ -1,0 +1,49 @@
+{
+  "timestamp": "2026-01-15T20:31:51.710254",
+  "checks": {
+    "alb": {
+      "name": "multimodal-lib-prod-alb",
+      "arn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:loadbalancer/app/multimodal-lib-prod-alb/f24be2cfb7f2f8ec",
+      "subnets": [
+        "subnet-02f4d9ecb751beb27",
+        "subnet-02fe694f061238d5a",
+        "subnet-0c352188f5398a718"
+      ],
+      "security_groups": [
+        "sg-0135b368e20b7bd01"
+      ]
+    },
+    "target_group": {
+      "name": "multimodal-lib-prod-tg",
+      "protocol": "HTTP:8000",
+      "health_check": {
+        "protocol": "HTTP",
+        "path": "/api/health/minimal",
+        "interval": 30,
+        "timeout": 29
+      },
+      "targets": [
+        {
+          "id": "10.0.2.66",
+          "port": 8000,
+          "state": "unhealthy",
+          "reason": "Target.Timeout"
+        },
+        {
+          "id": "10.0.1.213",
+          "port": 8000,
+          "state": "draining",
+          "reason": "Target.DeregistrationInProgress"
+        }
+      ]
+    },
+    "ecs_service": {
+      "cluster": "multimodal-lib-prod-cluster",
+      "service": "multimodal-lib-prod-service",
+      "desired_count": 1,
+      "running_count": 1,
+      "load_balancers_configured": true,
+      "task_count": 1
+    }
+  }
+}

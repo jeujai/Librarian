@@ -1,0 +1,88 @@
+{
+  "daily_cleanup": {
+    "enabled": true,
+    "time": "02:00",
+    "tasks": ["logs", "temp_files", "test_artifacts"],
+    "description": "Daily cleanup of logs, temporary files, and test artifacts"
+  },
+  
+  "weekly_cleanup": {
+    "enabled": true,
+    "day": "sunday",
+    "time": "03:00",
+    "tasks": ["docker_images", "old_backups", "cache_files"],
+    "description": "Weekly cleanup of Docker images, old backups, and cache files"
+  },
+  
+  "monthly_cleanup": {
+    "enabled": false,
+    "day": 1,
+    "time": "04:00",
+    "tasks": ["docker_volumes", "all_backups"],
+    "description": "Monthly destructive cleanup (disabled by default)",
+    "warning": "This will delete all database data - only enable if you understand the consequences"
+  },
+  
+  "thresholds": {
+    "log_retention_days": 7,
+    "backup_retention_days": 30,
+    "temp_file_retention_hours": 24,
+    "max_disk_usage_gb": 10,
+    "emergency_cleanup_threshold_gb": 15
+  },
+  
+  "monitoring": {
+    "enabled": true,
+    "report_interval_hours": 24,
+    "alert_on_failure": true,
+    "disk_check_interval_minutes": 60,
+    "log_level": "INFO"
+  },
+  
+  "cleanup_rules": {
+    "preserve_patterns": [
+      "*.env*",
+      "docker-compose*.yml",
+      "Dockerfile*",
+      "requirements*.txt",
+      "pyproject.toml",
+      "Makefile*"
+    ],
+    "aggressive_cleanup_patterns": [
+      "**/__pycache__/**",
+      "**/*.pyc",
+      "**/*.pyo",
+      "**/node_modules/**",
+      "**/.pytest_cache/**",
+      "**/htmlcov/**",
+      "**/*.log.old",
+      "**/core.*"
+    ],
+    "backup_before_delete": [
+      "database/backups/**",
+      "logs/important/**"
+    ]
+  },
+  
+  "notifications": {
+    "enabled": false,
+    "methods": {
+      "file": {
+        "enabled": true,
+        "path": "logs/cleanup-alerts.log"
+      },
+      "email": {
+        "enabled": false,
+        "smtp_server": "localhost",
+        "smtp_port": 587,
+        "from_address": "cleanup@localhost",
+        "to_addresses": ["admin@localhost"]
+      },
+      "webhook": {
+        "enabled": false,
+        "url": "http://localhost:8080/webhook/cleanup",
+        "timeout": 30
+      }
+    }
+  }
+}

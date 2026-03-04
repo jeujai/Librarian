@@ -1,0 +1,53 @@
+{
+  "timestamp": "2026-01-11T02:22:07.059939",
+  "operation": "verify_https_deployment",
+  "distribution_id": "E3NVIH7ET1R4G9",
+  "distribution_domain": "d1c3ih7gvhogu1.cloudfront.net",
+  "tests": {
+    "distribution_status": {
+      "success": false,
+      "status": "InProgress",
+      "last_modified": "2026-01-11 09:20:14.912000+00:00"
+    },
+    "dns_resolution": {
+      "success": true,
+      "ip_address": "3.169.201.83"
+    },
+    "https_connectivity": {
+      "success": true,
+      "status_code": 200,
+      "response_size": 553
+    },
+    "http_redirect": {
+      "success": true,
+      "status_code": 301,
+      "redirect_location": "https://d1c3ih7gvhogu1.cloudfront.net/"
+    },
+    "application_endpoints": {
+      "success": true,
+      "successful_endpoints": 4,
+      "total_endpoints": 4,
+      "endpoint_results": {
+        "/": {
+          "success": true,
+          "status_code": 200
+        },
+        "/health/simple": {
+          "success": true,
+          "status_code": 200
+        },
+        "/docs": {
+          "success": true,
+          "status_code": 200
+        },
+        "/features": {
+          "success": true,
+          "status_code": 200
+        }
+      }
+    }
+  },
+  "success": true,
+  "successful_tests": 4,
+  "total_tests": 5
+}

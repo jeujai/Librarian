@@ -1,0 +1,288 @@
+{
+  "analysis_timestamp": "2026-01-11T02:52:54.231565",
+  "total_distributions": 5,
+  "enabled_distributions": 4,
+  "disabled_distributions": 1,
+  "pricing_plan_breakdown": {
+    "PriceClass_All": [
+      {
+        "id": "EG4POF7D2NLA4",
+        "domain": "d1p5nsqu15ui56.cloudfront.net",
+        "status": "Deployed",
+        "enabled": false,
+        "price_class": "PriceClass_All",
+        "origins": [
+          {
+            "domain": "Collab-Serve-WsYWbstG4vRM-336145199.us-east-1.elb.amazonaws.com",
+            "id": "Collab-Serve-WsYWbstG4vRM-336145199.us-east-1.elb.amazonaws.com-mjiya6cjqb3"
+          }
+        ],
+        "last_modified": "2026-01-11T09:44:58.199000+00:00"
+      },
+      {
+        "id": "EIJ88DHYSTJAT",
+        "domain": "d1rir9osswia3b.cloudfront.net",
+        "status": "Deployed",
+        "enabled": true,
+        "price_class": "PriceClass_All",
+        "origins": [
+          {
+            "domain": "collaborativeeditorprodstack-websitebucket75c24d94-ng6x9t6xssis.s3.us-east-1.amazonaws.com",
+            "id": "CollaborativeEditorProdStackWebsiteDistributionOrigin3662CE69D"
+          },
+          {
+            "domain": "collaborativeeditorprodstack-websitebucket75c24d94-ng6x9t6xssis.s3.us-east-1.amazonaws.com",
+            "id": "CollaborativeEditorProdStackWebsiteDistributionOrigin28048FC61"
+          },
+          {
+            "domain": "collaborativeeditorprodstack-websitebucket75c24d94-ng6x9t6xssis.s3.us-east-1.amazonaws.com",
+            "id": "CollaborativeEditorProdStackWebsiteDistributionOrigin15606DE3F"
+          },
+          {
+            "domain": "Collab-Serve-FkT4Ww8hCsOu-346902887.us-east-1.elb.amazonaws.com",
+            "id": "CollaborativeEditorProdStackWebsiteDistributionOrigin6BD1C2E0A"
+          },
+          {
+            "domain": "Collab-Serve-FkT4Ww8hCsOu-346902887.us-east-1.elb.amazonaws.com",
+            "id": "CollaborativeEditorProdStackWebsiteDistributionOrigin51B7FA823"
+          },
+          {
+            "domain": "Collab-Serve-FkT4Ww8hCsOu-346902887.us-east-1.elb.amazonaws.com",
+            "id": "CollaborativeEditorProdStackWebsiteDistributionOrigin76D20FE9A"
+          },
+          {
+            "domain": "Collab-Serve-FkT4Ww8hCsOu-346902887.us-east-1.elb.amazonaws.com",
+            "id": "CollaborativeEditorProdStackWebsiteDistributionOrigin49878A315"
+          },
+          {
+            "domain": "Collab-Serve-FkT4Ww8hCsOu-346902887.us-east-1.elb.amazonaws.com",
+            "id": "CollaborativeEditorProdStackWebsiteDistributionOrigin8A3AB424A"
+          }
+        ],
+        "last_modified": "2025-12-31T22:11:29.903000+00:00"
+      }
+    ],
+    "PriceClass_100": [
+      {
+        "id": "E2REC2GKPFFDW6",
+        "domain": "d3a2xw711pvw5j.cloudfront.net",
+        "status": "Deployed",
+        "enabled": true,
+        "price_class": "PriceClass_100",
+        "origins": [
+          {
+            "domain": "multimodal-librarian-full-ml-storage-591222106065.s3.us-east-1.amazonaws.com",
+            "id": "MultimodalLibrarianFullMLCdnDistributionOrigin1DF16D2C1"
+          },
+          {
+            "domain": "multimodal-librarian-full-ml-storage-591222106065.s3.us-east-1.amazonaws.com",
+            "id": "MultimodalLibrarianFullMLCdnDistributionOrigin35BDBE1F6"
+          },
+          {
+            "domain": "multimodal-librarian-full-ml-storage-591222106065.s3.us-east-1.amazonaws.com",
+            "id": "MultimodalLibrarianFullMLCdnDistributionOrigin401295E11"
+          },
+          {
+            "domain": "multimodal-librarian-full-ml-storage-591222106065.s3.us-east-1.amazonaws.com",
+            "id": "MultimodalLibrarianFullMLCdnDistributionOrigin2CA59E2DF"
+          }
+        ],
+        "last_modified": "2026-01-06T00:31:21.647000+00:00"
+      },
+      {
+        "id": "ELC6V44QNBWSF",
+        "domain": "d347w7yibz52wg.cloudfront.net",
+        "status": "Deployed",
+        "enabled": true,
+        "price_class": "PriceClass_100",
+        "origins": [
+          {
+            "domain": "multimodal-lib-prod-alb-42591568.us-east-1.elb.amazonaws.com",
+            "id": "multimodal-lib-prod-alb"
+          }
+        ],
+        "last_modified": "2026-01-08T01:47:34.984000+00:00"
+      },
+      {
+        "id": "E3NVIH7ET1R4G9",
+        "domain": "d1c3ih7gvhogu1.cloudfront.net",
+        "status": "Deployed",
+        "enabled": true,
+        "price_class": "PriceClass_100",
+        "origins": [
+          {
+            "domain": "multimodal-librarian-full-ml-249704554.us-east-1.elb.amazonaws.com",
+            "id": "ml-alb-origin"
+          }
+        ],
+        "last_modified": "2026-01-11T09:20:14.912000+00:00"
+      }
+    ]
+  },
+  "distribution_details": [
+    {
+      "id": "EG4POF7D2NLA4",
+      "domain": "d1p5nsqu15ui56.cloudfront.net",
+      "status": "Deployed",
+      "enabled": false,
+      "price_class": "PriceClass_All",
+      "origins": [
+        {
+          "domain": "Collab-Serve-WsYWbstG4vRM-336145199.us-east-1.elb.amazonaws.com",
+          "id": "Collab-Serve-WsYWbstG4vRM-336145199.us-east-1.elb.amazonaws.com-mjiya6cjqb3"
+        }
+      ],
+      "last_modified": "2026-01-11T09:44:58.199000+00:00"
+    },
+    {
+      "id": "EIJ88DHYSTJAT",
+      "domain": "d1rir9osswia3b.cloudfront.net",
+      "status": "Deployed",
+      "enabled": true,
+      "price_class": "PriceClass_All",
+      "origins": [
+        {
+          "domain": "collaborativeeditorprodstack-websitebucket75c24d94-ng6x9t6xssis.s3.us-east-1.amazonaws.com",
+          "id": "CollaborativeEditorProdStackWebsiteDistributionOrigin3662CE69D"
+        },
+        {
+          "domain": "collaborativeeditorprodstack-websitebucket75c24d94-ng6x9t6xssis.s3.us-east-1.amazonaws.com",
+          "id": "CollaborativeEditorProdStackWebsiteDistributionOrigin28048FC61"
+        },
+        {
+          "domain": "collaborativeeditorprodstack-websitebucket75c24d94-ng6x9t6xssis.s3.us-east-1.amazonaws.com",
+          "id": "CollaborativeEditorProdStackWebsiteDistributionOrigin15606DE3F"
+        },
+        {
+          "domain": "Collab-Serve-FkT4Ww8hCsOu-346902887.us-east-1.elb.amazonaws.com",
+          "id": "CollaborativeEditorProdStackWebsiteDistributionOrigin6BD1C2E0A"
+        },
+        {
+          "domain": "Collab-Serve-FkT4Ww8hCsOu-346902887.us-east-1.elb.amazonaws.com",
+          "id": "CollaborativeEditorProdStackWebsiteDistributionOrigin51B7FA823"
+        },
+        {
+          "domain": "Collab-Serve-FkT4Ww8hCsOu-346902887.us-east-1.elb.amazonaws.com",
+          "id": "CollaborativeEditorProdStackWebsiteDistributionOrigin76D20FE9A"
+        },
+        {
+          "domain": "Collab-Serve-FkT4Ww8hCsOu-346902887.us-east-1.elb.amazonaws.com",
+          "id": "CollaborativeEditorProdStackWebsiteDistributionOrigin49878A315"
+        },
+        {
+          "domain": "Collab-Serve-FkT4Ww8hCsOu-346902887.us-east-1.elb.amazonaws.com",
+          "id": "CollaborativeEditorProdStackWebsiteDistributionOrigin8A3AB424A"
+        }
+      ],
+      "last_modified": "2025-12-31T22:11:29.903000+00:00"
+    },
+    {
+      "id": "E2REC2GKPFFDW6",
+      "domain": "d3a2xw711pvw5j.cloudfront.net",
+      "status": "Deployed",
+      "enabled": true,
+      "price_class": "PriceClass_100",
+      "origins": [
+        {
+          "domain": "multimodal-librarian-full-ml-storage-591222106065.s3.us-east-1.amazonaws.com",
+          "id": "MultimodalLibrarianFullMLCdnDistributionOrigin1DF16D2C1"
+        },
+        {
+          "domain": "multimodal-librarian-full-ml-storage-591222106065.s3.us-east-1.amazonaws.com",
+          "id": "MultimodalLibrarianFullMLCdnDistributionOrigin35BDBE1F6"
+        },
+        {
+          "domain": "multimodal-librarian-full-ml-storage-591222106065.s3.us-east-1.amazonaws.com",
+          "id": "MultimodalLibrarianFullMLCdnDistributionOrigin401295E11"
+        },
+        {
+          "domain": "multimodal-librarian-full-ml-storage-591222106065.s3.us-east-1.amazonaws.com",
+          "id": "MultimodalLibrarianFullMLCdnDistributionOrigin2CA59E2DF"
+        }
+      ],
+      "last_modified": "2026-01-06T00:31:21.647000+00:00"
+    },
+    {
+      "id": "ELC6V44QNBWSF",
+      "domain": "d347w7yibz52wg.cloudfront.net",
+      "status": "Deployed",
+      "enabled": true,
+      "price_class": "PriceClass_100",
+      "origins": [
+        {
+          "domain": "multimodal-lib-prod-alb-42591568.us-east-1.elb.amazonaws.com",
+          "id": "multimodal-lib-prod-alb"
+        }
+      ],
+      "last_modified": "2026-01-08T01:47:34.984000+00:00"
+    },
+    {
+      "id": "E3NVIH7ET1R4G9",
+      "domain": "d1c3ih7gvhogu1.cloudfront.net",
+      "status": "Deployed",
+      "enabled": true,
+      "price_class": "PriceClass_100",
+      "origins": [
+        {
+          "domain": "multimodal-librarian-full-ml-249704554.us-east-1.elb.amazonaws.com",
+          "id": "ml-alb-origin"
+        }
+      ],
+      "last_modified": "2026-01-11T09:20:14.912000+00:00"
+    }
+  ],
+  "orphaned_distribution_analysis": {
+    "distribution_id": "EG4POF7D2NLA4",
+    "can_delete": false,
+    "blocking_distributions": [
+      {
+        "id": "EIJ88DHYSTJAT",
+        "domain": "d1rir9osswia3b.cloudfront.net",
+        "status": "Deployed",
+        "enabled": true,
+        "price_class": "PriceClass_All",
+        "origins": [
+          {
+            "domain": "collaborativeeditorprodstack-websitebucket75c24d94-ng6x9t6xssis.s3.us-east-1.amazonaws.com",
+            "id": "CollaborativeEditorProdStackWebsiteDistributionOrigin3662CE69D"
+          },
+          {
+            "domain": "collaborativeeditorprodstack-websitebucket75c24d94-ng6x9t6xssis.s3.us-east-1.amazonaws.com",
+            "id": "CollaborativeEditorProdStackWebsiteDistributionOrigin28048FC61"
+          },
+          {
+            "domain": "collaborativeeditorprodstack-websitebucket75c24d94-ng6x9t6xssis.s3.us-east-1.amazonaws.com",
+            "id": "CollaborativeEditorProdStackWebsiteDistributionOrigin15606DE3F"
+          },
+          {
+            "domain": "Collab-Serve-FkT4Ww8hCsOu-346902887.us-east-1.elb.amazonaws.com",
+            "id": "CollaborativeEditorProdStackWebsiteDistributionOrigin6BD1C2E0A"
+          },
+          {
+            "domain": "Collab-Serve-FkT4Ww8hCsOu-346902887.us-east-1.elb.amazonaws.com",
+            "id": "CollaborativeEditorProdStackWebsiteDistributionOrigin51B7FA823"
+          },
+          {
+            "domain": "Collab-Serve-FkT4Ww8hCsOu-346902887.us-east-1.elb.amazonaws.com",
+            "id": "CollaborativeEditorProdStackWebsiteDistributionOrigin76D20FE9A"
+          },
+          {
+            "domain": "Collab-Serve-FkT4Ww8hCsOu-346902887.us-east-1.elb.amazonaws.com",
+            "id": "CollaborativeEditorProdStackWebsiteDistributionOrigin49878A315"
+          },
+          {
+            "domain": "Collab-Serve-FkT4Ww8hCsOu-346902887.us-east-1.elb.amazonaws.com",
+            "id": "CollaborativeEditorProdStackWebsiteDistributionOrigin8A3AB424A"
+          }
+        ],
+        "last_modified": "2025-12-31T22:11:29.903000+00:00"
+      }
+    ],
+    "recommendation": "Cannot delete due to shared pricing plan"
+  },
+  "cost_analysis": {
+    "monthly_cost_active": 2.4,
+    "monthly_cost_disabled": 0.1,
+    "total_monthly_cost": 2.5
+  }
+}

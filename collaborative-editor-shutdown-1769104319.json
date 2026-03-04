@@ -1,0 +1,10 @@
+{
+  "timestamp": "2026-01-22T10:51:58.675242",
+  "collaborative_editor_shutdown": true,
+  "instance_terminated": true,
+  "additional_monthly_savings": 15,
+  "errors": [],
+  "terminated_instances": [
+    "i-098359c54b3c1cd3a"
+  ]
+}

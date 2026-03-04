@@ -1,0 +1,251 @@
+{
+  "Pre-Deployment Validation": {
+    "success": false,
+    "tests": {
+      "environment_variables": false,
+      "configuration_files": true,
+      "python_dependencies": true,
+      "system_resources": true
+    },
+    "validation_checks": {
+      "missing_env_vars": [
+        "DATABASE_URL",
+        "REDIS_URL",
+        "OPENAI_API_KEY",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY"
+      ],
+      "missing_config_files": [],
+      "invalid_config_files": [],
+      "missing_packages": [],
+      "system_resources": {
+        "memory_gb": 14.5933837890625,
+        "disk_gb": 368.7861862182617,
+        "cpu_cores": 12,
+        "memory_sufficient": true,
+        "disk_sufficient": true,
+        "cpu_sufficient": true
+      }
+    },
+    "duration_seconds": 0.4378340244293213
+  },
+  "Configuration Management": {
+    "success": false,
+    "tests": {
+      "production_config_loading": false,
+      "database_config": false,
+      "cache_config": false,
+      "security_config": false
+    },
+    "config_analysis": {
+      "production_checks": {
+        "debug_disabled": false,
+        "secure_cookies": false,
+        "https_redirect": false,
+        "log_level_appropriate": false
+      },
+      "database_url_valid": false,
+      "redis_url_valid": false,
+      "security_checks": {
+        "openai_api_key_present": false,
+        "aws_credentials_present": false,
+        "secret_key_present": false,
+        "jwt_secret_present": false
+      }
+    },
+    "duration_seconds": 0.021105289459228516
+  },
+  "Deployment Procedures": {
+    "success": true,
+    "tests": {
+      "docker_compose_validation": true,
+      "terraform_validation": true,
+      "deployment_scripts": true,
+      "environment_promotion": true
+    },
+    "deployment_analysis": {
+      "compose_services": [
+        "app",
+        "postgres",
+        "neo4j",
+        "milvus",
+        "nginx"
+      ],
+      "available_scripts": [
+        "scripts/deploy.sh",
+        "scripts/deploy-to-production.sh",
+        "Makefile"
+      ],
+      "available_environments": [
+        "development",
+        "staging",
+        "production"
+      ]
+    },
+    "duration_seconds": 0.002401113510131836
+  },
+  "Startup Sequence Validation": {
+    "success": false,
+    "tests": {
+      "component_imports": false,
+      "service_initialization_order": true,
+      "application_startup": true,
+      "startup_timing": true
+    },
+    "startup_analysis": {
+      "initialized_services": [
+        "logging_config",
+        "database_connection",
+        "cache_service",
+        "vector_store",
+        "api_routers",
+        "monitoring_services"
+      ],
+      "initialization_order": [
+        "logging_config",
+        "database_connection",
+        "cache_service",
+        "vector_store",
+        "api_routers",
+        "monitoring_services"
+      ],
+      "startup_duration": 28.37810182571411,
+      "timeout_threshold": 300
+    },
+    "duration_seconds": 28.37811517715454
+  },
+  "Service Health Verification": {
+    "success": false,
+    "tests": {
+      "health_endpoint": true,
+      "service_health_checks": false,
+      "monitoring_system": true
+    },
+    "health_analysis": {
+      "health_response": {
+        "status": "healthy",
+        "service": "chat",
+        "active_connections": 0,
+        "active_threads": 0,
+        "features": {
+          "rag_integration": true,
+          "document_aware_responses": true,
+          "citation_support": true,
+          "conversation_memory": true,
+          "fallback_ai": true
+        },
+        "rag_status": {
+          "status": "error",
+          "error": "'KnowledgeGraphStats' object has no attribute 'concepts_by_type'"
+        }
+      },
+      "service_health": {
+        "database": false,
+        "cache": true,
+        "vector_store": false
+      },
+      "monitoring_endpoints": [
+        "/api/monitoring/health",
+        "/api/monitoring/metrics",
+        "/api/logging/status"
+      ]
+    },
+    "duration_seconds": 2.6947882175445557
+  },
+  "Post-Deployment Validation": {
+    "success": false,
+    "tests": {
+      "api_endpoint_availability": true,
+      "database_connectivity": false,
+      "external_service_integration": false
+    },
+    "validation_analysis": {
+      "working_endpoints": [
+        "/health",
+        "/api/documents/",
+        "/chat/status",
+        "/features"
+      ],
+      "critical_endpoints": [
+        "/health",
+        "/api/documents/",
+        "/chat/status",
+        "/features"
+      ],
+      "database_connected": false,
+      "external_services": {
+        "openai_api": false,
+        "aws_services": false,
+        "redis_cache": false
+      }
+    },
+    "duration_seconds": 0.014635086059570312
+  },
+  "Rollback Capability": {
+    "success": true,
+    "tests": {
+      "rollback_scripts": true,
+      "backup_availability": true,
+      "configuration_versioning": true
+    },
+    "rollback_analysis": {
+      "available_scripts": [
+        "scripts/rollback-deployment.py",
+        "scripts/rollback-simple.sh",
+        "scripts/emergency-rollback.sh"
+      ],
+      "backup_locations": [
+        "backup/",
+        "archive/",
+        ".snapshots/"
+      ],
+      "version_tracking": [
+        "pyproject.toml"
+      ]
+    },
+    "duration_seconds": 0.0009088516235351562
+  },
+  "Performance Baseline": {
+    "success": false,
+    "tests": {
+      "response_time_baseline": true,
+      "memory_usage_baseline": false
+    },
+    "performance_analysis": {
+      "response_times": {
+        "/health": {
+          "response_time_ms": 2.2399425506591797,
+          "status_code": 200,
+          "success": true
+        },
+        "/features": {
+          "response_time_ms": 2.179861068725586,
+          "status_code": 200,
+          "success": true
+        },
+        "/api/documents/": {
+          "response_time_ms": 2.6061534881591797,
+          "status_code": 200,
+          "success": true
+        }
+      },
+      "memory_usage_mb": 2022.953125,
+      "memory_threshold_mb": 1024
+    },
+    "duration_seconds": 0.007277011871337891
+  },
+  "overall_success": false,
+  "test_timestamp": 1768089401.5250628,
+  "deployment_ready": {
+    "ready_for_deployment": false,
+    "critical_phases_passed": false,
+    "recommended_actions": [
+      "Fix issues in Pre-Deployment Validation (success rate: 75.0%)",
+      "Fix issues in Configuration Management (success rate: 0.0%)",
+      "Fix issues in Startup Sequence Validation (success rate: 75.0%)",
+      "Fix issues in Service Health Verification (success rate: 66.7%)",
+      "Fix issues in Post-Deployment Validation (success rate: 33.3%)",
+      "Fix issues in Performance Baseline (success rate: 50.0%)"
+    ]
+  }
+}

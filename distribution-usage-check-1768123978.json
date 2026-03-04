@@ -1,0 +1,98 @@
+{
+  "timestamp": "2026-01-11T02:32:40.036841",
+  "operation": "check_distribution_usage",
+  "distribution_domain": "d347w7yibz52wg.cloudfront.net",
+  "distribution_id": "ELC6V44QNBWSF",
+  "tests": {
+    "connectivity": {
+      "working_endpoints": 0,
+      "total_endpoints": 5,
+      "results": {
+        "/": {
+          "success": false,
+          "status_code": 504,
+          "response_size": 941
+        },
+        "/health": {
+          "success": false,
+          "status_code": 504,
+          "response_size": 941
+        },
+        "/health/simple": {
+          "success": false,
+          "status_code": 504,
+          "response_size": 941
+        },
+        "/docs": {
+          "success": false,
+          "status_code": 504,
+          "response_size": 941
+        },
+        "/api/health": {
+          "success": false,
+          "status_code": 504,
+          "response_size": 941
+        }
+      }
+    },
+    "cloudwatch_metrics": {
+      "Requests": {
+        "total": 0,
+        "datapoints": 0,
+        "has_activity": false
+      },
+      "BytesDownloaded": {
+        "total": 0,
+        "datapoints": 0,
+        "has_activity": false
+      },
+      "4xxErrorRate": {
+        "total": 0,
+        "datapoints": 0,
+        "has_activity": false
+      },
+      "5xxErrorRate": {
+        "total": 0,
+        "datapoints": 0,
+        "has_activity": false
+      }
+    }
+  },
+  "infrastructure_references": [
+    {
+      "file": "scripts/check-distribution-usage.py",
+      "pattern": "d347w7yibz52wg.cloudfront.net",
+      "occurrences": 1
+    },
+    {
+      "file": "cloudfront-distributions-list-1768123656.json",
+      "pattern": "d347w7yibz52wg.cloudfront.net",
+      "occurrences": 1
+    },
+    {
+      "file": "cloudfront-distributions-list-1768123656.json",
+      "pattern": "ELC6V44QNBWSF",
+      "occurrences": 1
+    },
+    {
+      "file": "scripts/check-distribution-usage.py",
+      "pattern": "d347w7yibz52wg.cloudfront.net",
+      "occurrences": 1
+    },
+    {
+      "file": "cloudfront-distributions-list-1768123656.json",
+      "pattern": "d347w7yibz52wg.cloudfront.net",
+      "occurrences": 1
+    }
+  ],
+  "usage_analysis": {
+    "status": "IN USE",
+    "recommendation": "This distribution appears to be actively used",
+    "indicators": [
+      "Referenced in 5 infrastructure files"
+    ],
+    "connectivity_score": "0/5",
+    "infrastructure_references": 5,
+    "has_recent_traffic": false
+  }
+}

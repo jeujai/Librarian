@@ -1,0 +1,40 @@
+{
+  "timestamp": "2026-01-09T17:10:41.861682",
+  "task_analysis": {
+    "131e8edd4c844ca9bf47432e727d308b": {
+      "status": "RUNNING",
+      "health": "UNKNOWN",
+      "eni_id": "eni-04ec315039afc66cd",
+      "private_ip": "10.0.12.221",
+      "subnet_id": "subnet-0379e49e44be48905",
+      "vpc_id": "vpc-0b2186b38779e77f6"
+    }
+  },
+  "network_configuration": {
+    "subnets": [
+      "subnet-0d030ba86f0ec2824",
+      "subnet-0628a1f14d2c17897"
+    ],
+    "security_groups": [
+      "sg-07efd393129cae5d7"
+    ],
+    "assign_public_ip": "DISABLED"
+  },
+  "subnet_analysis": {
+    "subnet-0379e49e44be48905": {
+      "cidr_block": "10.0.12.0/24",
+      "availability_zone": "us-east-1b",
+      "vpc_id": "vpc-0b2186b38779e77f6"
+    }
+  },
+  "security_group_analysis": {
+    "sg-07efd393129cae5d7": {
+      "name": "MultimodalLibrarianFullML-SecurityAppSecurityGroup0AA0C6ED-aGohZcBvGQ1q",
+      "port_8000_allowed": true,
+      "rules_count": 5
+    }
+  },
+  "recommendations": [
+    "Service and load balancer have no common subnets"
+  ]
+}

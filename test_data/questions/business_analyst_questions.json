@@ -1,0 +1,42 @@
+{
+  "scenario": "business_analyst",
+  "documents": [
+    "Q3_Financial_Report.pdf",
+    "Market_Analysis_2024.pdf",
+    "Competitive_Landscape.pdf"
+  ],
+  "predefined_questions": [
+    "What were the key financial metrics in Q3?",
+    "How did revenue compare to previous quarters?",
+    "What market trends are identified in the analysis?",
+    "What competitive advantages are mentioned?",
+    "Create an executive summary of the key findings"
+  ],
+  "generated_questions": {
+    "factual": [
+      "What is machine learning according to the document?",
+      "How is neural networks defined in the paper?",
+      "What are the key components of {system}?"
+    ],
+    "analytical": [
+      "Compare {concept1} and {concept2} mentioned in the documents.",
+      "What are the advantages and disadvantages of {approach}?",
+      "How do the different papers approach {problem}?"
+    ],
+    "summary": [
+      "Summarize the main points about machine learning.",
+      "Provide an overview of neural networks from all documents.",
+      "What are the key takeaways regarding {subject}?"
+    ],
+    "application": [
+      "How would you apply neural networks in practice?",
+      "What are the real-world implications of {finding}?",
+      "How can {method} be used to solve {problem}?"
+    ],
+    "evaluation": [
+      "What evidence supports {claim} in the documents?",
+      "How reliable are the findings about machine learning?",
+      "What limitations are mentioned regarding {approach}?"
+    ]
+  }
+}

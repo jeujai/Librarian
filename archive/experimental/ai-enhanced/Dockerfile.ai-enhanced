@@ -1,0 +1,39 @@
+# AI-Enhanced Multimodal Librarian Dockerfile
+# Full AI integration with OpenAI and Gemini APIs
+
+FROM python:3.11-slim
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    curl \
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    poppler-utils \
+    libgl1-mesa-dev \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements and install dependencies
+COPY requirements-ai-enhanced.txt ./
+RUN pip install --no-cache-dir -r requirements-ai-enhanced.txt
+
+# Copy source code
+COPY src/ ./src/
+
+# Set Python path
+ENV PYTHONPATH=/app/src
+
+# Expose port
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8000/health/simple || exit 1
+
+# Run the AI-enhanced application
+CMD ["python", "-m", "uvicorn", "multimodal_librarian.main_ai_enhanced:app", "--host", "0.0.0.0", "--port", "8000"]

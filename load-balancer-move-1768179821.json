@@ -1,0 +1,39 @@
+{
+  "timestamp": "2026-01-11T18:03:37.216361",
+  "script_name": "Load Balancer VPC Move",
+  "steps_completed": [
+    {
+      "step": "Load balancer configuration analyzed",
+      "status": "completed",
+      "timestamp": "2026-01-11T18:03:40.226741",
+      "details": {
+        "Current VPC": "vpc-0bc85162dcdbcc986",
+        "Target VPC": "vpc-014ac5b9fc828c78f",
+        "Listeners": 1,
+        "DNS Name": "multimodal-librarian-full-ml-249704554.us-east-1.elb.amazonaws.com"
+      }
+    },
+    {
+      "step": "Public subnets identified in target VPC",
+      "status": "completed",
+      "timestamp": "2026-01-11T18:03:41.609440",
+      "details": {
+        "VPC": "vpc-014ac5b9fc828c78f",
+        "Total Subnets": 4,
+        "Public Subnets": 2,
+        "Selected": 2
+      }
+    }
+  ],
+  "errors": [
+    {
+      "error": "Failed to create security group: An error occurred (InvalidGroup.Duplicate) when calling the CreateSecurityGroup operation: The security group 'multimodal-librarian-alb-shared-vpc' already exists for VPC 'vpc-014ac5b9fc828c78f'",
+      "timestamp": "2026-01-11T18:03:41.956380"
+    },
+    {
+      "error": "Load balancer move failed: An error occurred (InvalidGroup.Duplicate) when calling the CreateSecurityGroup operation: The security group 'multimodal-librarian-alb-shared-vpc' already exists for VPC 'vpc-014ac5b9fc828c78f'",
+      "timestamp": "2026-01-11T18:03:41.956425"
+    }
+  ],
+  "resources_created": []
+}

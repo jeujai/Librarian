@@ -1,0 +1,17 @@
+{
+  "timestamp": "2026-01-17T01:20:00.748686",
+  "nlb_dns": "multimodal-lib-prod-nlb-9f03ee5dda51903f.elb.us-east-1.amazonaws.com",
+  "nlb_arn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:loadbalancer/net/multimodal-lib-prod-nlb/9f03ee5dda51903f",
+  "vpc_id": "vpc-0b2186b38779e77f6",
+  "subnets": [
+    "subnet-0c352188f5398a718",
+    "subnet-02f4d9ecb751beb27",
+    "subnet-02fe694f061238d5a"
+  ],
+  "recommendations": [
+    "Wait 5-10 minutes for NLB to be fully operational",
+    "Test NLB directly before testing CloudFront",
+    "Create CloudFront invalidation if needed",
+    "Consider using ALB instead of NLB for HTTP traffic"
+  ]
+}

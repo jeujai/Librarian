@@ -1,0 +1,166 @@
+{
+  "version": "1.0.0",
+  "databases": {
+    "postgresql": {
+      "current_version": "1.0.1",
+      "schema_files": [
+        "database/postgresql/init/01_extensions.sql",
+        "database/postgresql/init/02_users_and_permissions.sql",
+        "database/postgresql/init/03_performance_tuning.sql",
+        "database/postgresql/init/04_monitoring_setup.sql",
+        "database/postgresql/init/05_maintenance_functions.sql",
+        "database/postgresql/init/06_application_schema.sql",
+        "database/postgresql/init/07_migration_compatibility.sql",
+        "database/postgresql/init/08_existing_migrations_port.sql"
+      ],
+      "validation_rules": {
+        "required_extensions": [
+          "uuid-ossp",
+          "pg_trgm",
+          "btree_gin",
+          "pg_stat_statements",
+          "pgcrypto",
+          "citext"
+        ],
+        "required_schemas": [
+          "multimodal_librarian",
+          "audit",
+          "monitoring",
+          "maintenance"
+        ],
+        "required_tables": [
+          "multimodal_librarian.users",
+          "multimodal_librarian.documents",
+          "multimodal_librarian.conversation_threads",
+          "multimodal_librarian.messages",
+          "multimodal_librarian.knowledge_chunks",
+          "multimodal_librarian.domain_configurations",
+          "multimodal_librarian.schema_migrations",
+          "audit.audit_log"
+        ],
+        "required_functions": [
+          "multimodal_librarian.get_schema_version",
+          "multimodal_librarian.validate_schema_integrity"
+        ],
+        "required_views": [
+          "multimodal_librarian.schema_version"
+        ]
+      }
+    },
+    "milvus": {
+      "current_version": "1.0.1",
+      "schema_files": [
+        "database/milvus/schemas.py",
+        "database/milvus/init_schemas.py",
+        "database/milvus/schema_manager.py"
+      ],
+      "validation_rules": {
+        "required_collections": [
+          "knowledge_chunks",
+          "document_embeddings",
+          "conversation_embeddings"
+        ],
+        "optional_collections": [
+          "multimedia_embeddings"
+        ],
+        "vector_dimensions": {
+          "knowledge_chunks": 384,
+          "document_embeddings": 384,
+          "conversation_embeddings": 384,
+          "multimedia_embeddings": 512
+        },
+        "required_indexes": {
+          "knowledge_chunks": ["embedding"],
+          "document_embeddings": ["embedding"],
+          "conversation_embeddings": ["embedding"]
+        },
+        "metadata_collections": [
+          "_schema_metadata"
+        ]
+      }
+    },
+    "neo4j": {
+      "current_version": "1.0.1",
+      "schema_files": [
+        "database/neo4j/init/00_schema_initialization.cypher",
+        "database/neo4j/init/01_verify_plugins.cypher",
+        "database/neo4j/init/02_create_constraints.cypher",
+        "database/neo4j/init/03_sample_data.cypher"
+      ],
+      "validation_rules": {
+        "required_constraints": [
+          "document_id_unique",
+          "concept_name_type_unique",
+          "user_id_unique",
+          "user_email_unique",
+          "conversation_id_unique",
+          "chunk_id_unique",
+          "topic_name_unique",
+          "metric_name_timestamp_unique"
+        ],
+        "required_indexes": [
+          "document_created_at",
+          "document_status",
+          "concept_confidence",
+          "concept_category",
+          "user_created_at",
+          "conversation_created_at",
+          "chunk_position",
+          "metric_timestamp"
+        ],
+        "required_node_types": [
+          "Document",
+          "Concept",
+          "User",
+          "Conversation",
+          "Chunk",
+          "Topic",
+          "Metric",
+          "SchemaDoc",
+          "SchemaVersion",
+          "Migration"
+        ],
+        "required_relationship_types": [
+          "CONTAINS",
+          "RELATED_TO",
+          "OWNS",
+          "PARTICIPATED_IN",
+          "ABOUT",
+          "HAS_CHUNK",
+          "MENTIONS",
+          "HAS_METRIC",
+          "INCLUDES",
+          "APPLIES_TO",
+          "ACCESSED"
+        ],
+        "required_fulltext_indexes": [
+          "concept_fulltext_search",
+          "document_fulltext_search",
+          "chunk_fulltext_search",
+          "conversation_fulltext_search"
+        ]
+      }
+    }
+  },
+  "migration_history": [],
+  "validation_settings": {
+    "strict_mode": false,
+    "auto_fix_minor_issues": true,
+    "backup_before_migration": true,
+    "validation_timeout": 300,
+    "max_validation_retries": 3,
+    "schema_drift_threshold": 0.1
+  },
+  "version_tracking": {
+    "enabled": true,
+    "track_checksums": true,
+    "track_migration_timing": true,
+    "store_rollback_info": true
+  },
+  "backup_settings": {
+    "enabled": true,
+    "retention_days": 30,
+    "compression": true,
+    "verify_backups": true
+  }
+}

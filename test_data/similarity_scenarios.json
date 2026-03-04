@@ -1,0 +1,1064 @@
+[
+  {
+    "scenario_id": "scenario_001_exact_match",
+    "scenario_type": "exact_match",
+    "documents": [
+      {
+        "id": "scenario_001_exact_match_doc_0",
+        "content": "Machine learning is a subset of artificial intelligence that focuses on algorithms that can learn from data.",
+        "embedding": [
+          0.014367968478700751,
+          0.008803906583299005,
+          0.07058177039788198,
+          -0.06313363756126066,
+          -0.07211337008681133,
+          "...",
+          "(384 total)"
+        ],
+        "metadata": {
+          "scenario_id": "scenario_001_exact_match",
+          "doc_type": "base",
+          "content_type": "exact_match"
+        }
+      },
+      {
+        "id": "scenario_001_exact_match_doc_1",
+        "content": "Machine learning is a subset of artificial intelligence that focuses on algorithms that can learn from data.",
+        "embedding": [
+          -0.015125739559841783,
+          0.03383871622344504,
+          0.0674076059865603,
+          -0.07451855838843852,
+          -0.0749777256205871,
+          "...",
+          "(7 total)"
+        ],
+        "metadata": {
+          "scenario_id": "scenario_001_exact_match",
+          "doc_type": "variant",
+          "content_type": "exact_match",
+          "variant_index": 0
+        }
+      },
+      {
+        "id": "scenario_001_exact_match_doc_2",
+        "content": "Machine learning is a subset of AI that focuses on algorithms that can learn from data.",
+        "embedding": [
+          0.05355785567443059,
+          0.03197675975354273,
+          0.028208721541887683,
+          -0.04413242101086604,
+          -0.056426547944942944,
+          "...",
+          "(7 total)"
+        ],
+        "metadata": {
+          "scenario_id": "scenario_001_exact_match",
+          "doc_type": "variant",
+          "content_type": "exact_match",
+          "variant_index": 1
+        }
+      },
+      {
+        "id": "scenario_001_exact_match_doc_3",
+        "content": "ML is a subset of artificial intelligence that focuses on algorithms that can learn from data.",
+        "embedding": [
+          0.019908404955717808,
+          0.01604741170458635,
+          0.07549436397253363,
+          -0.05645254052305337,
+          -0.10080577739024156,
+          "...",
+          "(7 total)"
+        ],
+        "metadata": {
+          "scenario_id": "scenario_001_exact_match",
+          "doc_type": "variant",
+          "content_type": "exact_match",
+          "variant_index": 2
+        }
+      }
+    ],
+    "queries": [
+      {
+        "id": "scenario_001_exact_match_query_0",
+        "content": "Machine learning is a subset of artificial intelli...",
+        "embedding": [
+          0.015083898925757363,
+          0.0033804201894116377,
+          0.0691333420644858,
+          -0.06402670020264986,
+          -0.0686775894801885,
+          "...",
+          "(384 total)"
+        ],
+        "expected_results": [
+          "scenario_001_exact_match_doc_0",
+          "scenario_001_exact_match_doc_1",
+          "scenario_001_exact_match_doc_2",
+          "scenario_001_exact_match_doc_3"
+        ],
+        "expected_similarities": [
+          0.98,
+          0.97,
+          0.96,
+          0.95
+        ]
+      }
+    ],
+    "validation_criteria": {
+      "min_similarity": 0.95,
+      "max_similarity": 1.0,
+      "expected_rank_order": true
+    }
+  },
+  {
+    "scenario_id": "scenario_002_semantic_match",
+    "scenario_type": "semantic_match",
+    "documents": [
+      {
+        "id": "scenario_002_semantic_match_doc_0",
+        "content": "Cloud computing provides scalable infrastructure for modern applications.",
+        "embedding": [
+          -0.03877967567148854,
+          0.007846482243843779,
+          -0.0050659518498855,
+          0.04735836810999463,
+          0.006596827828701101,
+          "...",
+          "(384 total)"
+        ],
+        "metadata": {
+          "scenario_id": "scenario_002_semantic_match",
+          "doc_type": "base",
+          "content_type": "semantic_match"
+        }
+      },
+      {
+        "id": "scenario_002_semantic_match_doc_1",
+        "content": "Distributed computing platforms offer elastic resources for contemporary software systems.",
+        "embedding": [
+          -0.08177754771499202,
+          -0.005586038854372515,
+          0.03849406226809108,
+          -0.10682886084809014,
+          -0.03361499104292043,
+          "...",
+          "(7 total)"
+        ],
+        "metadata": {
+          "scenario_id": "scenario_002_semantic_match",
+          "doc_type": "semantic_variant",
+          "content_type": "semantic_match",
+          "variant_index": 0
+        }
+      },
+      {
+        "id": "scenario_002_semantic_match_doc_2",
+        "content": "Modern applications benefit from the scalability of cloud-based infrastructure.",
+        "embedding": [
+          -0.08191509151301567,
+          -0.08631490097604884,
+          -0.0065785023162360625,
+          -0.0865701458424626,
+          0.011799239160344449,
+          "...",
+          "(7 total)"
+        ],
+        "metadata": {
+          "scenario_id": "scenario_002_semantic_match",
+          "doc_type": "semantic_variant",
+          "content_type": "semantic_match",
+          "variant_index": 1
+        }
+      },
+      {
+        "id": "scenario_002_semantic_match_doc_3",
+        "content": "Scalable cloud services enable flexible deployment of digital solutions.",
+        "embedding": [
+          -0.018388331194175704,
+          -0.06265809601651887,
+          0.05416439016951689,
+          0.03329936412364279,
+          -0.030398678648676326,
+          "...",
+          "(7 total)"
+        ],
+        "metadata": {
+          "scenario_id": "scenario_002_semantic_match",
+          "doc_type": "semantic_variant",
+          "content_type": "semantic_match",
+          "variant_index": 2
+        }
+      }
+    ],
+    "queries": [
+      {
+        "id": "scenario_002_semantic_match_query_0",
+        "content": "H o w   t o   u s e   m e t h o d   f o r   [ ' C l o u d ' ,   ' c o m p u t i n g ' ,   ' p r o v i d e s ' ]",
+        "embedding": [
+          0.06705025902387349,
+          -0.016928339576666496,
+          0.01854548711076891,
+          0.04468723074782585,
+          -0.016637419101766117,
+          "...",
+          "(384 total)"
+        ],
+        "expected_results": [
+          "scenario_002_semantic_match_doc_0",
+          "scenario_002_semantic_match_doc_1",
+          "scenario_002_semantic_match_doc_2",
+          "scenario_002_semantic_match_doc_3"
+        ],
+        "expected_similarities": [
+          0.75,
+          0.7,
+          0.68,
+          0.65
+        ]
+      }
+    ],
+    "validation_criteria": {
+      "min_similarity": 0.6,
+      "max_similarity": 0.9,
+      "expected_rank_order": true
+    }
+  },
+  {
+    "scenario_id": "scenario_003_domain_cluster",
+    "scenario_type": "domain_cluster",
+    "domain": "software_engineering",
+    "documents": [
+      {
+        "id": "scenario_003_domain_cluster_doc_0",
+        "content": "Continuous integration automates the process of code integration and testing.",
+        "embedding": [
+          -0.006067744191497367,
+          0.027854129427548086,
+          0.04327012133232752,
+          0.08669524214772165,
+          0.060468179127334314,
+          "...",
+          "(384 total)"
+        ],
+        "metadata": {
+          "scenario_id": "scenario_003_domain_cluster",
+          "domain": "software_engineering",
+          "doc_type": "domain_member",
+          "content_type": "domain_cluster"
+        }
+      },
+      {
+        "id": "scenario_003_domain_cluster_doc_1",
+        "content": "Microservices architecture decomposes applications into loosely coupled services.",
+        "embedding": [
+          0.05361352063179822,
+          -0.07869458348616035,
+          -0.00397950401575751,
+          0.006264740374887582,
+          0.012381301034102487,
+          "...",
+          "(7 total)"
+        ],
+        "metadata": {
+          "scenario_id": "scenario_003_domain_cluster",
+          "domain": "software_engineering",
+          "doc_type": "domain_member",
+          "content_type": "domain_cluster"
+        }
+      },
+      {
+        "id": "scenario_003_domain_cluster_doc_2",
+        "content": "Version control systems track changes in source code over time.",
+        "embedding": [
+          0.0009757034374830815,
+          0.07152512573433681,
+          -0.008551928081797059,
+          0.0001049655824064279,
+          -0.0046593242158207105,
+          "...",
+          "(7 total)"
+        ],
+        "metadata": {
+          "scenario_id": "scenario_003_domain_cluster",
+          "domain": "software_engineering",
+          "doc_type": "domain_member",
+          "content_type": "domain_cluster"
+        }
+      },
+      {
+        "id": "scenario_003_domain_cluster_doc_3",
+        "content": "Code refactoring improves software structure without changing functionality.",
+        "embedding": [
+          -0.00031670724867447587,
+          0.036336912925219796,
+          -0.04303614792725771,
+          -0.0038566532595555826,
+          0.07119344063698672,
+          "...",
+          "(7 total)"
+        ],
+        "metadata": {
+          "scenario_id": "scenario_003_domain_cluster",
+          "domain": "software_engineering",
+          "doc_type": "domain_member",
+          "content_type": "domain_cluster"
+        }
+      }
+    ],
+    "queries": [
+      {
+        "id": "scenario_003_domain_cluster_query_0",
+        "content": "How does maintainability work?",
+        "embedding": [
+          0.018751185633397036,
+          0.07663322457436941,
+          0.04906244594462056,
+          -0.03689472445367572,
+          0.049324015357849804,
+          "...",
+          "(384 total)"
+        ],
+        "expected_results": [
+          "scenario_003_domain_cluster_doc_0",
+          "scenario_003_domain_cluster_doc_1",
+          "scenario_003_domain_cluster_doc_2",
+          "scenario_003_domain_cluster_doc_3"
+        ],
+        "expected_similarities": [
+          0.65,
+          0.62,
+          0.6,
+          0.58
+        ]
+      }
+    ],
+    "validation_criteria": {
+      "min_similarity": 0.5,
+      "max_similarity": 0.8,
+      "cluster_cohesion": true
+    }
+  },
+  {
+    "scenario_id": "scenario_004_negative_similarity",
+    "scenario_type": "negative_similarity",
+    "documents": [
+      {
+        "id": "scenario_004_negative_similarity_doc_0",
+        "content": "Machine learning algorithms optimize objective functions through iterative training.",
+        "embedding": [
+          -0.034248478032037406,
+          0.05850495920653112,
+          -0.05067354009191194,
+          -0.05742248290759839,
+          0.031184466401586296,
+          "...",
+          "(384 total)"
+        ],
+        "metadata": {
+          "scenario_id": "scenario_004_negative_similarity",
+          "doc_type": "content_a",
+          "content_type": "negative_similarity"
+        }
+      },
+      {
+        "id": "scenario_004_negative_similarity_doc_1",
+        "content": "Traditional cooking recipes require precise measurements and timing for best results.",
+        "embedding": [
+          -0.002300200816334442,
+          0.0533919438928141,
+          -0.08381270619012263,
+          -0.0009917371689194996,
+          -0.09074516069371696,
+          "...",
+          "(7 total)"
+        ],
+        "metadata": {
+          "scenario_id": "scenario_004_negative_similarity",
+          "doc_type": "content_b",
+          "content_type": "negative_similarity"
+        }
+      }
+    ],
+    "queries": [
+      {
+        "id": "scenario_004_negative_similarity_query_0",
+        "content": "Machine learning algorithms op...",
+        "embedding": [
+          -0.03774007801168132,
+          0.04466596666841207,
+          -0.003705374476994981,
+          -0.023424855167892448,
+          0.04729105963554597,
+          "...",
+          "(384 total)"
+        ],
+        "expected_results": [
+          "scenario_004_negative_similarity_doc_0"
+        ],
+        "expected_similarities": [
+          0.7
+        ],
+        "negative_results": [
+          "scenario_004_negative_similarity_doc_1"
+        ],
+        "max_negative_similarity": 0.3
+      }
+    ],
+    "validation_criteria": {
+      "positive_min_similarity": 0.6,
+      "negative_max_similarity": 0.3,
+      "clear_separation": true
+    }
+  },
+  {
+    "scenario_id": "scenario_005_hierarchical",
+    "scenario_type": "hierarchical",
+    "documents": [
+      {
+        "id": "scenario_005_hierarchical_doc_parent",
+        "content": "Software development involves multiple phases from design to deployment.",
+        "embedding": [
+          0.01843872766612064,
+          0.06590760345039638,
+          -0.010322616742164309,
+          0.06971597702095676,
+          -0.02203987780215308,
+          "...",
+          "(384 total)"
+        ],
+        "metadata": {
+          "scenario_id": "scenario_005_hierarchical",
+          "doc_type": "parent",
+          "content_type": "hierarchical",
+          "hierarchy_level": 0
+        }
+      },
+      {
+        "id": "scenario_005_hierarchical_doc_child_0",
+        "content": "Requirements analysis defines what the software system should accomplish.",
+        "embedding": [
+          0.06743134467803232,
+          0.012529265878232592,
+          0.00653054771323909,
+          0.07110132294185594,
+          0.00124602494009618,
+          "...",
+          "(7 total)"
+        ],
+        "metadata": {
+          "scenario_id": "scenario_005_hierarchical",
+          "doc_type": "child",
+          "content_type": "hierarchical",
+          "hierarchy_level": 1,
+          "parent_id": "scenario_005_hierarchical_doc_parent"
+        }
+      },
+      {
+        "id": "scenario_005_hierarchical_doc_child_1",
+        "content": "System design creates the architectural blueprint for implementation.",
+        "embedding": [
+          0.07227936299362048,
+          0.03446269435045469,
+          0.021778643505292076,
+          -0.10450142878706899,
+          -0.07389423852851232,
+          "...",
+          "(7 total)"
+        ],
+        "metadata": {
+          "scenario_id": "scenario_005_hierarchical",
+          "doc_type": "child",
+          "content_type": "hierarchical",
+          "hierarchy_level": 1,
+          "parent_id": "scenario_005_hierarchical_doc_parent"
+        }
+      },
+      {
+        "id": "scenario_005_hierarchical_doc_child_2",
+        "content": "Testing ensures the software meets quality and functional requirements.",
+        "embedding": [
+          -0.05729578728092241,
+          -0.023961659594924734,
+          0.002907794250940029,
+          0.05091844378297173,
+          0.014543015095127643,
+          "...",
+          "(7 total)"
+        ],
+        "metadata": {
+          "scenario_id": "scenario_005_hierarchical",
+          "doc_type": "child",
+          "content_type": "hierarchical",
+          "hierarchy_level": 1,
+          "parent_id": "scenario_005_hierarchical_doc_parent"
+        }
+      }
+    ],
+    "queries": [
+      {
+        "id": "scenario_005_hierarchical_query_0",
+        "content": "O v e r v i e w   o f   [ ' S o f t w a r e ' ,   ' d e v e l o p m e n t ' ,   ' i n v o l v e s ' ]",
+        "embedding": [
+          0.0013159577518757903,
+          0.07148684113395856,
+          0.10884333817269427,
+          0.09758938198659442,
+          0.03155573729960963,
+          "...",
+          "(384 total)"
+        ],
+        "expected_results": [
+          "scenario_005_hierarchical_doc_parent",
+          "scenario_005_hierarchical_doc_child_0",
+          "scenario_005_hierarchical_doc_child_1",
+          "scenario_005_hierarchical_doc_child_2"
+        ],
+        "expected_similarities": [
+          0.75,
+          0.65,
+          0.65,
+          0.65
+        ],
+        "hierarchy_preserved": true
+      }
+    ],
+    "validation_criteria": {
+      "parent_child_similarity": 0.6,
+      "hierarchy_order": true,
+      "parent_highest_similarity": true
+    }
+  },
+  {
+    "scenario_id": "scenario_006_exact_match",
+    "scenario_type": "exact_match",
+    "documents": [
+      {
+        "id": "scenario_006_exact_match_doc_0",
+        "content": "Machine learning is a subset of artificial intelligence that focuses on algorithms that can learn from data.",
+        "embedding": [
+          0.014367968478700751,
+          0.008803906583299005,
+          0.07058177039788198,
+          -0.06313363756126066,
+          -0.07211337008681133,
+          "...",
+          "(384 total)"
+        ],
+        "metadata": {
+          "scenario_id": "scenario_006_exact_match",
+          "doc_type": "base",
+          "content_type": "exact_match"
+        }
+      },
+      {
+        "id": "scenario_006_exact_match_doc_1",
+        "content": "Machine learning is a subset of artificial intelligence that focuses on algorithms that can learn from data.",
+        "embedding": [
+          -0.01859633839247576,
+          0.04361048129267074,
+          0.06846745930468696,
+          -0.07371588033142994,
+          -0.07045759751994735,
+          "...",
+          "(7 total)"
+        ],
+        "metadata": {
+          "scenario_id": "scenario_006_exact_match",
+          "doc_type": "variant",
+          "content_type": "exact_match",
+          "variant_index": 0
+        }
+      },
+      {
+        "id": "scenario_006_exact_match_doc_2",
+        "content": "Machine learning is a subset of AI that focuses on algorithms that can learn from data.",
+        "embedding": [
+          0.05110204731301118,
+          0.032053728652004086,
+          0.02771663000597766,
+          -0.04510254548753693,
+          -0.056800425413971185,
+          "...",
+          "(7 total)"
+        ],
+        "metadata": {
+          "scenario_id": "scenario_006_exact_match",
+          "doc_type": "variant",
+          "content_type": "exact_match",
+          "variant_index": 1
+        }
+      },
+      {
+        "id": "scenario_006_exact_match_doc_3",
+        "content": "ML is a subset of artificial intelligence that focuses on algorithms that can learn from data.",
+        "embedding": [
+          0.019772925838525423,
+          0.017536299678175393,
+          0.07234085806632527,
+          -0.05745512354604236,
+          -0.09836658184499955,
+          "...",
+          "(7 total)"
+        ],
+        "metadata": {
+          "scenario_id": "scenario_006_exact_match",
+          "doc_type": "variant",
+          "content_type": "exact_match",
+          "variant_index": 2
+        }
+      }
+    ],
+    "queries": [
+      {
+        "id": "scenario_006_exact_match_query_0",
+        "content": "Machine learning is a subset of artificial intelli...",
+        "embedding": [
+          0.015083898925757363,
+          0.0033804201894116377,
+          0.0691333420644858,
+          -0.06402670020264986,
+          -0.0686775894801885,
+          "...",
+          "(384 total)"
+        ],
+        "expected_results": [
+          "scenario_006_exact_match_doc_0",
+          "scenario_006_exact_match_doc_1",
+          "scenario_006_exact_match_doc_2",
+          "scenario_006_exact_match_doc_3"
+        ],
+        "expected_similarities": [
+          0.98,
+          0.97,
+          0.96,
+          0.95
+        ]
+      }
+    ],
+    "validation_criteria": {
+      "min_similarity": 0.95,
+      "max_similarity": 1.0,
+      "expected_rank_order": true
+    }
+  },
+  {
+    "scenario_id": "scenario_007_semantic_match",
+    "scenario_type": "semantic_match",
+    "documents": [
+      {
+        "id": "scenario_007_semantic_match_doc_0",
+        "content": "Artificial intelligence systems can process and analyze large datasets to identify patterns.",
+        "embedding": [
+          -0.014617972974791135,
+          -0.015997437888680313,
+          -0.07009634532597014,
+          -0.13547554241505877,
+          0.07672073208227514,
+          "...",
+          "(384 total)"
+        ],
+        "metadata": {
+          "scenario_id": "scenario_007_semantic_match",
+          "doc_type": "base",
+          "content_type": "semantic_match"
+        }
+      },
+      {
+        "id": "scenario_007_semantic_match_doc_1",
+        "content": "AI algorithms excel at discovering hidden patterns in massive data collections.",
+        "embedding": [
+          0.06066578193402997,
+          -0.028948872954813375,
+          -0.026783603058639437,
+          -0.05956599071825745,
+          0.04325442002530122,
+          "...",
+          "(7 total)"
+        ],
+        "metadata": {
+          "scenario_id": "scenario_007_semantic_match",
+          "doc_type": "semantic_variant",
+          "content_type": "semantic_match",
+          "variant_index": 0
+        }
+      },
+      {
+        "id": "scenario_007_semantic_match_doc_2",
+        "content": "Machine learning models can uncover insights from big data through pattern recognition.",
+        "embedding": [
+          0.019436360994393182,
+          -0.035026256926561944,
+          -0.013037984156542653,
+          -0.04220177500740988,
+          0.08199663711276906,
+          "...",
+          "(7 total)"
+        ],
+        "metadata": {
+          "scenario_id": "scenario_007_semantic_match",
+          "doc_type": "semantic_variant",
+          "content_type": "semantic_match",
+          "variant_index": 1
+        }
+      },
+      {
+        "id": "scenario_007_semantic_match_doc_3",
+        "content": "Intelligent systems leverage data mining techniques to extract meaningful patterns.",
+        "embedding": [
+          0.007998090986523942,
+          -0.016997456941686227,
+          -0.0036526727095181374,
+          -0.06535857360888889,
+          0.005404928586923486,
+          "...",
+          "(7 total)"
+        ],
+        "metadata": {
+          "scenario_id": "scenario_007_semantic_match",
+          "doc_type": "semantic_variant",
+          "content_type": "semantic_match",
+          "variant_index": 2
+        }
+      }
+    ],
+    "queries": [
+      {
+        "id": "scenario_007_semantic_match_query_0",
+        "content": "H o w   t o   u s e   a n a l y s i s   f o r   [ ' A r t i f i c i a l ' ,   ' i n t e l l i g e n c e ' ,   ' s y s t e m s ' ]",
+        "embedding": [
+          -0.01312433760623521,
+          -0.01947536232519998,
+          -0.02010007465403274,
+          -0.05607637635268086,
+          0.051414697271741146,
+          "...",
+          "(384 total)"
+        ],
+        "expected_results": [
+          "scenario_007_semantic_match_doc_0",
+          "scenario_007_semantic_match_doc_1",
+          "scenario_007_semantic_match_doc_2",
+          "scenario_007_semantic_match_doc_3"
+        ],
+        "expected_similarities": [
+          0.75,
+          0.7,
+          0.68,
+          0.65
+        ]
+      }
+    ],
+    "validation_criteria": {
+      "min_similarity": 0.6,
+      "max_similarity": 0.9,
+      "expected_rank_order": true
+    }
+  },
+  {
+    "scenario_id": "scenario_008_domain_cluster",
+    "scenario_type": "domain_cluster",
+    "domain": "machine_learning",
+    "documents": [
+      {
+        "id": "scenario_008_domain_cluster_doc_0",
+        "content": "Ensemble methods combine multiple models to improve prediction accuracy.",
+        "embedding": [
+          -0.002192800252211576,
+          -0.05139215955337906,
+          -0.05720060218563978,
+          0.033604383934007206,
+          0.06347015592786917,
+          "...",
+          "(384 total)"
+        ],
+        "metadata": {
+          "scenario_id": "scenario_008_domain_cluster",
+          "domain": "machine_learning",
+          "doc_type": "domain_member",
+          "content_type": "domain_cluster"
+        }
+      },
+      {
+        "id": "scenario_008_domain_cluster_doc_1",
+        "content": "Reinforcement learning agents learn through interaction with their environment.",
+        "embedding": [
+          -0.005565697121829785,
+          0.05831702953899372,
+          -0.012064317464873768,
+          -0.07816898601848063,
+          -0.009403577745423268,
+          "...",
+          "(7 total)"
+        ],
+        "metadata": {
+          "scenario_id": "scenario_008_domain_cluster",
+          "domain": "machine_learning",
+          "doc_type": "domain_member",
+          "content_type": "domain_cluster"
+        }
+      },
+      {
+        "id": "scenario_008_domain_cluster_doc_2",
+        "content": "Unsupervised learning discovers hidden structures in unlabeled datasets.",
+        "embedding": [
+          0.012691887250873774,
+          0.01280194427493378,
+          -0.009295047129420718,
+          -0.07019024360320279,
+          -0.0358147656284648,
+          "...",
+          "(7 total)"
+        ],
+        "metadata": {
+          "scenario_id": "scenario_008_domain_cluster",
+          "domain": "machine_learning",
+          "doc_type": "domain_member",
+          "content_type": "domain_cluster"
+        }
+      },
+      {
+        "id": "scenario_008_domain_cluster_doc_3",
+        "content": "Supervised learning algorithms require labeled training data to make predictions.",
+        "embedding": [
+          0.06578618287408168,
+          0.03692141324413717,
+          0.06477063973843296,
+          -0.04557641142899823,
+          0.03855030767118756,
+          "...",
+          "(7 total)"
+        ],
+        "metadata": {
+          "scenario_id": "scenario_008_domain_cluster",
+          "domain": "machine_learning",
+          "doc_type": "domain_member",
+          "content_type": "domain_cluster"
+        }
+      }
+    ],
+    "queries": [
+      {
+        "id": "scenario_008_domain_cluster_query_0",
+        "content": "Explain reinforcement learning in simple terms",
+        "embedding": [
+          0.014950309162104969,
+          -0.02247494918192709,
+          -0.04333905019547708,
+          -0.047939176130219335,
+          0.026297823223157255,
+          "...",
+          "(384 total)"
+        ],
+        "expected_results": [
+          "scenario_008_domain_cluster_doc_0",
+          "scenario_008_domain_cluster_doc_1",
+          "scenario_008_domain_cluster_doc_2",
+          "scenario_008_domain_cluster_doc_3"
+        ],
+        "expected_similarities": [
+          0.65,
+          0.62,
+          0.6,
+          0.58
+        ]
+      }
+    ],
+    "validation_criteria": {
+      "min_similarity": 0.5,
+      "max_similarity": 0.8,
+      "cluster_cohesion": true
+    }
+  },
+  {
+    "scenario_id": "scenario_009_negative_similarity",
+    "scenario_type": "negative_similarity",
+    "documents": [
+      {
+        "id": "scenario_009_negative_similarity_doc_0",
+        "content": "Machine learning algorithms optimize objective functions through iterative training.",
+        "embedding": [
+          -0.034248478032037406,
+          0.05850495920653112,
+          -0.05067354009191194,
+          -0.05742248290759839,
+          0.031184466401586296,
+          "...",
+          "(384 total)"
+        ],
+        "metadata": {
+          "scenario_id": "scenario_009_negative_similarity",
+          "doc_type": "content_a",
+          "content_type": "negative_similarity"
+        }
+      },
+      {
+        "id": "scenario_009_negative_similarity_doc_1",
+        "content": "Traditional cooking recipes require precise measurements and timing for best results.",
+        "embedding": [
+          -0.000515129262448692,
+          0.051014328357703385,
+          -0.08147787858000537,
+          0.001542281450738045,
+          -0.09238042760204986,
+          "...",
+          "(7 total)"
+        ],
+        "metadata": {
+          "scenario_id": "scenario_009_negative_similarity",
+          "doc_type": "content_b",
+          "content_type": "negative_similarity"
+        }
+      }
+    ],
+    "queries": [
+      {
+        "id": "scenario_009_negative_similarity_query_0",
+        "content": "Machine learning algorithms op...",
+        "embedding": [
+          -0.03774007801168132,
+          0.04466596666841207,
+          -0.003705374476994981,
+          -0.023424855167892448,
+          0.04729105963554597,
+          "...",
+          "(384 total)"
+        ],
+        "expected_results": [
+          "scenario_009_negative_similarity_doc_0"
+        ],
+        "expected_similarities": [
+          0.7
+        ],
+        "negative_results": [
+          "scenario_009_negative_similarity_doc_1"
+        ],
+        "max_negative_similarity": 0.3
+      }
+    ],
+    "validation_criteria": {
+      "positive_min_similarity": 0.6,
+      "negative_max_similarity": 0.3,
+      "clear_separation": true
+    }
+  },
+  {
+    "scenario_id": "scenario_010_hierarchical",
+    "scenario_type": "hierarchical",
+    "documents": [
+      {
+        "id": "scenario_010_hierarchical_doc_parent",
+        "content": "Artificial intelligence encompasses various computational approaches to intelligent behavior.",
+        "embedding": [
+          -0.01157541499419016,
+          0.07879996464097394,
+          -0.038504458756006665,
+          -0.042308109729722196,
+          0.05175628641815061,
+          "...",
+          "(384 total)"
+        ],
+        "metadata": {
+          "scenario_id": "scenario_010_hierarchical",
+          "doc_type": "parent",
+          "content_type": "hierarchical",
+          "hierarchy_level": 0
+        }
+      },
+      {
+        "id": "scenario_010_hierarchical_doc_child_0",
+        "content": "Machine learning is a branch of AI that focuses on learning from data.",
+        "embedding": [
+          0.01622120546774516,
+          0.028799933854845132,
+          0.012646070384525938,
+          -0.06024031053351792,
+          0.10337090332287725,
+          "...",
+          "(7 total)"
+        ],
+        "metadata": {
+          "scenario_id": "scenario_010_hierarchical",
+          "doc_type": "child",
+          "content_type": "hierarchical",
+          "hierarchy_level": 1,
+          "parent_id": "scenario_010_hierarchical_doc_parent"
+        }
+      },
+      {
+        "id": "scenario_010_hierarchical_doc_child_1",
+        "content": "Computer vision enables machines to interpret and understand visual information.",
+        "embedding": [
+          0.06375286535376654,
+          0.019580276008386948,
+          0.02337880915062601,
+          -0.09183528051291796,
+          0.06893445026274425,
+          "...",
+          "(7 total)"
+        ],
+        "metadata": {
+          "scenario_id": "scenario_010_hierarchical",
+          "doc_type": "child",
+          "content_type": "hierarchical",
+          "hierarchy_level": 1,
+          "parent_id": "scenario_010_hierarchical_doc_parent"
+        }
+      },
+      {
+        "id": "scenario_010_hierarchical_doc_child_2",
+        "content": "Natural language processing allows computers to understand human language.",
+        "embedding": [
+          -0.02656117605587028,
+          0.023414254735733588,
+          -0.022886142623592506,
+          -0.03473999784700288,
+          0.017265789236879957,
+          "...",
+          "(7 total)"
+        ],
+        "metadata": {
+          "scenario_id": "scenario_010_hierarchical",
+          "doc_type": "child",
+          "content_type": "hierarchical",
+          "hierarchy_level": 1,
+          "parent_id": "scenario_010_hierarchical_doc_parent"
+        }
+      }
+    ],
+    "queries": [
+      {
+        "id": "scenario_010_hierarchical_query_0",
+        "content": "O v e r v i e w   o f   [ ' A r t i f i c i a l ' ,   ' i n t e l l i g e n c e ' ,   ' e n c o m p a s s e s ' ]",
+        "embedding": [
+          0.02583918979166738,
+          0.057678808874982036,
+          0.019356069296600425,
+          0.004696661841979511,
+          0.04461691039794466,
+          "...",
+          "(384 total)"
+        ],
+        "expected_results": [
+          "scenario_010_hierarchical_doc_parent",
+          "scenario_010_hierarchical_doc_child_0",
+          "scenario_010_hierarchical_doc_child_1",
+          "scenario_010_hierarchical_doc_child_2"
+        ],
+        "expected_similarities": [
+          0.75,
+          0.65,
+          0.65,
+          0.65
+        ],
+        "hierarchy_preserved": true
+      }
+    ],
+    "validation_criteria": {
+      "parent_child_similarity": 0.6,
+      "hierarchy_order": true,
+      "parent_highest_similarity": true
+    }
+  }
+]

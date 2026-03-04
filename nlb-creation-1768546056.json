@@ -1,0 +1,766 @@
+{
+  "timestamp": "2026-01-15T23:40:10.434111",
+  "success": false,
+  "steps": {
+    "target_group": {
+      "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-nlb-tg/e3896922f939759a",
+      "TargetGroupName": "multimodal-lib-prod-nlb-tg",
+      "Details": {
+        "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-nlb-tg/e3896922f939759a",
+        "TargetGroupName": "multimodal-lib-prod-nlb-tg",
+        "Protocol": "TCP",
+        "Port": 8000,
+        "VpcId": "vpc-0b2186b38779e77f6",
+        "HealthCheckProtocol": "TCP",
+        "HealthCheckPort": "traffic-port",
+        "HealthCheckEnabled": true,
+        "HealthCheckIntervalSeconds": 30,
+        "HealthCheckTimeoutSeconds": 10,
+        "HealthyThresholdCount": 2,
+        "UnhealthyThresholdCount": 2,
+        "TargetType": "ip",
+        "IpAddressType": "ipv4"
+      }
+    },
+    "nlb": {
+      "LoadBalancerArn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:loadbalancer/net/multimodal-lib-prod-nlb/9f03ee5dda51903f",
+      "LoadBalancerName": "multimodal-lib-prod-nlb",
+      "DNSName": "multimodal-lib-prod-nlb-9f03ee5dda51903f.elb.us-east-1.amazonaws.com",
+      "Details": {
+        "LoadBalancerArn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:loadbalancer/net/multimodal-lib-prod-nlb/9f03ee5dda51903f",
+        "DNSName": "multimodal-lib-prod-nlb-9f03ee5dda51903f.elb.us-east-1.amazonaws.com",
+        "CanonicalHostedZoneId": "Z26RNL4JYFTOTI",
+        "CreatedTime": "2026-01-16 06:40:11.571000+00:00",
+        "LoadBalancerName": "multimodal-lib-prod-nlb",
+        "Scheme": "internet-facing",
+        "VpcId": "vpc-0b2186b38779e77f6",
+        "State": {
+          "Code": "provisioning"
+        },
+        "Type": "network",
+        "AvailabilityZones": [
+          {
+            "ZoneName": "us-east-1c",
+            "SubnetId": "subnet-02fe694f061238d5a",
+            "LoadBalancerAddresses": []
+          },
+          {
+            "ZoneName": "us-east-1b",
+            "SubnetId": "subnet-02f4d9ecb751beb27",
+            "LoadBalancerAddresses": []
+          },
+          {
+            "ZoneName": "us-east-1a",
+            "SubnetId": "subnet-0c352188f5398a718",
+            "LoadBalancerAddresses": []
+          }
+        ],
+        "IpAddressType": "ipv4",
+        "EnablePrefixForIpv6SourceNat": "off"
+      }
+    },
+    "listener": {
+      "ListenerArn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:listener/net/multimodal-lib-prod-nlb/9f03ee5dda51903f/850c668ccac1f986",
+      "Details": {
+        "ListenerArn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:listener/net/multimodal-lib-prod-nlb/9f03ee5dda51903f/850c668ccac1f986",
+        "LoadBalancerArn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:loadbalancer/net/multimodal-lib-prod-nlb/9f03ee5dda51903f",
+        "Port": 80,
+        "Protocol": "TCP",
+        "DefaultActions": [
+          {
+            "Type": "forward",
+            "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-nlb-tg/e3896922f939759a",
+            "ForwardConfig": {
+              "TargetGroups": [
+                {
+                  "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-nlb-tg/e3896922f939759a"
+                }
+              ],
+              "TargetGroupStickinessConfig": {
+                "Enabled": false
+              }
+            }
+          }
+        ]
+      }
+    },
+    "ecs_service": {
+      "ServiceName": "multimodal-lib-prod-service",
+      "Status": "ACTIVE",
+      "Details": {
+        "serviceArn": "arn:aws:ecs:us-east-1:591222106065:service/multimodal-lib-prod-cluster/multimodal-lib-prod-service",
+        "serviceName": "multimodal-lib-prod-service",
+        "clusterArn": "arn:aws:ecs:us-east-1:591222106065:cluster/multimodal-lib-prod-cluster",
+        "loadBalancers": [
+          {
+            "targetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-nlb-tg/e3896922f939759a",
+            "containerName": "multimodal-lib-prod-app",
+            "containerPort": 8000
+          }
+        ],
+        "serviceRegistries": [],
+        "status": "ACTIVE",
+        "desiredCount": 1,
+        "runningCount": 1,
+        "pendingCount": 1,
+        "launchType": "FARGATE",
+        "platformVersion": "LATEST",
+        "platformFamily": "Linux",
+        "taskDefinition": "arn:aws:ecs:us-east-1:591222106065:task-definition/multimodal-lib-prod-app:37",
+        "deploymentConfiguration": {
+          "deploymentCircuitBreaker": {
+            "enable": false,
+            "rollback": false
+          },
+          "maximumPercent": 200,
+          "minimumHealthyPercent": 100,
+          "strategy": "ROLLING",
+          "bakeTimeInMinutes": 0
+        },
+        "deployments": [
+          {
+            "id": "ecs-svc/7850796287636429201",
+            "status": "PRIMARY",
+            "taskDefinition": "arn:aws:ecs:us-east-1:591222106065:task-definition/multimodal-lib-prod-app:37",
+            "desiredCount": 0,
+            "pendingCount": 0,
+            "runningCount": 0,
+            "failedTasks": 0,
+            "createdAt": "2026-01-15 23:42:28.476000-07:00",
+            "updatedAt": "2026-01-15 23:42:28.476000-07:00",
+            "launchType": "FARGATE",
+            "platformVersion": "1.4.0",
+            "platformFamily": "Linux",
+            "networkConfiguration": {
+              "awsvpcConfiguration": {
+                "subnets": [
+                  "subnet-02f4d9ecb751beb27",
+                  "subnet-0c352188f5398a718"
+                ],
+                "securityGroups": [
+                  "sg-0393d472e770ed1a3"
+                ],
+                "assignPublicIp": "ENABLED"
+              }
+            },
+            "rolloutState": "IN_PROGRESS",
+            "rolloutStateReason": "ECS deployment ecs-svc/7850796287636429201 in progress."
+          },
+          {
+            "id": "ecs-svc/9862792438316354591",
+            "status": "ACTIVE",
+            "taskDefinition": "arn:aws:ecs:us-east-1:591222106065:task-definition/multimodal-lib-prod-app:37",
+            "desiredCount": 1,
+            "pendingCount": 1,
+            "runningCount": 1,
+            "failedTasks": 1,
+            "createdAt": "2026-01-15 23:18:51.417000-07:00",
+            "updatedAt": "2026-01-15 23:25:48.996000-07:00",
+            "launchType": "FARGATE",
+            "platformVersion": "1.4.0",
+            "platformFamily": "Linux",
+            "networkConfiguration": {
+              "awsvpcConfiguration": {
+                "subnets": [
+                  "subnet-02f4d9ecb751beb27",
+                  "subnet-0c352188f5398a718"
+                ],
+                "securityGroups": [
+                  "sg-0393d472e770ed1a3"
+                ],
+                "assignPublicIp": "ENABLED"
+              }
+            },
+            "rolloutState": "IN_PROGRESS",
+            "rolloutStateReason": "ECS deployment ecs-svc/9862792438316354591 in progress."
+          },
+          {
+            "id": "ecs-svc/5781017329432972580",
+            "status": "ACTIVE",
+            "taskDefinition": "arn:aws:ecs:us-east-1:591222106065:task-definition/multimodal-lib-prod-app:36",
+            "desiredCount": 0,
+            "pendingCount": 0,
+            "runningCount": 0,
+            "failedTasks": 0,
+            "createdAt": "2026-01-15 01:25:03.353000-07:00",
+            "updatedAt": "2026-01-15 23:25:53.258000-07:00",
+            "launchType": "FARGATE",
+            "platformVersion": "1.4.0",
+            "platformFamily": "Linux",
+            "networkConfiguration": {
+              "awsvpcConfiguration": {
+                "subnets": [
+                  "subnet-02f4d9ecb751beb27",
+                  "subnet-0c352188f5398a718"
+                ],
+                "securityGroups": [
+                  "sg-0393d472e770ed1a3"
+                ],
+                "assignPublicIp": "ENABLED"
+              }
+            },
+            "rolloutState": "COMPLETED",
+            "rolloutStateReason": "ECS deployment ecs-svc/5781017329432972580 completed."
+          }
+        ],
+        "roleArn": "arn:aws:iam::591222106065:role/aws-service-role/ecs.amazonaws.com/AWSServiceRoleForECS",
+        "events": [
+          {
+            "id": "c93a0b8e-85af-4ca3-8559-208d8a733630",
+            "createdAt": "2026-01-15 23:40:10.373000-07:00",
+            "message": "(service multimodal-lib-prod-service) has started 1 tasks: (task 00dcd2137b6d4882b81a11b7a8f78c47). Amazon ECS replaced 1 tasks due to an unhealthy status."
+          },
+          {
+            "id": "1d4e35b6-c301-491d-b069-557f575b056a",
+            "createdAt": "2026-01-15 23:33:54.155000-07:00",
+            "message": "(service multimodal-lib-prod-service) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg-v2/7b63a6337a5c7a34)"
+          },
+          {
+            "id": "42ea6761-a22e-4f1e-b563-cf29b66203c2",
+            "createdAt": "2026-01-15 23:33:54.099000-07:00",
+            "message": "(service multimodal-lib-prod-service, taskSet ecs-svc/9862792438316354591) has begun draining connections on 1 tasks."
+          },
+          {
+            "id": "5bb04c73-35b8-4e02-93cf-286ab9497f0f",
+            "createdAt": "2026-01-15 23:33:54.094000-07:00",
+            "message": "(service multimodal-lib-prod-service) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg-v2/7b63a6337a5c7a34)"
+          },
+          {
+            "id": "7fdac37e-7868-49c0-846f-13bd843ee98e",
+            "createdAt": "2026-01-15 23:33:43.379000-07:00",
+            "message": "(service multimodal-lib-prod-service) has stopped 1 running tasks: (task 031fcc3038544060a702d8036abc2952)."
+          },
+          {
+            "id": "f594d7fe-bbcb-450c-b36b-031bcb6a317a",
+            "createdAt": "2026-01-15 23:33:43.334000-07:00",
+            "message": "(service multimodal-lib-prod-service) (task 031fcc3038544060a702d8036abc2952) (port 8000) is unhealthy in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg-v2/7b63a6337a5c7a34) due to (reason Request timed out)."
+          },
+          {
+            "id": "c17821b9-ee7f-4abc-92bb-4a7212ed0f79",
+            "createdAt": "2026-01-15 23:32:35.035000-07:00",
+            "message": "(service multimodal-lib-prod-service) registered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg-v2/7b63a6337a5c7a34)"
+          },
+          {
+            "id": "db42c8d0-1ae7-488f-8412-770aab3c2561",
+            "createdAt": "2026-01-15 23:29:17.566000-07:00",
+            "message": "(service multimodal-lib-prod-service) has started 1 tasks: (task 4fc9a4c8280340a09c593d941c2b470d). Amazon ECS replaced 1 tasks due to an unhealthy status."
+          },
+          {
+            "id": "a2854291-9871-44a6-9ff9-bd1751bf9256",
+            "createdAt": "2026-01-15 23:25:53.331000-07:00",
+            "message": "(service multimodal-lib-prod-service) stopped 1 pending tasks."
+          },
+          {
+            "id": "0c47eb55-25d4-49e9-a9a5-debcc60d2eb9",
+            "createdAt": "2026-01-15 23:25:24.054000-07:00",
+            "message": "(service multimodal-lib-prod-service) has started 1 tasks: (task 70d56d93d1114c6e82ae26746b9eefb5)."
+          },
+          {
+            "id": "f1856f5c-0bb4-4df3-b0aa-91ff175effb0",
+            "createdAt": "2026-01-15 23:24:12.568000-07:00",
+            "message": "(service multimodal-lib-prod-service) registered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg-v2/7b63a6337a5c7a34)"
+          },
+          {
+            "id": "20e501d2-08be-47cd-98ed-36b9051b71c7",
+            "createdAt": "2026-01-15 23:21:10.262000-07:00",
+            "message": "(service multimodal-lib-prod-service) has started 1 tasks: (task 031fcc3038544060a702d8036abc2952)."
+          },
+          {
+            "id": "a72c7be0-3d3c-4b51-87e7-f68ee9f28b8c",
+            "createdAt": "2026-01-15 23:19:06.383000-07:00",
+            "message": "(service multimodal-lib-prod-service) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517)"
+          },
+          {
+            "id": "68898208-a35a-4c8c-81d4-8c0abf3d0939",
+            "createdAt": "2026-01-15 23:19:06.275000-07:00",
+            "message": "(service multimodal-lib-prod-service, taskSet ecs-svc/4635031034893061891) has begun draining connections on 1 tasks."
+          },
+          {
+            "id": "321a876c-f85a-4be3-a318-88c593ee0e86",
+            "createdAt": "2026-01-15 23:19:06.269000-07:00",
+            "message": "(service multimodal-lib-prod-service) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517)"
+          },
+          {
+            "id": "cbf6661e-3562-4758-a6b5-a50e66969e99",
+            "createdAt": "2026-01-15 23:18:57.078000-07:00",
+            "message": "(service multimodal-lib-prod-service) has stopped 1 running tasks: (task 08e7bb952ff1433d966de124ae4082c7)."
+          },
+          {
+            "id": "b75933ff-3452-4bcd-954e-85e7fa1bba1f",
+            "createdAt": "2026-01-15 23:18:57.024000-07:00",
+            "message": "(service multimodal-lib-prod-service) (task 08e7bb952ff1433d966de124ae4082c7) (port 8000) is unhealthy in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517) due to (reason Request timed out)."
+          },
+          {
+            "id": "ef5598ca-e8c3-401a-a505-7a6843802341",
+            "createdAt": "2026-01-15 23:14:50.137000-07:00",
+            "message": "(service multimodal-lib-prod-service) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517)"
+          },
+          {
+            "id": "444783bd-c5cf-47ac-9cd9-60da1a4d617b",
+            "createdAt": "2026-01-15 23:14:50.025000-07:00",
+            "message": "(service multimodal-lib-prod-service, taskSet ecs-svc/4635031034893061891) has begun draining connections on 1 tasks."
+          },
+          {
+            "id": "c424315d-fc0d-4b74-98ef-a0ea5b60d674",
+            "createdAt": "2026-01-15 23:14:50.017000-07:00",
+            "message": "(service multimodal-lib-prod-service) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517)"
+          },
+          {
+            "id": "6e914f98-281f-4b4a-85bd-d8aaa2f2d4d4",
+            "createdAt": "2026-01-15 23:14:41.173000-07:00",
+            "message": "(service multimodal-lib-prod-service) has stopped 1 running tasks: (task 01b6e761dee14a2d98361118cb696dde)."
+          },
+          {
+            "id": "ccb09abe-9edd-47b3-9e41-204415f44fd1",
+            "createdAt": "2026-01-15 23:14:41.129000-07:00",
+            "message": "(service multimodal-lib-prod-service) (task 01b6e761dee14a2d98361118cb696dde) (port 8000) is unhealthy in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517) due to (reason Request timed out)."
+          },
+          {
+            "id": "5b3e91ac-3ae0-4aa6-9786-599447f7950f",
+            "createdAt": "2026-01-15 23:13:31.667000-07:00",
+            "message": "(service multimodal-lib-prod-service) registered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517)"
+          },
+          {
+            "id": "c78efad4-85ab-4bc4-99b8-6bf708a23866",
+            "createdAt": "2026-01-15 23:10:03.596000-07:00",
+            "message": "(service multimodal-lib-prod-service) has started 1 tasks: (task 08e7bb952ff1433d966de124ae4082c7). Amazon ECS replaced 1 tasks due to an unhealthy status."
+          },
+          {
+            "id": "55b6b418-be8c-4e5d-98f7-fc980bda2dc3",
+            "createdAt": "2026-01-15 23:03:30.821000-07:00",
+            "message": "(service multimodal-lib-prod-service) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517)"
+          },
+          {
+            "id": "d86df01c-b46b-4e47-b19f-6ac336881e1d",
+            "createdAt": "2026-01-15 23:03:30.745000-07:00",
+            "message": "(service multimodal-lib-prod-service, taskSet ecs-svc/4635031034893061891) has begun draining connections on 1 tasks."
+          },
+          {
+            "id": "f0a41848-436c-4295-bc7d-f240c7558356",
+            "createdAt": "2026-01-15 23:03:30.739000-07:00",
+            "message": "(service multimodal-lib-prod-service) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517)"
+          },
+          {
+            "id": "973131ff-68c8-4e16-8448-64ed8c5088c1",
+            "createdAt": "2026-01-15 23:03:21.636000-07:00",
+            "message": "(service multimodal-lib-prod-service) has stopped 1 running tasks: (task 56851cd002e34abfab2e4552c7213105)."
+          },
+          {
+            "id": "5d1696ce-5a89-4872-aeda-e99e99f33aa6",
+            "createdAt": "2026-01-15 23:03:21.590000-07:00",
+            "message": "(service multimodal-lib-prod-service) (task 56851cd002e34abfab2e4552c7213105) (port 8000) is unhealthy in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517) due to (reason Request timed out)."
+          },
+          {
+            "id": "c554baef-79c3-4295-a8ed-42bb9f740050",
+            "createdAt": "2026-01-15 23:02:14.798000-07:00",
+            "message": "(service multimodal-lib-prod-service) registered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517)"
+          },
+          {
+            "id": "cf91cd91-2960-4407-89d2-f2fd5d2eb608",
+            "createdAt": "2026-01-15 22:59:02.058000-07:00",
+            "message": "(service multimodal-lib-prod-service) has started 1 tasks: (task 01b6e761dee14a2d98361118cb696dde). Amazon ECS replaced 1 tasks due to an unhealthy status."
+          },
+          {
+            "id": "d692803a-ff71-41d1-8f4f-c84e3e9ce4ad",
+            "createdAt": "2026-01-15 22:52:32.320000-07:00",
+            "message": "(service multimodal-lib-prod-service) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517)"
+          },
+          {
+            "id": "58bbead7-2c65-4a38-94c6-869b1e11ff1b",
+            "createdAt": "2026-01-15 22:52:32.250000-07:00",
+            "message": "(service multimodal-lib-prod-service, taskSet ecs-svc/4635031034893061891) has begun draining connections on 1 tasks."
+          },
+          {
+            "id": "55ca09fc-8315-44fa-87c4-5dd46c1de7d2",
+            "createdAt": "2026-01-15 22:52:32.245000-07:00",
+            "message": "(service multimodal-lib-prod-service) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517)"
+          },
+          {
+            "id": "62433df5-beae-4bac-831b-0ccd54478ee2",
+            "createdAt": "2026-01-15 22:52:23.256000-07:00",
+            "message": "(service multimodal-lib-prod-service) has stopped 1 running tasks: (task ae224b39eaee4f4da402c3faf0e17049)."
+          },
+          {
+            "id": "ce8b2ec5-6ffc-486a-ab9d-36006a931ae4",
+            "createdAt": "2026-01-15 22:52:23.204000-07:00",
+            "message": "(service multimodal-lib-prod-service) (task ae224b39eaee4f4da402c3faf0e17049) (port 8000) is unhealthy in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517) due to (reason Request timed out)."
+          },
+          {
+            "id": "d90e113d-638d-4a03-a5cf-f1bd92e30c66",
+            "createdAt": "2026-01-15 22:51:14.438000-07:00",
+            "message": "(service multimodal-lib-prod-service) registered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517)"
+          },
+          {
+            "id": "f3ce0490-dc66-4006-922a-13b5e5a102ff",
+            "createdAt": "2026-01-15 22:47:45.009000-07:00",
+            "message": "(service multimodal-lib-prod-service) has started 1 tasks: (task 56851cd002e34abfab2e4552c7213105). Amazon ECS replaced 1 tasks due to an unhealthy status."
+          },
+          {
+            "id": "a309d331-a147-4b3c-aedd-c2471b151e71",
+            "createdAt": "2026-01-15 22:41:23.435000-07:00",
+            "message": "(service multimodal-lib-prod-service) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517)"
+          },
+          {
+            "id": "09c2c4a3-5101-46d2-86af-b6d981860eeb",
+            "createdAt": "2026-01-15 22:41:23.359000-07:00",
+            "message": "(service multimodal-lib-prod-service, taskSet ecs-svc/4635031034893061891) has begun draining connections on 1 tasks."
+          },
+          {
+            "id": "464e4412-f4c5-4516-9181-8eda625b8e24",
+            "createdAt": "2026-01-15 22:41:23.351000-07:00",
+            "message": "(service multimodal-lib-prod-service) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517)"
+          },
+          {
+            "id": "f1cd717f-4d72-401f-97a1-5492d8afc244",
+            "createdAt": "2026-01-15 22:41:12.734000-07:00",
+            "message": "(service multimodal-lib-prod-service) has stopped 1 running tasks: (task 6161299d1ad2471fa5c5bc7bcbd6fb29)."
+          },
+          {
+            "id": "51e1bf79-c59e-43b9-872b-e802b4905ddc",
+            "createdAt": "2026-01-15 22:41:12.688000-07:00",
+            "message": "(service multimodal-lib-prod-service) (task 6161299d1ad2471fa5c5bc7bcbd6fb29) (port 8000) is unhealthy in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517) due to (reason Request timed out)."
+          },
+          {
+            "id": "6ff45dfc-2032-4086-b10b-481249d2c9df",
+            "createdAt": "2026-01-15 22:40:07.156000-07:00",
+            "message": "(service multimodal-lib-prod-service) registered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517)"
+          },
+          {
+            "id": "62b7c71f-26e2-49d8-839c-2849ce12840f",
+            "createdAt": "2026-01-15 22:36:44.198000-07:00",
+            "message": "(service multimodal-lib-prod-service) has started 1 tasks: (task ae224b39eaee4f4da402c3faf0e17049). Amazon ECS replaced 1 tasks due to an unhealthy status."
+          },
+          {
+            "id": "67e19370-0433-4266-b1b3-415dd09f44da",
+            "createdAt": "2026-01-15 22:30:06.945000-07:00",
+            "message": "(service multimodal-lib-prod-service) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517)"
+          },
+          {
+            "id": "e4d69365-0988-4a85-a50e-a1f5745bd0a5",
+            "createdAt": "2026-01-15 22:30:06.876000-07:00",
+            "message": "(service multimodal-lib-prod-service, taskSet ecs-svc/4635031034893061891) has begun draining connections on 1 tasks."
+          },
+          {
+            "id": "f6e1ca6d-6470-406a-afd9-99f9d71ca549",
+            "createdAt": "2026-01-15 22:30:06.872000-07:00",
+            "message": "(service multimodal-lib-prod-service) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517)"
+          },
+          {
+            "id": "c1ab8654-3f7c-4068-b36f-12caaf5e660e",
+            "createdAt": "2026-01-15 22:29:56.685000-07:00",
+            "message": "(service multimodal-lib-prod-service) has stopped 1 running tasks: (task 43481b8443a541a5b7243ed1c36940df)."
+          },
+          {
+            "id": "7863b0cd-bf10-4edd-a829-f72d031addf2",
+            "createdAt": "2026-01-15 22:29:56.588000-07:00",
+            "message": "(service multimodal-lib-prod-service) (task 43481b8443a541a5b7243ed1c36940df) (port 8000) is unhealthy in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517) due to (reason Request timed out)."
+          },
+          {
+            "id": "1616a433-10a5-4473-98f3-52ab1311bac7",
+            "createdAt": "2026-01-15 22:28:49.584000-07:00",
+            "message": "(service multimodal-lib-prod-service) registered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517)"
+          },
+          {
+            "id": "0db44668-0464-4040-9683-0c7a05a0bcbc",
+            "createdAt": "2026-01-15 22:25:29.258000-07:00",
+            "message": "(service multimodal-lib-prod-service) has started 1 tasks: (task 6161299d1ad2471fa5c5bc7bcbd6fb29). Amazon ECS replaced 1 tasks due to an unhealthy status."
+          },
+          {
+            "id": "db677dc9-1fff-4872-9919-8025d2ac2f16",
+            "createdAt": "2026-01-15 22:23:37.200000-07:00",
+            "message": "(service multimodal-lib-prod-service) stopped 1 pending tasks."
+          },
+          {
+            "id": "ef80a490-ac2b-4875-a092-0b185860f2a1",
+            "createdAt": "2026-01-15 22:23:18.569000-07:00",
+            "message": "(service multimodal-lib-prod-service) registered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517)"
+          },
+          {
+            "id": "1623adb9-c9fe-4b54-9de0-1c89d5b60cd2",
+            "createdAt": "2026-01-15 22:20:35.859000-07:00",
+            "message": "(service multimodal-lib-prod-service) has started 1 tasks: (task 3767db6c34a84d34a38660ae299d1660)."
+          },
+          {
+            "id": "11e83cc5-5157-4887-bf29-66fa74e4d2cd",
+            "createdAt": "2026-01-15 22:19:54.373000-07:00",
+            "message": "(service multimodal-lib-prod-service) has started 1 tasks: (task 43481b8443a541a5b7243ed1c36940df)."
+          },
+          {
+            "id": "fcb965f6-2ddf-4001-8c3e-a34ba5a881bc",
+            "createdAt": "2026-01-15 22:14:18.700000-07:00",
+            "message": "(service multimodal-lib-prod-service) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517)"
+          },
+          {
+            "id": "cc97d8b2-d1ff-4ff0-8362-55db963e623a",
+            "createdAt": "2026-01-15 22:14:18.578000-07:00",
+            "message": "(service multimodal-lib-prod-service, taskSet ecs-svc/2485035106701337513) has begun draining connections on 1 tasks."
+          },
+          {
+            "id": "6a82a6ee-58b8-4b08-8753-8b89e6df4b5c",
+            "createdAt": "2026-01-15 22:14:18.573000-07:00",
+            "message": "(service multimodal-lib-prod-service) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517)"
+          },
+          {
+            "id": "6dd03188-860c-436b-948e-40ccaa23fd50",
+            "createdAt": "2026-01-15 22:14:16.964000-07:00",
+            "message": "(service multimodal-lib-prod-service) has stopped 1 running tasks: (task 3a14bf2291394e649abbcc7daeb5b1d5)."
+          },
+          {
+            "id": "ab0336d8-305e-4f14-af72-2ec21320bd3c",
+            "createdAt": "2026-01-15 22:14:16.913000-07:00",
+            "message": "(service multimodal-lib-prod-service) (task 3a14bf2291394e649abbcc7daeb5b1d5) (port 8000) is unhealthy in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517) due to (reason Request timed out)."
+          },
+          {
+            "id": "b885556f-ed98-4714-b9a1-570c7e1924ae",
+            "createdAt": "2026-01-15 22:13:26.081000-07:00",
+            "message": "(service multimodal-lib-prod-service) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517)"
+          },
+          {
+            "id": "e172aa48-4afa-408c-8f97-409f214e7b66",
+            "createdAt": "2026-01-15 22:13:25.980000-07:00",
+            "message": "(service multimodal-lib-prod-service, taskSet ecs-svc/2485035106701337513) has begun draining connections on 1 tasks."
+          },
+          {
+            "id": "6035c8d8-deee-4be0-a2da-66c91f977bf6",
+            "createdAt": "2026-01-15 22:13:25.975000-07:00",
+            "message": "(service multimodal-lib-prod-service) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517)"
+          },
+          {
+            "id": "b4d5365a-3fcf-4a57-89a5-8d29016b52d4",
+            "createdAt": "2026-01-15 22:13:15.927000-07:00",
+            "message": "(service multimodal-lib-prod-service) has stopped 1 running tasks: (task de780bad8ff44452a592814931d6e800)."
+          },
+          {
+            "id": "dff97ca1-97f0-471b-82b3-abfd6294992d",
+            "createdAt": "2026-01-15 22:13:15.872000-07:00",
+            "message": "(service multimodal-lib-prod-service) (task de780bad8ff44452a592814931d6e800) (port 8000) is unhealthy in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517) due to (reason Request timed out)."
+          },
+          {
+            "id": "d983abad-4cdf-4543-99d0-1b10ddfcecea",
+            "createdAt": "2026-01-15 22:12:07.245000-07:00",
+            "message": "(service multimodal-lib-prod-service) registered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517)"
+          },
+          {
+            "id": "cf0105a7-812f-49b6-a66a-72cb5d265480",
+            "createdAt": "2026-01-15 22:08:18.950000-07:00",
+            "message": "(service multimodal-lib-prod-service) has started 1 tasks: (task 3a14bf2291394e649abbcc7daeb5b1d5). Amazon ECS replaced 1 tasks due to an unhealthy status."
+          },
+          {
+            "id": "44601077-4fbb-4fa9-b067-8ee5537f625b",
+            "createdAt": "2026-01-15 22:01:54.708000-07:00",
+            "message": "(service multimodal-lib-prod-service) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517)"
+          },
+          {
+            "id": "9590da4f-2981-4a92-a189-4e141b51b201",
+            "createdAt": "2026-01-15 22:01:54.618000-07:00",
+            "message": "(service multimodal-lib-prod-service, taskSet ecs-svc/2485035106701337513) has begun draining connections on 1 tasks."
+          },
+          {
+            "id": "b673a0c9-2be9-4381-ae70-4842086e689a",
+            "createdAt": "2026-01-15 22:01:54.613000-07:00",
+            "message": "(service multimodal-lib-prod-service) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517)"
+          },
+          {
+            "id": "9cbb048f-8d21-4d20-8405-cfbb4b17e4b0",
+            "createdAt": "2026-01-15 22:01:45.558000-07:00",
+            "message": "(service multimodal-lib-prod-service) has stopped 1 running tasks: (task 275c013c566d42bcb35c7ee63cbab7c6)."
+          },
+          {
+            "id": "48f1b786-4391-4275-95c6-abac7d84f608",
+            "createdAt": "2026-01-15 22:01:45.509000-07:00",
+            "message": "(service multimodal-lib-prod-service) (task 275c013c566d42bcb35c7ee63cbab7c6) (port 8000) is unhealthy in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517) due to (reason Request timed out)."
+          },
+          {
+            "id": "bf9438eb-6c85-424f-87ae-adc4f838ff6e",
+            "createdAt": "2026-01-15 22:00:38.173000-07:00",
+            "message": "(service multimodal-lib-prod-service) registered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517)"
+          },
+          {
+            "id": "beac96ac-81c9-46c7-86bd-512a23769324",
+            "createdAt": "2026-01-15 21:57:12.477000-07:00",
+            "message": "(service multimodal-lib-prod-service) has started 1 tasks: (task de780bad8ff44452a592814931d6e800). Amazon ECS replaced 1 tasks due to an unhealthy status."
+          },
+          {
+            "id": "ce862e02-bf9c-4140-8253-100943e855ae",
+            "createdAt": "2026-01-15 21:51:02.147000-07:00",
+            "message": "(service multimodal-lib-prod-service) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517)"
+          },
+          {
+            "id": "70bdc696-c9f1-4d6f-b147-509c37d3475c",
+            "createdAt": "2026-01-15 21:51:02.042000-07:00",
+            "message": "(service multimodal-lib-prod-service, taskSet ecs-svc/2485035106701337513) has begun draining connections on 1 tasks."
+          },
+          {
+            "id": "c91eaf24-539c-454d-a8ec-b54e768e8401",
+            "createdAt": "2026-01-15 21:51:02.037000-07:00",
+            "message": "(service multimodal-lib-prod-service) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517)"
+          },
+          {
+            "id": "5e3d29bf-75f7-4d2b-8568-9427e3329dbb",
+            "createdAt": "2026-01-15 21:50:52.078000-07:00",
+            "message": "(service multimodal-lib-prod-service) has stopped 1 running tasks: (task c36fe07dc80f4ec4a00189f71fa8babc)."
+          },
+          {
+            "id": "f5d3e496-1100-44cf-9d22-f73cf7458492",
+            "createdAt": "2026-01-15 21:50:52.032000-07:00",
+            "message": "(service multimodal-lib-prod-service) (task c36fe07dc80f4ec4a00189f71fa8babc) (port 8000) is unhealthy in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517) due to (reason Request timed out)."
+          },
+          {
+            "id": "8e74157b-172e-4c90-abd7-ac91d596e8d3",
+            "createdAt": "2026-01-15 21:49:44.931000-07:00",
+            "message": "(service multimodal-lib-prod-service) registered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517)"
+          },
+          {
+            "id": "843dee7e-d9f5-4527-bed2-426e789093ae",
+            "createdAt": "2026-01-15 21:46:27.705000-07:00",
+            "message": "(service multimodal-lib-prod-service) has started 1 tasks: (task 275c013c566d42bcb35c7ee63cbab7c6). Amazon ECS replaced 1 tasks due to an unhealthy status."
+          },
+          {
+            "id": "6087bfbd-3e67-48c4-90a6-ecd2a84f22e2",
+            "createdAt": "2026-01-15 21:40:07.580000-07:00",
+            "message": "(service multimodal-lib-prod-service) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517)"
+          },
+          {
+            "id": "f7908606-1fff-44cd-83f1-1c6b38be0070",
+            "createdAt": "2026-01-15 21:40:07.492000-07:00",
+            "message": "(service multimodal-lib-prod-service, taskSet ecs-svc/2485035106701337513) has begun draining connections on 1 tasks."
+          },
+          {
+            "id": "2db771e0-b642-44d2-929b-6862fc54d359",
+            "createdAt": "2026-01-15 21:40:07.488000-07:00",
+            "message": "(service multimodal-lib-prod-service) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517)"
+          },
+          {
+            "id": "784238a0-de7a-4832-8975-e10bc9b764a1",
+            "createdAt": "2026-01-15 21:39:57.645000-07:00",
+            "message": "(service multimodal-lib-prod-service) has stopped 1 running tasks: (task aeb1bcb6679c4becad367881b6bb72cc)."
+          },
+          {
+            "id": "6b76d896-91a8-4ce6-99a7-ec8deab62419",
+            "createdAt": "2026-01-15 21:39:57.597000-07:00",
+            "message": "(service multimodal-lib-prod-service) (task aeb1bcb6679c4becad367881b6bb72cc) (port 8000) is unhealthy in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517) due to (reason Request timed out)."
+          },
+          {
+            "id": "43091766-4103-4da7-9cb0-62344c3a3434",
+            "createdAt": "2026-01-15 21:37:17.938000-07:00",
+            "message": "(service multimodal-lib-prod-service) registered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517)"
+          },
+          {
+            "id": "f7d0aae5-3a60-45af-9b06-fdf515d847fc",
+            "createdAt": "2026-01-15 21:34:05.291000-07:00",
+            "message": "(service multimodal-lib-prod-service) has started 1 tasks: (task aeb1bcb6679c4becad367881b6bb72cc). Amazon ECS replaced 1 tasks due to an unhealthy status."
+          },
+          {
+            "id": "b73cd917-e216-4f5f-af64-3361b3a926b8",
+            "createdAt": "2026-01-15 21:27:38.970000-07:00",
+            "message": "(service multimodal-lib-prod-service, taskSet ecs-svc/5781017329432972580) has begun draining connections on 1 tasks."
+          },
+          {
+            "id": "4fb0b9d4-498c-40cb-a199-e99b0f12afa4",
+            "createdAt": "2026-01-15 21:27:27.881000-07:00",
+            "message": "(service multimodal-lib-prod-service) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517)"
+          },
+          {
+            "id": "d9a404b7-7dbf-4404-ab93-cdcfafb05e1c",
+            "createdAt": "2026-01-15 21:27:18.614000-07:00",
+            "message": "(service multimodal-lib-prod-service) stopped 1 pending tasks."
+          },
+          {
+            "id": "e7948391-88ed-445e-a551-899f3a540d22",
+            "createdAt": "2026-01-15 21:26:47.832000-07:00",
+            "message": "(service multimodal-lib-prod-service) registered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517)"
+          },
+          {
+            "id": "50c62895-3796-45a9-922a-5a18fca6a971",
+            "createdAt": "2026-01-15 21:24:28.646000-07:00",
+            "message": "(service multimodal-lib-prod-service) has started 1 tasks: (task e8c5a323624642f6a4ec07a6e37321dd)."
+          },
+          {
+            "id": "a276c665-0dad-4124-93ab-feb17d760296",
+            "createdAt": "2026-01-15 21:23:21.459000-07:00",
+            "message": "(service multimodal-lib-prod-service) has started 1 tasks: (task c36fe07dc80f4ec4a00189f71fa8babc)."
+          },
+          {
+            "id": "98d39c38-b135-4cf7-a57a-12203d5932d0",
+            "createdAt": "2026-01-15 21:18:19.804000-07:00",
+            "message": "(service multimodal-lib-prod-service) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517)"
+          },
+          {
+            "id": "2b7a1417-e0c4-4f8e-9603-7b8e58e44240",
+            "createdAt": "2026-01-15 21:18:19.705000-07:00",
+            "message": "(service multimodal-lib-prod-service, taskSet ecs-svc/5781017329432972580) has begun draining connections on 1 tasks."
+          },
+          {
+            "id": "1705424f-1aa1-468a-ade9-d2de5683a816",
+            "createdAt": "2026-01-15 21:18:19.700000-07:00",
+            "message": "(service multimodal-lib-prod-service) deregistered 1 targets in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517)"
+          },
+          {
+            "id": "1856798d-a96f-4579-b1bc-35752b0c5db4",
+            "createdAt": "2026-01-15 21:18:14.694000-07:00",
+            "message": "(service multimodal-lib-prod-service) has stopped 1 running tasks: (task 9aa3d882005d4953927c97e7bd5503ae)."
+          },
+          {
+            "id": "271c1b94-0d9b-4b75-a163-3bfe2dd6e10c",
+            "createdAt": "2026-01-15 21:18:14.637000-07:00",
+            "message": "(service multimodal-lib-prod-service) (task 9aa3d882005d4953927c97e7bd5503ae) (port 8000) is unhealthy in (target-group arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg/316aed9bcd042517) due to (reason Request timed out)."
+          }
+        ],
+        "createdAt": "2026-01-15 01:25:03.353000-07:00",
+        "currentServiceRevisions": [
+          {
+            "arn": "arn:aws:ecs:us-east-1:591222106065:service-revision/multimodal-lib-prod-cluster/multimodal-lib-prod-service/7850796287636429201",
+            "requestedTaskCount": 0,
+            "runningTaskCount": 0,
+            "pendingTaskCount": 0
+          },
+          {
+            "arn": "arn:aws:ecs:us-east-1:591222106065:service-revision/multimodal-lib-prod-cluster/multimodal-lib-prod-service/9862792438316354591",
+            "requestedTaskCount": 1,
+            "runningTaskCount": 1,
+            "pendingTaskCount": 1
+          },
+          {
+            "arn": "arn:aws:ecs:us-east-1:591222106065:service-revision/multimodal-lib-prod-cluster/multimodal-lib-prod-service/5781017329432972580",
+            "requestedTaskCount": 0,
+            "runningTaskCount": 0,
+            "pendingTaskCount": 0
+          }
+        ],
+        "placementConstraints": [],
+        "placementStrategy": [],
+        "networkConfiguration": {
+          "awsvpcConfiguration": {
+            "subnets": [
+              "subnet-02f4d9ecb751beb27",
+              "subnet-0c352188f5398a718"
+            ],
+            "securityGroups": [
+              "sg-0393d472e770ed1a3"
+            ],
+            "assignPublicIp": "ENABLED"
+          }
+        },
+        "healthCheckGracePeriodSeconds": 300,
+        "schedulingStrategy": "REPLICA",
+        "deploymentController": {
+          "type": "ECS"
+        },
+        "createdBy": "arn:aws:iam::591222106065:root",
+        "enableECSManagedTags": false,
+        "propagateTags": "NONE",
+        "enableExecuteCommand": false,
+        "availabilityZoneRebalancing": "ENABLED",
+        "resourceManagementType": "CUSTOMER"
+      }
+    },
+    "target_health": {
+      "healthy": false,
+      "checked_at": "2026-01-15T23:47:31.593443"
+    },
+    "connectivity": {
+      "success": false,
+      "checked_at": "2026-01-15T23:47:36.660312"
+    }
+  }
+}

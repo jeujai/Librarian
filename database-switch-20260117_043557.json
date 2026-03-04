@@ -1,0 +1,10 @@
+{
+  "timestamp": "20260117_043557",
+  "old_database": "ml-librarian-postgres-prod.cq1iiac2gfkf.us-east-1.rds.amazonaws.com",
+  "new_task_definition": "arn:aws:ecs:us-east-1:591222106065:task-definition/multimodal-lib-prod-app:52",
+  "service_update": {
+    "cluster": "multimodal-lib-prod-cluster",
+    "service": "multimodal-lib-prod-service-alb",
+    "status": "initiated"
+  }
+}

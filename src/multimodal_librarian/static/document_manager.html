@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document Manager - Multimodal Librarian</title>
+    <link rel="stylesheet" href="/static/css/document_manager.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <h1><i class="fas fa-file-pdf"></i> Document Manager</h1>
+                <div class="header-actions">
+                    <button id="uploadBtn" class="btn btn-primary">
+                        <i class="fas fa-upload"></i> Upload Documents
+                    </button>
+                    <a href="/chat" class="btn btn-secondary">
+                        <i class="fas fa-comments"></i> Go to Chat
+                    </a>
+                </div>
+            </div>
+        </header>
+
+        <!-- Upload Area -->
+        <div id="uploadArea" class="upload-area hidden">
+            <div class="upload-zone" id="uploadZone">
+                <div class="upload-content">
+                    <i class="fas fa-cloud-upload-alt upload-icon"></i>
+                    <h3>Drag & Drop PDF Files Here</h3>
+                    <p>or <span class="upload-link" id="browseFiles">browse files</span></p>
+                    <p class="upload-info">Maximum file size: 100MB per file</p>
+                </div>
+                <input type="file" id="fileInput" multiple accept=".pdf" style="display: none;">
+            </div>
+            
+            <!-- Upload Progress -->
+            <div id="uploadProgress" class="upload-progress hidden">
+                <h4>Uploading Files...</h4>
+                <div id="progressList" class="progress-list"></div>
+            </div>
+        </div>
+
+        <!-- Search and Filters -->
+        <div class="controls">
+            <div class="search-section">
+                <div class="search-box">
+                    <i class="fas fa-search"></i>
+                    <input type="text" id="searchInput" placeholder="Search documents...">
+                </div>
+                <div class="filters">
+                    <select id="statusFilter">
+                        <option value="">All Status</option>
+                        <option value="uploaded">Uploaded</option>
+                        <option value="processing">Processing</option>
+                        <option value="completed">Completed</option>
+                        <option value="failed">Failed</option>
+                    </select>
+                    <select id="sortBy">
+                        <option value="upload_timestamp">Upload Date</option>
+                        <option value="title">Title</option>
+                        <option value="file_size">File Size</option>
+                        <option value="status">Status</option>
+                    </select>
+                    <select id="sortOrder">
+                        <option value="desc">Newest First</option>
+                        <option value="asc">Oldest First</option>
+                    </select>
+                </div>
+            </div>
+            
+            <!-- View Toggle -->
+            <div class="view-toggle">
+                <button id="gridView" class="view-btn active" title="Grid View">
+                    <i class="fas fa-th"></i>
+                </button>
+                <button id="listView" class="view-btn" title="List View">
+                    <i class="fas fa-list"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Statistics -->
+        <div class="stats-bar">
+            <div class="stat-item">
+                <span class="stat-label">Total Documents:</span>
+                <span id="totalDocs" class="stat-value">0</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">Total Size:</span>
+                <span id="totalSize" class="stat-value">0 MB</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">Processing:</span>
+                <span id="processingCount" class="stat-value">0</span>
+            </div>
+        </div>
+
+        <!-- Document Library -->
+        <div class="document-library">
+            <div id="documentGrid" class="document-grid">
+                <!-- Documents will be loaded here -->
+            </div>
+            
+            <!-- Loading State -->
+            <div id="loadingState" class="loading-state">
+                <i class="fas fa-spinner fa-spin"></i>
+                <p>Loading documents...</p>
+            </div>
+            
+            <!-- Empty State -->
+            <div id="emptyState" class="empty-state hidden">
+                <i class="fas fa-file-pdf empty-icon"></i>
+                <h3>No Documents Found</h3>
+                <p>Upload your first PDF document to get started</p>
+                <button class="btn btn-primary" onclick="document.getElementById('uploadBtn').click()">
+                    <i class="fas fa-upload"></i> Upload Document
+                </button>
+            </div>
+        </div>
+
+        <!-- Pagination -->
+        <div id="pagination" class="pagination hidden">
+            <button id="prevPage" class="btn btn-secondary" disabled>
+                <i class="fas fa-chevron-left"></i> Previous
+            </button>
+            <span id="pageInfo" class="page-info">Page 1 of 1</span>
+            <button id="nextPage" class="btn btn-secondary" disabled>
+                Next <i class="fas fa-chevron-right"></i>
+            </button>
+        </div>
+    </div>
+
+    <!-- Document Detail Modal -->
+    <div id="documentModal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modalTitle">Document Details</h3>
+                <button class="modal-close" id="closeModal">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body" id="modalBody">
+                <!-- Document details will be loaded here -->
+            </div>
+            <div class="modal-footer">
+                <button id="downloadBtn" class="btn btn-primary">
+                    <i class="fas fa-download"></i> Download
+                </button>
+                <button id="deleteBtn" class="btn btn-danger">
+                    <i class="fas fa-trash"></i> Delete
+                </button>
+                <button id="retryBtn" class="btn btn-warning hidden">
+                    <i class="fas fa-redo"></i> Retry Processing
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <script src="/static/js/document_manager.js"></script>
+</body>
+</html>

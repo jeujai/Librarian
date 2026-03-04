@@ -1,0 +1,29 @@
+{
+  "concurrent_users": [
+    1,
+    5,
+    10,
+    20,
+    50
+  ],
+  "test_duration_minutes": 10,
+  "operations": [
+    {
+      "type": "document_upload",
+      "weight": 0.2
+    },
+    {
+      "type": "chat_query",
+      "weight": 0.6
+    },
+    {
+      "type": "document_search",
+      "weight": 0.2
+    }
+  ],
+  "expected_metrics": {
+    "response_time_p95": 3.0,
+    "error_rate": 0.01,
+    "throughput_rps": 100
+  }
+}

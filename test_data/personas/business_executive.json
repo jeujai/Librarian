@@ -1,0 +1,30 @@
+{
+  "name": "Michael Rodriguez",
+  "role": "VP of Strategy",
+  "background": "15 years experience in business strategy and operations",
+  "technical_level": "Medium",
+  "goals": [
+    "Quickly extract insights from business reports",
+    "Prepare executive summaries",
+    "Identify trends and patterns",
+    "Support data-driven decision making"
+  ],
+  "pain_points": [
+    "Limited time to read lengthy reports",
+    "Need for quick, actionable insights",
+    "Difficulty synthesizing information across documents",
+    "Pressure to make informed decisions quickly"
+  ],
+  "usage_patterns": [
+    "Uploads quarterly reports and market analyses",
+    "Asks high-level strategic questions",
+    "Needs executive-level summaries",
+    "Uses system in short, focused sessions"
+  ],
+  "success_metrics": [
+    "Reduces report analysis time by 60%",
+    "Improves decision-making speed",
+    "Increases confidence in strategic choices",
+    "Better stakeholder communication"
+  ]
+}

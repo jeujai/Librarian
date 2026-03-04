@@ -1,0 +1,138 @@
+{
+  "Infrastructure": {
+    "success": true,
+    "tests": {
+      "health_endpoint": true,
+      "features_endpoint": true,
+      "document_service_health": true
+    },
+    "services_available": {
+      "overall": null,
+      "features": {
+        "chat": true,
+        "functional_chat": true,
+        "conversation_context": true,
+        "intelligent_responses": false,
+        "static_files": true,
+        "monitoring": true,
+        "document_upload": true,
+        "document_management": true,
+        "pdf_processing": true,
+        "auth": false,
+        "conversations": false,
+        "query": false,
+        "export": false,
+        "ml_training": false,
+        "security": false,
+        "vector_search": true,
+        "knowledge_graph": false,
+        "aws_native_databases": true,
+        "neptune_support": true,
+        "opensearch_support": true,
+        "legacy_databases": false,
+        "ai_chat": false,
+        "websocket_chat": true,
+        "rag_integration": true
+      },
+      "document_service": "healthy"
+    }
+  },
+  "Document Upload API": {
+    "success": true,
+    "tests": {
+      "document_upload": true,
+      "document_listing": true,
+      "document_retrieval": true
+    },
+    "uploaded_documents": [
+      {
+        "document_id": "cea2065d-1492-425c-b1ac-e1a396504b94",
+        "title": "Integration Test Document",
+        "status": "uploaded",
+        "file_size": 381,
+        "upload_timestamp": "2026-01-09T04:26:34.984000"
+      }
+    ]
+  },
+  "Unified Interface": {
+    "success": true,
+    "tests": {
+      "unified_interface_html": true,
+      "css_asset": true,
+      "javascript_asset": true
+    },
+    "interface_components": {
+      "css_reference": true,
+      "js_reference": true,
+      "chat_section": false,
+      "document_section": false,
+      "sidebar_navigation": true
+    }
+  },
+  "WebSocket Chat": {
+    "success": true,
+    "tests": {
+      "websocket_connection": true,
+      "conversation_start": true,
+      "chat_message_response": true,
+      "processing_indicators": true
+    },
+    "chat_features": {
+      "rag_enabled": false,
+      "document_aware_responses": false,
+      "citation_support": false,
+      "fallback_ai": true,
+      "conversation_memory": true
+    }
+  },
+  "RAG Integration": {
+    "success": true,
+    "tests": {
+      "rag_query_response": true
+    },
+    "rag_features": {
+      "rag_enabled": false,
+      "document_search_performed": false,
+      "citations_provided": false,
+      "confidence_score": 0.8,
+      "fallback_used": true
+    }
+  },
+  "Cross-Feature Integration": {
+    "success": true,
+    "tests": {
+      "document_upload_integration": true,
+      "unified_interface_integration": true,
+      "api_endpoints_integration": true
+    },
+    "integration_features": {
+      "chat_document_integration": false,
+      "cross_navigation": true,
+      "unified_styling": true,
+      "responsive_design": false
+    }
+  },
+  "Error Handling": {
+    "success": true,
+    "tests": {
+      "invalid_file_rejection": true,
+      "nonexistent_document_handling": true,
+      "websocket_error_handling": false
+    },
+    "error_scenarios": {}
+  },
+  "Performance": {
+    "success": true,
+    "tests": {
+      "performance_acceptable": true
+    },
+    "performance_metrics": {
+      "Health endpoint_response_time_ms": 1.5230178833007812,
+      "Features endpoint_response_time_ms": 0.4410743713378906,
+      "Document list endpoint_response_time_ms": 0.6322860717773438,
+      "websocket_connection_time_ms": 1.9240379333496094
+    }
+  },
+  "overall_success": true,
+  "test_timestamp": 1767932795.040386
+}

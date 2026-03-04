@@ -1,0 +1,58 @@
+{
+  "timestamp": "2026-01-09T18:05:42.729818",
+  "critical_issues": [
+    "Tasks cannot pull container images from ECR"
+  ],
+  "infrastructure_status": {
+    "cluster": {
+      "exists": true,
+      "status": "ACTIVE",
+      "active_services": 1,
+      "running_tasks": 0,
+      "pending_tasks": 1
+    },
+    "service": {
+      "exists": true,
+      "status": "ACTIVE",
+      "running_count": 0,
+      "desired_count": 1,
+      "task_definition": "arn:aws:ecs:us-east-1:591222106065:task-definition/multimodal-lib-prod-app:11"
+    },
+    "load_balancer": {
+      "exists": true,
+      "name": "multimodal-librarian-full-ml",
+      "state": "active",
+      "dns_name": "multimodal-librarian-full-ml-249704554.us-east-1.elb.amazonaws.com",
+      "vpc_id": "vpc-0bc85162dcdbcc986"
+    }
+  },
+  "task_failures": [
+    {
+      "task_id": "131e8edd4c844ca9bf47432e727d308b",
+      "stop_code": "UserInitiated",
+      "stop_reason": "Networking configuration update",
+      "failure_type": "other"
+    },
+    {
+      "task_id": "328229340ca1447485dfcdb06d3dba9f",
+      "stop_code": "TaskFailedToStart",
+      "stop_reason": "CannotPullContainerError: The task cannot pull 591222106065.dkr.ecr.us-east-1.amazonaws.com/multimodal-librarian:latest@sha256:84f255b836ace14182f7c3c1a0883a648c5be6c7927ecb67fc62320acb563631 from the registry 591222106065.dkr.ecr.us-east-1.amazonaws.com/multimodal-librarian:latest@sha256:84f255b836ace14182f7c3c1a0883a648c5be6c7927ecb67fc62320acb563631. There is a connection issue between the task and the registry. Check your task network configuration. : failed to copy: httpReadSeeker: failed open: failed to do request: Get 591222106065.dkr.ecr.us-east-1.amazonaws.com/multimodal-librarian:latest@sha256:84f255b836ace14182f7c3c1a0883a648c5be6c7927ecb67fc62320acb563631: dial tcp 16.15.179.199:443: i/o timeout",
+      "failure_type": "container_pull"
+    },
+    {
+      "task_id": "9c72e6c60f014c89837fb30fa42d5082",
+      "stop_code": "TaskFailedToStart",
+      "stop_reason": "CannotPullContainerError: The task cannot pull 591222106065.dkr.ecr.us-east-1.amazonaws.com/multimodal-librarian:latest from the registry 591222106065.dkr.ecr.us-east-1.amazonaws.com/multimodal-librarian:latest. There is a connection issue between the task and the registry. Check your task network configuration. : failed to copy: httpReadSeeker: failed open: failed to do request: Get 591222106065.dkr.ecr.us-east-1.amazonaws.com/multimodal-librarian:latest: dial tcp 16.15.183.222:443: i/o timeout",
+      "failure_type": "container_pull"
+    },
+    {
+      "task_id": "ae124646c43548329d80d88170fe11a4",
+      "stop_code": "TaskFailedToStart",
+      "stop_reason": "CannotPullContainerError: The task cannot pull 591222106065.dkr.ecr.us-east-1.amazonaws.com/multimodal-librarian:latest@sha256:84f255b836ace14182f7c3c1a0883a648c5be6c7927ecb67fc62320acb563631 from the registry 591222106065.dkr.ecr.us-east-1.amazonaws.com/multimodal-librarian:latest@sha256:84f255b836ace14182f7c3c1a0883a648c5be6c7927ecb67fc62320acb563631. There is a connection issue between the task and the registry. Check your task network configuration. : failed to copy: httpReadSeeker: failed open: failed to do request: Get 591222106065.dkr.ecr.us-east-1.amazonaws.com/multimodal-librarian:latest@sha256:84f255b836ace14182f7c3c1a0883a648c5be6c7927ecb67fc62320acb563631: dial tcp 54.231.165.162:443: i/o timeout",
+      "failure_type": "container_pull"
+    }
+  ],
+  "recommendations": [
+    "Fix container pull: Check ECR access and VPC endpoints"
+  ]
+}
