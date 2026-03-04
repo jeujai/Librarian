@@ -201,3 +201,51 @@ logs/
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Archives and data files
+*.zip
+*.tar.gz
+*.ttl
+
+# RDF/Turtle data files
+*.ttl
+*.ttl
+
+# Root-level diagnostic/deployment artifacts
+/*.json
+/*.sh
+
+# Root-level one-off test scripts (not in tests/)
+/test_*.py
+/validate_*.py
+/test_*.html
+/test_*.pdf
+/demo_*.py
+/analyze_*.py
+/example_*.py
+/integration_test.py
+/run_load_test_validation.py
+/dependency_scanner.py
+
+# Root-level misc artifacts
+/database-password-backup-*.txt
+/demo_logs_export.txt
+
+# Root-level deployment/summary markdown (keep only README, LICENSE, etc.)
+/[A-Z]*_*.md
+
+# YAGO data dumps
+yago-dumps/
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+.terraform.lock.hcl
+
+# Data directories (large binaries, DB files)
+/data/
+*.jar
+*.csv.gz
+*.wal
+server.log

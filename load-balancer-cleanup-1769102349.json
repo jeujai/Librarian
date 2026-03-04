@@ -1,7 +1,0 @@
-{
-  "removed_load_balancers": [
-    "multimodal-lib-prod-alb"
-  ],
-  "removed_target_groups": [],
-  "errors": []
-}

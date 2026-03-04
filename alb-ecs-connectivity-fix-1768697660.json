@@ -1,8 +1,0 @@
-{
-  "timestamp": "2026-01-17T17:54:20.423214",
-  "alb_security_group": "sg-0135b368e20b7bd01",
-  "ecs_security_group": "sg-0c4dac025bda80435",
-  "vpc_id": "vpc-0b2186b38779e77f6",
-  "service_updated": true,
-  "deployment_triggered": true
-}

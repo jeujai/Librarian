@@ -1,9 +1,0 @@
-{
-  "cleanup_type": "orphaned_cloudfront_distribution",
-  "distribution_id": "EG4POF7D2NLA4",
-  "distribution_domain": "d1p5nsqu15ui56.cloudfront.net",
-  "status": "failed",
-  "error": "An error occurred (PreconditionFailed) when calling the DeleteDistribution operation: You can't delete this distribution while it's subscribed to a pricing plan. After you cancel the pricing plan, you can delete the distribution at the end of monthly billing cycle.",
-  "cleanup_timestamp": "2026-01-11T02:48:00.332160",
-  "cleanup_successful": false
-}

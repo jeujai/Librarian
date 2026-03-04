@@ -1,6 +1,0 @@
-{
-  "timestamp": "2026-01-17T02:05:18.663156",
-  "service": "multimodal-lib-prod-service-alb",
-  "assign_public_ip": "DISABLED",
-  "needs_fix": true
-}

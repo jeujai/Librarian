@@ -1,9 +1,0 @@
-{
-  "timestamp": "2026-01-18T20:28:35.808376",
-  "task_definition": "multimodal-lib-prod-app:70",
-  "task_definition_arn": "arn:aws:ecs:us-east-1:591222106065:task-definition/multimodal-lib-prod-app:70",
-  "cluster": "multimodal-lib-prod-cluster",
-  "service": "multimodal-lib-prod-service-alb",
-  "change": "Updated health check path from /health/minimal to /health/simple",
-  "deployment_method": "ECS service update with force new deployment"
-}

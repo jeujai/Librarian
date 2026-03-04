@@ -1,8 +1,0 @@
-{
-  "timestamp": "2026-01-17T01:22:32.848033",
-  "cluster": "multimodal-lib-prod-cluster",
-  "service": "multimodal-lib-prod-service",
-  "old_target_group": "arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-nlb-tg/e3896922f939759a",
-  "new_target_group": "arn:aws:elasticloadbalancing:us-east-1:591222106065:targetgroup/multimodal-lib-prod-tg-v2/7b63a6337a5c7a34",
-  "container": "multimodal-lib-prod-app:8000"
-}

@@ -1,7 +1,0 @@
-{
-  "timestamp": "2026-01-21T00:59:23.928721",
-  "image": "591222106065.dkr.ecr.us-east-1.amazonaws.com/multimodal-librarian:lazy-ml-models-v4",
-  "task_definition": "arn:aws:ecs:us-east-1:591222106065:task-definition/multimodal-lib-prod-app:85",
-  "deployment_success": true,
-  "fix_description": "Lazy ML model loading to prevent health check timeouts"
-}

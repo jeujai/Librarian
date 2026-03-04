@@ -1,9 +1,0 @@
-{
-  "timestamp": "2026-01-22T10:35:24.743675",
-  "neptune_shutdown": true,
-  "elasticache_shutdown": false,
-  "total_monthly_savings": 115.79,
-  "errors": [
-    "ElastiCache shutdown failed"
-  ]
-}

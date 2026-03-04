@@ -1,7 +1,0 @@
-{
-  "timestamp": "2026-01-17T02:05:53.032989",
-  "cluster": "multimodal-lib-prod-cluster",
-  "service": "multimodal-lib-prod-service-alb",
-  "update_status": "success",
-  "public_ip_enabled": true
-}

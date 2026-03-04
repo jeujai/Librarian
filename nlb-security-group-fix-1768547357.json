@@ -1,9 +1,0 @@
-{
-  "timestamp": "2026-01-16T00:09:16.853750",
-  "security_group_id": "sg-0135b368e20b7bd01",
-  "port": 8000,
-  "vpc_cidr": "10.0.0.0/16",
-  "success": true,
-  "rule_added": true,
-  "verified": true
-}

@@ -1,3 +1,0 @@
-{
-  "error": "An error occurred (InvalidParameterException) when calling the DescribeClusters operation: include should be one of [ATTACHMENTS,CONFIGURATIONS,SETTINGS,STATISTICS,TAGS]"
-}
