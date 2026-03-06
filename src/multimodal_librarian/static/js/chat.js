@@ -89,21 +89,20 @@ class ChatApp {
                 </svg>
                 <span>Upload PDF</span>
             </button>
-            <button class="upload-dropdown-item" data-action="view-documents" role="menuitem">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                    <polyline points="14,2 14,8 20,8"></polyline>
-                    <line x1="16" y1="13" x2="8" y2="13"></line>
-                    <line x1="16" y1="17" x2="8" y2="17"></line>
-                    <polyline points="10,9 9,9 8,9"></polyline>
-                </svg>
-                <span>View Documents</span>
-            </button>
+            <div id="inlineDocumentListSlot" class="inline-document-list-slot"></div>
         `;
 
         // Insert dropdown after upload button
         if (this.uploadBtn && this.uploadBtn.parentNode) {
             this.uploadBtn.parentNode.insertBefore(this.uploadDropdown, this.uploadBtn.nextSibling);
+        }
+
+        // Mount DocumentListPanel inline into the dropdown slot
+        if (this.documentListPanel) {
+            const slot = this.uploadDropdown.querySelector('#inlineDocumentListSlot');
+            if (slot) {
+                this.documentListPanel.mountInline(slot);
+            }
         }
 
         // Set up dropdown event listeners
@@ -121,16 +120,6 @@ class ChatApp {
                 e.stopPropagation();
                 this.hideUploadDropdown();
                 this.fileInput.click();
-            });
-        }
-
-        // View documents option
-        const viewDocsOption = this.uploadDropdown.querySelector('[data-action="view-documents"]');
-        if (viewDocsOption) {
-            viewDocsOption.addEventListener('click', (e) => {
-                e.stopPropagation();
-                this.hideUploadDropdown();
-                this.showDocumentListPanel();
             });
         }
 
@@ -167,6 +156,11 @@ class ChatApp {
 
         this.uploadDropdown.style.display = 'block';
         this.isUploadDropdownVisible = true;
+
+        // Refresh inline document list
+        if (this.documentListPanel) {
+            this.documentListPanel.refreshInline();
+        }
 
         // Focus first item for accessibility
         const firstItem = this.uploadDropdown.querySelector('.upload-dropdown-item');
@@ -565,7 +559,7 @@ class ChatApp {
      * @param {Object} data - Processing status message data
      */
     handleDocumentProcessingStatus(data) {
-        const { document_id, filename, status, progress_percentage, current_stage, error_message, summary } = data;
+        const { document_id, filename, status, progress_percentage, current_stage, error_message, summary, metadata } = data;
 
         console.log('Document processing status:', status, progress_percentage + '%', current_stage);
 
@@ -587,7 +581,8 @@ class ChatApp {
             progress: progress_percentage,
             stage: current_stage,
             error: error_message,
-            summary: summary
+            summary: summary,
+            metadata: metadata
         });
     }
 
@@ -682,7 +677,7 @@ class ChatApp {
      * @param {Object} statusData - Status data to display
      */
     updateProcessingStatusCard(card, statusData) {
-        const { status, progress, stage, error, summary } = statusData;
+        const { status, progress, stage, error, summary, metadata } = statusData;
 
         const stageElement = card.querySelector('.processing-stage');
         const progressFill = card.querySelector('.processing-progress-fill');
@@ -708,6 +703,9 @@ class ChatApp {
             progressBar.setAttribute('aria-valuenow', progress);
         }
 
+        // Update live stats from metadata
+        this.updateProcessingLiveStats(card, metadata, status);
+
         // Update card styling based on status
         card.classList.remove('status-processing', 'status-completed', 'status-failed');
 
@@ -725,6 +723,73 @@ class ChatApp {
     }
 
     /**
+     * Update live processing stats display on the status card.
+     *
+     * @param {HTMLElement} card - Status card element
+     * @param {Object|null} metadata - Stage-specific stats from backend
+     * @param {string} status - Current processing status
+     */
+    updateProcessingLiveStats(card, metadata, status) {
+        let statsEl = card.querySelector('.processing-live-stats');
+
+        if (status === 'completed' || status === 'failed') {
+            if (statsEl) statsEl.remove();
+            return;
+        }
+
+        if (!metadata || typeof metadata !== 'object') return;
+
+        if (!statsEl) {
+            statsEl = document.createElement('div');
+            statsEl.className = 'processing-live-stats';
+            statsEl.style.cssText = 'font-size:0.75rem;color:#64748b;margin-top:4px;line-height:1.5;font-variant-numeric:tabular-nums;';
+            const stageEl = card.querySelector('.processing-stage');
+            if (stageEl) {
+                stageEl.parentNode.insertBefore(statsEl, stageEl.nextSibling);
+            }
+        }
+
+        const fmt = n => Number(n).toLocaleString();
+        const parts = [];
+        if (metadata.pages_extracted) parts.push(`${fmt(metadata.pages_extracted)} pages`);
+        if (metadata.pages) parts.push(`${fmt(metadata.pages)} pages`);
+        if (metadata.images) parts.push(`${fmt(metadata.images)} images`);
+        if (metadata.tables) parts.push(`${fmt(metadata.tables)} tables`);
+        if (metadata.text_length) parts.push(`${fmt(Math.round(metadata.text_length / 1024))}KB text`);
+        if (metadata.chunks_generated) parts.push(`${fmt(metadata.chunks_generated)} chunks`);
+        // Incremental chunk storage progress
+        if (metadata.chunks_stored_so_far && metadata.total_chunks) {
+            parts.push(`chunk ${fmt(metadata.chunks_stored_so_far)}/${fmt(metadata.total_chunks)} stored`);
+        } else if (metadata.chunks_stored) {
+            parts.push(`${fmt(metadata.chunks_stored)} chunks stored`);
+        }
+        // Incremental embedding storage progress
+        if (metadata.embeddings_stored_so_far && metadata.total_chunks) {
+            parts.push(`embedding ${fmt(metadata.embeddings_stored_so_far)}/${fmt(metadata.total_chunks)}`);
+        } else if (metadata.embeddings_stored) {
+            parts.push(`${fmt(metadata.embeddings_stored)} embeddings`);
+        }
+        // Page progress
+        if (metadata.current_page && metadata.total_pages) {
+            parts.push(`page ${fmt(metadata.current_page)}/${fmt(metadata.total_pages)}`);
+        }
+        if (metadata.bridges_generated !== undefined) {
+            if (metadata.total_bridges) {
+                parts.push(`bridge ${fmt(metadata.bridges_generated)}/${fmt(metadata.total_bridges)}`);
+            } else {
+                parts.push(`${fmt(metadata.bridges_generated)} bridges`);
+            }
+        }
+        if (metadata.concepts !== undefined) parts.push(`${fmt(metadata.concepts)} concepts`);
+        if (metadata.relationships !== undefined) parts.push(`${fmt(metadata.relationships)} relationships`);
+        if (metadata.kg_batch && metadata.kg_total_batches) {
+            parts.push(`batch ${metadata.kg_batch}/${metadata.kg_total_batches}`);
+        }
+
+        statsEl.textContent = parts.length > 0 ? parts.join(' · ') : '';
+    }
+
+    /**
      * Get human-readable text for processing stage.
      * 
      * @param {string} status - Processing status
@@ -737,7 +802,9 @@ class ChatApp {
             'extracting': 'Extracting content from PDF...',
             'chunking': 'Processing document content...',
             'embedding': 'Generating embeddings...',
+            'bridging': 'Generating bridges...',
             'kg_extraction': 'Building knowledge graph...',
+            'finalizing': 'Finalizing...',
             'completed': 'Processing complete!',
             'failed': 'Processing failed'
         };
@@ -911,7 +978,12 @@ class ChatApp {
             citationDiv.setAttribute('tabindex', '0');
 
             const docTitle = citation.document_title || citation.source_title || 'Unknown';
-            citationDiv.setAttribute('aria-label', `View excerpt from ${docTitle}`);
+            citationDiv.setAttribute('aria-label', `View excerpt from Source ${index + 1}: ${docTitle}`);
+
+            // Source number label
+            const sourceNum = document.createElement('span');
+            sourceNum.textContent = `${index + 1}.`;
+            sourceNum.style.cssText = 'font-weight:600;margin-right:6px;color:#475569;min-width:1.2em;';
 
             const isWebSource = citation.url && citation.source_type === 'web_search';
             const icon = document.createElement('span');
@@ -936,6 +1008,7 @@ class ChatApp {
                 text.textContent = `${docTitle}${page}${score}`;
             }
 
+            citationDiv.appendChild(sourceNum);
             citationDiv.appendChild(icon);
 
             // Add download button (to the left of the source text)
@@ -1316,7 +1389,12 @@ class ChatApp {
             citationDiv.setAttribute('tabindex', '0');
 
             const docTitle = citation.document_title || citation.source_title || 'Unknown';
-            citationDiv.setAttribute('aria-label', `View excerpt from ${docTitle}`);
+            citationDiv.setAttribute('aria-label', `View excerpt from Source ${index + 1}: ${docTitle}`);
+
+            // Source number label
+            const sourceNum = document.createElement('span');
+            sourceNum.textContent = `${index + 1}.`;
+            sourceNum.style.cssText = 'font-weight:600;margin-right:6px;color:#475569;min-width:1.2em;';
 
             const isWebSource = citation.url && citation.source_type === 'web_search';
             const icon = document.createElement('span');
@@ -1341,6 +1419,7 @@ class ChatApp {
                 text.textContent = `${docTitle}${page}${score}`;
             }
 
+            citationDiv.appendChild(sourceNum);
             citationDiv.appendChild(icon);
 
             // Add download button (to the left of the source text)

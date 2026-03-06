@@ -451,9 +451,14 @@ class UnifiedInterface {
         title.style.color = '#64748b';
         citationsDiv.appendChild(title);
 
-        citations.forEach(citation => {
+        citations.forEach((citation, index) => {
             const citationDiv = document.createElement('div');
             citationDiv.className = 'citation';
+            citationDiv.setAttribute('aria-label', `Source ${index + 1}: ${citation.document_title || citation.source_title || 'Unknown'}`);
+
+            const sourceNum = document.createElement('span');
+            sourceNum.textContent = `${index + 1}.`;
+            sourceNum.style.cssText = 'font-weight:600;margin-right:6px;color:#475569;min-width:1.2em;';
 
             const isWebSource = citation.url && citation.source_type === 'web_search';
             const icon = document.createElement('span');
@@ -478,6 +483,7 @@ class UnifiedInterface {
                 text.textContent = `${docTitle}${page}${score}`;
             }
 
+            citationDiv.appendChild(sourceNum);
             citationDiv.appendChild(icon);
 
             // Add download button (to the left of the source text)
@@ -800,9 +806,14 @@ class UnifiedInterface {
         title.style.color = '#64748b';
         citationsDiv.appendChild(title);
 
-        citations.forEach(citation => {
+        citations.forEach((citation, index) => {
             const citationDiv = document.createElement('div');
             citationDiv.className = 'citation';
+            citationDiv.setAttribute('aria-label', `Source ${index + 1}: ${citation.document_title || citation.source || 'Unknown'}`);
+
+            const sourceNum = document.createElement('span');
+            sourceNum.textContent = `${index + 1}.`;
+            sourceNum.style.cssText = 'font-weight:600;margin-right:6px;color:#475569;min-width:1.2em;';
 
             const isWebSource = citation.url && citation.source_type === 'web_search';
             const icon = document.createElement('span');
@@ -823,6 +834,7 @@ class UnifiedInterface {
                 text.textContent = `${citation.document_title || citation.source} (Page ${citation.page || 'N/A'})`;
             }
 
+            citationDiv.appendChild(sourceNum);
             citationDiv.appendChild(icon);
 
             // Add download button (to the left of the source text)

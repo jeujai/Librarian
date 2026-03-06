@@ -353,7 +353,8 @@ class GenericMultiLevelChunkingFramework:
             'processing_notes': processing_notes,
         }
     
-    def generate_bridges_for_document(self, bridge_generation_data: Dict[str, Any]) -> List[BridgeChunk]:
+    def generate_bridges_for_document(self, bridge_generation_data: Dict[str, Any],
+                                     progress_callback: callable = None) -> List[BridgeChunk]:
         """Generate bridges from previously serialized bridge data.
         
         This is the slow path (~550s) that can run in parallel with
@@ -425,6 +426,7 @@ class GenericMultiLevelChunkingFramework:
             content_type=content_type,
             domain_config=domain_config,
             bisected_concepts_per_boundary=bisected_concepts_per_boundary,
+            progress_callback=progress_callback,
         )
         
         # Validate and apply fallbacks

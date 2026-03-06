@@ -202,6 +202,95 @@ async def handle_chat_document_upload(
         )
 
 
+async def _fetch_document_stats(document_ids: list) -> dict:
+    """Fetch chunk/bridge/concept/relationship stats for a batch of documents.
+    
+    Returns dict keyed by document_id string with stats sub-dicts.
+    """
+    stats = {}
+    if not document_ids:
+        return stats
+
+    try:
+        from ...database.connection import get_async_connection
+        conn = await get_async_connection()
+        try:
+            # Chunk counts
+            rows = await conn.fetch("""
+                SELECT source_id::text AS doc_id, count(*) AS cnt
+                FROM multimodal_librarian.knowledge_chunks
+                WHERE source_id = ANY($1::uuid[])
+                GROUP BY source_id
+            """, document_ids)
+            for r in rows:
+                stats.setdefault(r['doc_id'], {})['chunk_count'] = r['cnt']
+
+            # Bridge counts
+            rows = await conn.fetch("""
+                SELECT kc.source_id::text AS doc_id, count(*) AS cnt
+                FROM multimodal_librarian.bridge_chunks bc
+                JOIN multimodal_librarian.knowledge_chunks kc
+                    ON bc.source_chunk_id = kc.id
+                WHERE kc.source_id = ANY($1::uuid[])
+                GROUP BY kc.source_id
+            """, document_ids)
+            for r in rows:
+                stats.setdefault(r['doc_id'], {})['bridge_count'] = r['cnt']
+        finally:
+            await conn.close()
+    except Exception as e:
+        logger.warning(f"Failed to fetch PG document stats: {e}")
+
+    # Neo4j concept/relationship stats
+    try:
+        from ...clients.database_factory import get_database_factory
+        factory = get_database_factory()
+        client = factory.get_graph_client()
+        if not getattr(client, '_is_connected', False):
+            await client.connect()
+
+        for doc_id in document_ids:
+            try:
+                doc_id_str = str(doc_id)
+                s = stats.setdefault(doc_id_str, {})
+
+                # Count concepts
+                result = await client.execute_query(
+                    "MATCH (c:Concept {source_document: $doc_id}) "
+                    "RETURN count(c) AS concepts",
+                    {"doc_id": doc_id_str}
+                )
+                if result and len(result) > 0:
+                    s['concept_count'] = result[0].get('concepts', 0)
+
+                # Count relationships grouped by type
+                result = await client.execute_query(
+                    "MATCH (c:Concept {source_document: $doc_id})-[r]->() "
+                    "RETURN type(r) AS rel_type, count(r) AS cnt",
+                    {"doc_id": doc_id_str}
+                )
+                total_rels = 0
+                bd = {}
+                for row in (result or []):
+                    rt = row.get('rel_type')
+                    cnt = row.get('cnt', 0)
+                    total_rels += cnt
+                    if rt:
+                        source = _classify_rel_source(rt)
+                        bd[rt] = {'count': cnt, 'source': source}
+                s['relationship_count'] = total_rels
+                if bd:
+                    s['relationship_breakdown'] = bd
+            except Exception as e:
+                logger.debug(
+                    f"Neo4j stats failed for {doc_id}: {e}"
+                )
+    except Exception as e:
+        logger.debug(f"KG stats unavailable: {e}")
+
+    return stats
+
+
 async def handle_document_list_request(
     message_data: dict,
     connection_id: str,
@@ -272,15 +361,44 @@ async def handle_document_list_request(
             )
             document_infos.append(doc_info)
         
+        # Fetch stats for completed documents
+        completed_ids = [
+            doc.get('document_id')
+            for doc in documents_result.get('documents', [])
+            if _map_status_to_string(doc.get('status')) == 'completed'
+            and doc.get('document_id')
+        ]
+        if completed_ids:
+            try:
+                stats_map = await _fetch_document_stats(completed_ids)
+                for di in document_infos:
+                    s = stats_map.get(di.document_id, {})
+                    if s:
+                        di.chunk_count = s.get('chunk_count')
+                        di.bridge_count = s.get('bridge_count')
+                        di.concept_count = s.get('concept_count')
+                        di.relationship_count = s.get(
+                            'relationship_count'
+                        )
+                        di.relationship_breakdown = s.get(
+                            'relationship_breakdown'
+                        )
+            except Exception as e:
+                logger.warning(f"Failed to enrich doc stats: {e}")
+
         # Send response
         response = DocumentListMessage(
             documents=document_infos,
-            total_count=documents_result.get('total_count', len(document_infos)),
+            total_count=documents_result.get(
+                'total_count', len(document_infos)
+            ),
             page=list_request.page,
             page_size=list_request.page_size
         )
-        
-        await manager.send_personal_message(response.model_dump(mode='json'), connection_id)
+
+        await manager.send_personal_message(
+            response.model_dump(mode='json'), connection_id
+        )
         
         logger.debug(f"Sent document list to {connection_id}: {len(document_infos)} documents")
         
@@ -452,6 +570,7 @@ async def handle_document_retry_request(
             # Send retry started message
             response = DocumentRetryStartedMessage(
                 document_id=str(document_id),
+                filename=filename,
                 message="Document processing retry initiated"
             )
             await manager.send_personal_message(response.model_dump(mode='json'), connection_id)
@@ -509,3 +628,28 @@ def _map_status_to_string(status) -> str:
     }
     
     return status_map.get(status_str.lower(), 'uploaded')
+
+
+def _classify_rel_source(rel_type: str) -> str:
+    """Classify a Neo4j relationship type to its ontological source.
+
+    Naming conventions:
+    - UPPER_SNAKE_CASE (e.g. RELATED_TO, IS_A) → document extraction (pattern/embedding)
+    - CamelCase (e.g. RelatedTo, IsA, HasContext) → ConceptNet enrichment
+    - dbpedia_* → ConceptNet (DBpedia-sourced edges within ConceptNet data)
+    - INSTANCE_OF → YAGO entity linking
+    - SAME_AS → cross-document concept linking
+    """
+    if rel_type.startswith('dbpedia_'):
+        return 'ConceptNet'
+    if rel_type == 'INSTANCE_OF':
+        return 'YAGO'
+    if rel_type == 'SAME_AS':
+        return 'Cross-document'
+    # CamelCase: starts with uppercase, contains at least one lowercase
+    # followed by uppercase (e.g. RelatedTo, IsA, HasContext)
+    if (rel_type[0].isupper()
+            and not rel_type.isupper()
+            and '_' not in rel_type):
+        return 'ConceptNet'
+    return 'Document'

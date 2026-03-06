@@ -125,13 +125,8 @@ class ExpectationManager {
             });
         }
 
-        // Listen for file uploads
-        const fileInput = document.getElementById('fileInput');
-        if (fileInput) {
-            fileInput.addEventListener('change', () => {
-                this.handleFileUpload();
-            });
-        }
+        // File upload feedback is handled by the upload handler after actual upload completes
+        // (not on file selection)
 
         // Listen for capability updates from loading states manager
         if (window.loadingStatesManager) {

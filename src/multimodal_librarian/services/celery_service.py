@@ -23,6 +23,35 @@ logger = logging.getLogger(__name__)
 CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", "redis://redis:6379/0")
 CELERY_RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", "redis://redis:6379/0")
 
+# --- Shared parallel-progress helpers (bridges + KG) ---
+# Each parallel task writes its own fraction (0.0–1.0) to Redis.
+# The progress reporter reads both and computes: 30 + avg(bridge, kg) * 60
+_progress_redis = None
+
+def _get_progress_redis():
+    global _progress_redis
+    if _progress_redis is None:
+        _progress_redis = redis.Redis.from_url(CELERY_BROKER_URL, decode_responses=True)
+    return _progress_redis
+
+def _set_parallel_progress(document_id: str, task_name: str, fraction: float):
+    """Write this task's fraction (0.0–1.0) and return averaged overall %."""
+    r = _get_progress_redis()
+    key = f"docprog:{document_id}:{task_name}"
+    r.set(key, str(min(fraction, 1.0)), ex=7200)  # 2h TTL
+    # Read both fractions
+    bridge_val = r.get(f"docprog:{document_id}:bridges")
+    kg_val = r.get(f"docprog:{document_id}:kg")
+    b = float(bridge_val) if bridge_val else 0.0
+    k = float(kg_val) if kg_val else 0.0
+    avg = (b + k) / 2.0
+    return int(30 + avg * 60)  # 30–90%
+
+def _cleanup_parallel_progress(document_id: str):
+    """Remove Redis keys after finalization."""
+    r = _get_progress_redis()
+    r.delete(f"docprog:{document_id}:bridges", f"docprog:{document_id}:kg")
+
 # Create Celery app
 celery_app = Celery(
     'document_processing',
@@ -683,7 +712,7 @@ def process_document_task(self, document_id: str):
         
         # Update job status
         asyncio.run(_update_job_status_sync(
-            UUID(document_id), 'running', 10.0, 'Starting document processing'
+            UUID(document_id), 'running', 2.0, 'Starting document processing'
         ))
         
         # Update document status
@@ -764,6 +793,10 @@ def finalize_processing_task(parallel_results, document_id: str):
         logger.info(f"Finalizing document processing for {document_id}")
         
         # Update job and document status
+        _cleanup_parallel_progress(document_id)
+        asyncio.run(_update_job_status_sync(
+            UUID(document_id), 'running', 95.0, 'Finalizing'
+        ))
         asyncio.run(_update_job_status_sync(
             UUID(document_id), 'completed', 100.0, 'Processing completed successfully'
         ))
@@ -881,7 +914,7 @@ async def _extract_pdf_content_async(document_id: str) -> Dict[str, Any]:
 
     # Step 1: Update job progress
     await _update_job_status_sync(
-        UUID(document_id), 'running', 20.0, 'Extracting PDF content'
+        UUID(document_id), 'running', 5.0, 'Extracting PDF content'
     )
 
     # Step 2: Fetch document s3_key and title using direct asyncpg (NOT db_manager)
@@ -966,6 +999,20 @@ async def _extract_pdf_content_async(document_id: str) -> Dict[str, Any]:
     }
 
     logger.info(f"PDF content extracted successfully for document {document_id}")
+
+    # Send extraction stats via WebSocket
+    page_count = pdf_content.metadata.page_count if pdf_content.metadata else 0
+    await _update_job_status_sync(
+        UUID(document_id), 'running', 10.0, 'Extracting PDF content',
+        metadata={
+            'pages_extracted': page_count,
+            'images': len(pdf_content.images),
+            'tables': len(pdf_content.tables),
+            'charts': len(pdf_content.charts),
+            'text_length': len(pdf_content.text),
+        }
+    )
+
     return serialized_content
 
 
@@ -1016,7 +1063,7 @@ def generate_chunks_task(pdf_content: Dict[str, Any], document_id: str):
         
         # Update progress
         asyncio.run(_update_job_status_sync(
-            UUID(document_id), 'running', 50.0, 'Generating chunks'
+            UUID(document_id), 'running', 15.0, 'Generating chunks'
         ))
         
         # Reconstruct DocumentContent from serialized data
@@ -1094,17 +1141,33 @@ def generate_chunks_task(pdf_content: Dict[str, Any], document_id: str):
             logger.warning(f"Cleanup warning for document {document_id}: {e}")
         
         asyncio.run(_update_job_status_sync(
-            UUID(document_id), 'running', 60.0, 'Storing chunks and embeddings'
+            UUID(document_id), 'running', 15.0, 'Storing chunks and embeddings',
+            metadata={'chunks_generated': len(serialized_chunks),
+                      'total_chunks': len(serialized_chunks),
+                      'pages': pdf_content['metadata']['page_count']}
         ))
         
-        # Store chunks in PostgreSQL
-        asyncio.run(_store_chunks_in_database(document_id, serialized_chunks))
+        total_pages = pdf_content['metadata']['page_count']
         
-        # Store chunk embeddings in vector database (Milvus for local, OpenSearch for AWS)
-        asyncio.run(_store_embeddings_in_vector_db(document_id, serialized_chunks))
+        # Store chunks in PostgreSQL (with incremental progress updates)
+        asyncio.run(_store_chunks_in_database(document_id, serialized_chunks,
+                                              total_pages=total_pages))
+        
+        # Store chunk embeddings in vector database (with incremental progress updates)
+        asyncio.run(_store_embeddings_in_vector_db(document_id, serialized_chunks,
+                                                   total_pages=total_pages))
         
         logger.info(f"Stored {len(serialized_chunks)} chunks + embeddings for document {document_id}")
         # --- End inline embedding storage ---
+        
+        # Send progress update with chunk/embedding stats
+        asyncio.run(_update_job_status_sync(
+            UUID(document_id), 'running', 25.0, 'Chunks and embeddings stored',
+            metadata={'chunks_stored': len(serialized_chunks),
+                      'embeddings_stored': len(serialized_chunks),
+                      'total_chunks': len(serialized_chunks),
+                      'pages': pdf_content['metadata']['page_count']}
+        ))
         
         return serialized_processed
         
@@ -1113,7 +1176,7 @@ def generate_chunks_task(pdf_content: Dict[str, Any], document_id: str):
         raise
 
 
-@celery_app.task(name='generate_bridges_task')
+@celery_app.task(name='generate_bridges_task', time_limit=3 * 60 * 60, soft_time_limit=170 * 60)
 def generate_bridges_task(processed_document: Dict[str, Any], document_id: str):
     """
     Generate bridge chunks between adjacent content chunks.
@@ -1147,22 +1210,51 @@ def generate_bridges_task(processed_document: Dict[str, Any], document_id: str):
             db_manager.initialize()
         
         # Update progress — bridges run in parallel with KG
+        pct = _set_parallel_progress(document_id, 'bridges', 0.0)
         asyncio.run(_update_job_status_sync(
-            UUID(document_id), 'running', 70.0, 'Generating bridges'
+            UUID(document_id), 'running', pct, 'Generating bridges'
         ))
         
         bridge_generation_data = processed_document.get('bridge_generation_data', {})
         if not bridge_generation_data or not bridge_generation_data.get('bridge_needed'):
             logger.info(f"No bridges needed for document {document_id}")
+            pct = _set_parallel_progress(document_id, 'bridges', 1.0)
+            asyncio.run(_update_job_status_sync(
+                UUID(document_id), 'running', pct, 'Generating bridges',
+                metadata={'bridges_generated': 0, 'bridges_needed': False}
+            ))
             return {
                 'status': 'completed',
                 'document_id': document_id,
                 'bridges_generated': 0
             }
         
-        # Generate bridges using the deferred method
+        # Generate bridges using the deferred method with progress reporting
+        import time as _time
+        _last_progress_time = [0.0]  # mutable for closure
+
+        def _bridge_progress(bridges_so_far, total_bridges, failed):
+            now = _time.time()
+            # Throttle updates to every 5 seconds to avoid flooding WebSocket
+            if now - _last_progress_time[0] < 5.0:
+                return
+            _last_progress_time[0] = now
+            fraction = bridges_so_far / max(total_bridges, 1)
+            pct = _set_parallel_progress(document_id, 'bridges', fraction)
+            asyncio.run(_update_job_status_sync(
+                UUID(document_id), 'running', pct,
+                'Generating bridges',
+                metadata={
+                    'bridges_generated': bridges_so_far,
+                    'total_bridges': total_bridges,
+                    'bridges_failed': failed,
+                }
+            ))
+
         chunking_framework = GenericMultiLevelChunkingFramework()
-        bridges = chunking_framework.generate_bridges_for_document(bridge_generation_data)
+        bridges = chunking_framework.generate_bridges_for_document(
+            bridge_generation_data, progress_callback=_bridge_progress
+        )
         
         # Serialize bridges for storage
         serialized_bridges = [
@@ -1189,6 +1281,11 @@ def generate_bridges_task(processed_document: Dict[str, Any], document_id: str):
             logger.info(f"Stored {len(serialized_bridges)} bridge chunks for document {document_id}")
         
         logger.info(f"Bridge generation completed for document {document_id}: {len(bridges)} bridges")
+        pct = _set_parallel_progress(document_id, 'bridges', 1.0)
+        asyncio.run(_update_job_status_sync(
+            UUID(document_id), 'running', pct, 'Generating bridges',
+            metadata={'bridges_generated': len(bridges), 'bridges_stored': len(serialized_bridges)}
+        ))
         return {
             'status': 'completed',
             'document_id': document_id,
@@ -1233,7 +1330,7 @@ def store_embeddings_task(processed_document: Dict[str, Any], document_id: str):
         
         # Update progress
         asyncio.run(_update_job_status_sync(
-            UUID(document_id), 'running', 75.0, 'Cleaning up existing chunks'
+            UUID(document_id), 'running', 20.0, 'Cleaning up existing chunks'
         ))
         
         # Delete existing chunks before storing new ones (supports reprocessing)
@@ -1248,7 +1345,7 @@ def store_embeddings_task(processed_document: Dict[str, Any], document_id: str):
         
         # Update progress
         asyncio.run(_update_job_status_sync(
-            UUID(document_id), 'running', 80.0, 'Storing embeddings'
+            UUID(document_id), 'running', 22.0, 'Storing embeddings'
         ))
         
         chunks = processed_document['chunks']
@@ -1271,13 +1368,18 @@ def store_embeddings_task(processed_document: Dict[str, Any], document_id: str):
         raise
 
 
-async def _store_embeddings_in_vector_db(document_id: str, chunks: List[Dict[str, Any]]):
+async def _store_embeddings_in_vector_db(document_id: str, chunks: List[Dict[str, Any]],
+                                        total_pages: int = 0):
     """Store chunk embeddings in vector database (Milvus or OpenSearch).
     
     The chunk ID must be a valid UUID that was generated by the chunking framework.
     This ensures consistency between PostgreSQL and Milvus storage.
+    
+    Splits chunks into sub-batches and sends incremental progress updates
+    via WebSocket every ~5 seconds.
     """
     try:
+        import time
         import uuid as uuid_module
 
         from ..clients.database_factory import DatabaseClientFactory
@@ -1302,8 +1404,9 @@ async def _store_embeddings_in_vector_db(document_id: str, chunks: List[Dict[str
             vector_client._embedding_dimension = 384  # Default for all-MiniLM-L6-v2
             logger.info("Model server client initialized for Celery worker")
         
-        # Prepare chunks for vector storage
-        vector_chunks = []
+        # Prepare all chunks for vector storage
+        total_chunks = len(chunks)
+        all_vector_chunks = []
         for i, chunk in enumerate(chunks):
             # Validate that chunk ID is a valid UUID - fail fast if invalid
             chunk_id = chunk.get('id')
@@ -1325,12 +1428,52 @@ async def _store_embeddings_in_vector_db(document_id: str, chunks: List[Dict[str
                     **chunk.get('metadata', {})
                 }
             }
-            vector_chunks.append(vector_chunk)
+            all_vector_chunks.append(vector_chunk)
         
-        # Store embeddings (vector client handles embedding generation)
-        await vector_client.store_embeddings(vector_chunks)
+        # Store embeddings in sub-batches with progress reporting
+        EMBED_BATCH_SIZE = 200  # Sub-batch size for incremental progress
+        last_update_time = time.monotonic()
+        UPDATE_INTERVAL = 5.0  # seconds between progress updates
+        stored_so_far = 0
+
+        for batch_start in range(0, total_chunks, EMBED_BATCH_SIZE):
+            batch_end = min(batch_start + EMBED_BATCH_SIZE, total_chunks)
+            batch = all_vector_chunks[batch_start:batch_end]
+            
+            await vector_client.store_embeddings(batch)
+            stored_so_far = batch_end
+            
+            # Send incremental progress every ~5 seconds (or on last batch)
+            now = time.monotonic()
+            is_last_batch = batch_end >= total_chunks
+            if now - last_update_time >= UPDATE_INTERVAL or is_last_batch:
+                last_update_time = now
+                # Embeddings phase: 20-25% progress range
+                progress_pct = 20.0 + (stored_so_far / total_chunks) * 5.0
+                # Extract max page from this batch for page tracking
+                max_page = 0
+                for vc in all_vector_chunks[:stored_so_far]:
+                    pn = vc.get('metadata', {}).get('page_number')
+                    if pn is not None:
+                        try:
+                            max_page = max(max_page, int(pn))
+                        except (ValueError, TypeError):
+                            pass
+                meta = {
+                    'embeddings_stored_so_far': stored_so_far,
+                    'total_chunks': total_chunks,
+                }
+                if max_page > 0:
+                    meta['current_page'] = max_page
+                if total_pages > 0:
+                    meta['total_pages'] = total_pages
+                await _update_job_status_sync(
+                    uuid_module.UUID(document_id), 'running', min(progress_pct, 25.0),
+                    'Storing embeddings',
+                    metadata=meta
+                )
         
-        logger.info(f"Stored {len(vector_chunks)} embeddings in vector database for document {document_id}")
+        logger.info(f"Stored {total_chunks} embeddings in vector database for document {document_id}")
         
     except Exception as e:
         logger.error(f"Error storing embeddings in vector database: {e}")
@@ -1415,7 +1558,7 @@ async def _store_bridge_embeddings_in_vector_db(document_id: str, bridges: List[
         raise
 
 
-@celery_app.task(name='update_knowledge_graph_task')
+@celery_app.task(name='update_knowledge_graph_task', time_limit=3 * 60 * 60, soft_time_limit=170 * 60)
 def update_knowledge_graph_task(processed_document: Dict[str, Any], document_id: str):
     """
     Update knowledge graph with document concepts.
@@ -1436,8 +1579,9 @@ def update_knowledge_graph_task(processed_document: Dict[str, Any], document_id:
             db_manager.initialize()
         
         # Update progress — KG runs in parallel with bridges
+        pct = _set_parallel_progress(document_id, 'kg', 0.0)
         asyncio.run(_update_job_status_sync(
-            UUID(document_id), 'running', 70.0, 'Updating knowledge graph'
+            UUID(document_id), 'running', pct, 'Updating knowledge graph'
         ))
         
         # Process chunks through knowledge graph builder
@@ -1450,10 +1594,8 @@ def update_knowledge_graph_task(processed_document: Dict[str, Any], document_id:
         
     except Exception as e:
         logger.error(f"Knowledge graph update failed for document {document_id}: {e}")
-        # Don't fail the entire processing for KG errors
-        logger.warning(f"Continuing without knowledge graph update for document {document_id}")
-        # Return processed_document so the chain can continue
-        return processed_document
+        # KG failure is fatal — re-raise to fail the entire processing pipeline
+        raise
 
 
 async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]):
@@ -1527,8 +1669,10 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
         except Exception as e:
             logger.warning(f"Model server client unavailable: {e}")
 
-        # Batch processing configuration
-        BATCH_SIZE = 100
+        # Batch processing configuration — scale down for large documents
+        # to avoid Neo4j OOM from oversized UNWIND transactions.
+        # Scale factor: every 1000 chunks doubles the divisor.
+        # E.g. 3333 chunks → scale=3 → BATCH_SIZE=33, CONCEPT/REL=166
         MAX_CONCURRENT = 10
 
         # Persistent maps across batches — concepts may be referenced by
@@ -1560,10 +1704,17 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
             knowledge_chunks.append(knowledge_chunk)
 
         total_chunks = len(knowledge_chunks)
+
+        # Dynamic batch scaling: scale_factor grows with document size
+        _scale_factor = max(1, total_chunks // 1000)
+        BATCH_SIZE = max(10, 100 // _scale_factor)
+        _CONCEPT_REL_SUB_BATCH = max(50, 500 // _scale_factor)
+
         total_batches = (total_chunks + BATCH_SIZE - 1) // BATCH_SIZE
         logger.info(
             f"Processing {total_chunks} chunks in {total_batches} batches "
-            f"(batch_size={BATCH_SIZE}) for KG extraction"
+            f"(batch_size={BATCH_SIZE}, sub_batch={_CONCEPT_REL_SUB_BATCH}, "
+            f"scale_factor={_scale_factor}) for KG extraction"
         )
 
         for batch_start in range(0, total_chunks, BATCH_SIZE):
@@ -1689,8 +1840,8 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
                 except Exception as e:
                     logger.warning(f"Batch append source_chunks failed: {e}")
 
-            # Batch MERGE new concepts (sub-batches of 500)
-            CONCEPT_BATCH_SIZE = 500
+            # Batch MERGE new concepts (dynamically scaled sub-batches)
+            CONCEPT_BATCH_SIZE = _CONCEPT_REL_SUB_BATCH
             for sub_start in range(0, len(new_concept_rows), CONCEPT_BATCH_SIZE):
                 sub_batch = new_concept_rows[sub_start:sub_start + CONCEPT_BATCH_SIZE]
                 # Separate rows with/without embeddings (different SET clauses)
@@ -1782,7 +1933,7 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
                         'created_at': now_ts,
                     })
 
-            REL_BATCH_SIZE = 500
+            REL_BATCH_SIZE = _CONCEPT_REL_SUB_BATCH
             for rel_type, rel_rows in rels_by_type.items():
                 for sub_start in range(0, len(rel_rows), REL_BATCH_SIZE):
                     sub_batch = rel_rows[sub_start:sub_start + REL_BATCH_SIZE]
@@ -1811,6 +1962,23 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
                 f"KG batch {batch_num}/{total_batches}: "
                 f"{len(batch)} chunks → {len(batch_concepts)} concepts, "
                 f"{len(batch_relationships)} relationships (persisted)"
+            )
+
+            # Send live stats via WebSocket after each batch
+            # Keep progress at 70% during parallel phase — metadata tells the real story
+            fraction = batch_num / total_batches
+            pct = _set_parallel_progress(document_id, 'kg', fraction)
+            await _update_job_status_sync(
+                UUID(document_id), 'running', pct,
+                'Updating knowledge graph',
+                metadata={
+                    'kg_batch': batch_num,
+                    'kg_total_batches': total_batches,
+                    'concepts': total_concepts_persisted,
+                    'relationships': total_relationships_persisted,
+                    'chunks_processed': batch_end,
+                    'total_chunks': total_chunks,
+                }
             )
 
         logger.info(
@@ -2525,7 +2693,8 @@ async def _mark_enrichment_failed(
 # Helper functions for async operations in sync tasks
 async def _update_job_status_sync(document_id, status: str, progress: float,
                                   step: str, error_message: str = None,
-                                  failed_stage: str = None):
+                                  failed_stage: str = None,
+                                  metadata: Dict[str, Any] = None):
     """Update job status using asyncpg connection for high performance.
     
     Also sends WebSocket notifications via ProcessingStatusService.
@@ -2590,7 +2759,8 @@ async def _update_job_status_sync(document_id, status: str, progress: float,
                 status=status,
                 progress_percentage=progress,
                 current_step=step,
-                error_message=error_message
+                error_message=error_message,
+                metadata=metadata
             )
         except Exception as ws_error:
             # Don't fail the job if WebSocket notification fails
@@ -2730,7 +2900,8 @@ async def _delete_document_chunks(document_id: str) -> int:
         raise
 
 
-async def _store_chunks_in_database(document_id: str, chunks: List[Dict[str, Any]]):
+async def _store_chunks_in_database(document_id: str, chunks: List[Dict[str, Any]],
+                                    total_pages: int = 0):
     """Store chunks in unified schema using the chunk's existing UUID.
 
     The chunk ID must be a valid UUID that was generated by the chunking framework.
@@ -2740,11 +2911,15 @@ async def _store_chunks_in_database(document_id: str, chunks: List[Dict[str, Any
     - source_type set to 'BOOK' for PDF-derived chunks
     - content_hash computed as SHA-256 of content
     - Fields mapped according to unified schema structure
+    
+    Sends incremental progress updates via WebSocket every ~5 seconds.
     """
     try:
         import hashlib
         import json
+        import time
         import uuid
+        from uuid import UUID
 
         from ..database.connection import get_async_connection
 
@@ -2761,6 +2936,11 @@ async def _store_chunks_in_database(document_id: str, chunks: List[Dict[str, Any
                 'chart': 'TECHNICAL'
             }
             return mapping.get(chunk_type, 'GENERAL')
+
+        total_chunks = len(chunks)
+        last_update_time = time.monotonic()
+        UPDATE_INTERVAL = 5.0  # seconds between progress updates
+        max_page_seen = 0
 
         conn = await get_async_connection()
         try:
@@ -2793,6 +2973,13 @@ async def _store_chunks_in_database(document_id: str, chunks: List[Dict[str, Any
                     page_number = chunk.get('page_number')
                     location_reference = str(page_number) if page_number is not None else None
 
+                    # Track max page seen for progress reporting
+                    if page_number is not None:
+                        try:
+                            max_page_seen = max(max_page_seen, int(page_number))
+                        except (ValueError, TypeError):
+                            pass
+
                     # Map section_title to section
                     section = chunk.get('section_title')
 
@@ -2801,7 +2988,7 @@ async def _store_chunks_in_database(document_id: str, chunks: List[Dict[str, Any
                             id, source_id, source_type, chunk_index, content,
                             content_hash, content_type, location_reference, section, metadata
                         ) VALUES ($1::uuid, $2::uuid, 'BOOK', $3, $4, $5, $6, $7, $8, $9::jsonb)
-                        ON CONFLICT (source_id, source_type, content_hash) DO UPDATE SET
+                        ON CONFLICT (id) DO UPDATE SET
                             content = EXCLUDED.content,
                             content_type = EXCLUDED.content_type,
                             location_reference = EXCLUDED.location_reference,
@@ -2820,6 +3007,26 @@ async def _store_chunks_in_database(document_id: str, chunks: List[Dict[str, Any
                         section,
                         metadata
                     )
+
+                    # Send incremental progress every ~5 seconds
+                    now = time.monotonic()
+                    if now - last_update_time >= UPDATE_INTERVAL:
+                        last_update_time = now
+                        stored_so_far = i + 1
+                        progress_pct = 15.0 + (stored_so_far / total_chunks) * 5.0  # 15-20%
+                        meta = {
+                            'chunks_stored_so_far': stored_so_far,
+                            'total_chunks': total_chunks,
+                        }
+                        if max_page_seen > 0:
+                            meta['current_page'] = max_page_seen
+                        if total_pages > 0:
+                            meta['total_pages'] = total_pages
+                        await _update_job_status_sync(
+                            UUID(document_id), 'running', min(progress_pct, 20.0),
+                            'Storing chunks',
+                            metadata=meta
+                        )
 
                 # Update document chunk count in knowledge_sources
                 await conn.execute("""

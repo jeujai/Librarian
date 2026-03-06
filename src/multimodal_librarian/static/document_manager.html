@@ -1,12 +1,14 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Document Manager - Multimodal Librarian</title>
+    <title>Document Manager - Librarian</title>
     <link rel="stylesheet" href="/static/css/document_manager.css">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
 </head>
+
 <body>
     <div class="container">
         <!-- Header -->
@@ -35,7 +37,7 @@
                 </div>
                 <input type="file" id="fileInput" multiple accept=".pdf" style="display: none;">
             </div>
-            
+
             <!-- Upload Progress -->
             <div id="uploadProgress" class="upload-progress hidden">
                 <h4>Uploading Files...</h4>
@@ -70,7 +72,7 @@
                     </select>
                 </div>
             </div>
-            
+
             <!-- View Toggle -->
             <div class="view-toggle">
                 <button id="gridView" class="view-btn active" title="Grid View">
@@ -103,13 +105,13 @@
             <div id="documentGrid" class="document-grid">
                 <!-- Documents will be loaded here -->
             </div>
-            
+
             <!-- Loading State -->
             <div id="loadingState" class="loading-state">
                 <i class="fas fa-spinner fa-spin"></i>
                 <p>Loading documents...</p>
             </div>
-            
+
             <!-- Empty State -->
             <div id="emptyState" class="empty-state hidden">
                 <i class="fas fa-file-pdf empty-icon"></i>
@@ -164,4 +166,5 @@
 
     <script src="/static/js/document_manager.js"></script>
 </body>
+
 </html>

@@ -315,10 +315,10 @@ services:
       - NEO4J_PLUGINS=["apoc", "graph-data-science"]
       - NEO4J_dbms_security_procedures_unrestricted=apoc.*,gds.*
       - NEO4J_dbms_security_procedures_allowlist=apoc.*,gds.*
-      # Memory optimization for faster queries
-      - NEO4J_dbms_memory_heap_initial__size=1G
-      - NEO4J_dbms_memory_heap_max__size=2G
-      - NEO4J_dbms_memory_pagecache_size=1G
+      # Memory optimization — capped to prevent OOM under Docker Desktop
+      - NEO4J_dbms_memory_heap_initial__size=512m
+      - NEO4J_dbms_memory_heap_max__size=1G
+      - NEO4J_dbms_memory_pagecache_size=512m
       # Query optimization
       - NEO4J_dbms_query__cache__size=1000
       - NEO4J_cypher_min__replan__interval=10s

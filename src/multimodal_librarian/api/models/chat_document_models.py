@@ -88,6 +88,10 @@ class DocumentInfo(BaseModel):
     upload_timestamp: datetime
     file_size: int
     chunk_count: Optional[int] = None
+    bridge_count: Optional[int] = None
+    concept_count: Optional[int] = None
+    relationship_count: Optional[int] = None
+    relationship_breakdown: Optional[Dict[str, Any]] = None
     error_message: Optional[str] = None
 
 
@@ -162,6 +166,7 @@ class DocumentRetryStartedMessage(BaseModel):
     """
     type: Literal["document_retry_started"] = "document_retry_started"
     document_id: str
+    filename: str = Field("unknown", description="Original filename for UI card creation")
     message: str
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 

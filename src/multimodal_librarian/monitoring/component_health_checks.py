@@ -1012,3 +1012,104 @@ class YagoHealthCheck(ComponentHealthCheck):
                 },
                 "timestamp": datetime.now().isoformat()
             }
+
+
+class UMLSHealthCheck(ComponentHealthCheck):
+    """UMLS data health check.
+
+    Reports loaded tier (none/lite/full), concept count, and
+    relationship count. Non-critical — the system degrades
+    gracefully when UMLS data is absent.
+    """
+
+    def __init__(self):
+        super().__init__("umls")
+
+    async def run(self) -> Dict[str, Any]:
+        """Check UMLS data availability in Neo4j."""
+        start_time = time.time()
+
+        try:
+            from ..api.dependencies.services import _umls_client
+
+            if _umls_client is None:
+                response_time = (time.time() - start_time) * 1000
+                return {
+                    "status": HealthStatus.DEGRADED.value,
+                    "component": "umls",
+                    "response_time_ms": round(response_time, 2),
+                    "details": {
+                        "connection": "not_initialized",
+                        "loaded_tier": "none",
+                        "note": (
+                            "UMLS client not initialized — "
+                            "UMLS data may not be loaded"
+                        ),
+                    },
+                    "timestamp": datetime.now().isoformat(),
+                }
+
+            try:
+                tier = await asyncio.wait_for(
+                    _umls_client.get_loaded_tier(),
+                    timeout=3.0,
+                )
+                response_time = (time.time() - start_time) * 1000
+
+                if tier in ("lite", "full"):
+                    return {
+                        "status": HealthStatus.HEALTHY.value,
+                        "component": "umls",
+                        "response_time_ms": round(
+                            response_time, 2,
+                        ),
+                        "details": {
+                            "connection": "ok",
+                            "loaded_tier": tier,
+                            "note": (
+                                f"UMLS {tier} tier loaded"
+                            ),
+                        },
+                        "timestamp": datetime.now().isoformat(),
+                    }
+                else:
+                    return {
+                        "status": HealthStatus.DEGRADED.value,
+                        "component": "umls",
+                        "response_time_ms": round(
+                            response_time, 2,
+                        ),
+                        "details": {
+                            "connection": "ok",
+                            "loaded_tier": "none",
+                            "note": "UMLS data not loaded",
+                        },
+                        "timestamp": datetime.now().isoformat(),
+                    }
+
+            except asyncio.TimeoutError:
+                response_time = (time.time() - start_time) * 1000
+                return {
+                    "status": HealthStatus.DEGRADED.value,
+                    "component": "umls",
+                    "response_time_ms": round(response_time, 2),
+                    "details": {
+                        "connection": "timeout",
+                        "error": "UMLS check timed out (3s)",
+                    },
+                    "timestamp": datetime.now().isoformat(),
+                }
+
+        except Exception as e:
+            response_time = (time.time() - start_time) * 1000
+            self.logger.error(f"UMLS health check error: {e}")
+            return {
+                "status": HealthStatus.DEGRADED.value,
+                "component": "umls",
+                "response_time_ms": round(response_time, 2),
+                "details": {
+                    "error": str(e),
+                    "note": "UMLS health check failed",
+                },
+                "timestamp": datetime.now().isoformat(),
+            }

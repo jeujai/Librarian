@@ -24,6 +24,7 @@ from .component_health_checks import (
     ModelServerHealthCheck,
     SearchServiceHealthCheck,
     SystemResourcesHealthCheck,
+    UMLSHealthCheck,
     VectorStoreHealthCheck,
     YagoHealthCheck,
 )
@@ -110,7 +111,8 @@ class HealthCheckSystem:
             'knowledge_graph': KnowledgeGraphHealthCheck(),
             'system_resources': SystemResourcesHealthCheck(),
             'model_server': ModelServerHealthCheck(),
-            'yago': YagoHealthCheck()
+            'yago': YagoHealthCheck(),
+            'umls': UMLSHealthCheck()
         }
         
         # Critical services that must be healthy for system operation

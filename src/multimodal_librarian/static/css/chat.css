@@ -1163,6 +1163,143 @@ body {
 }
 
 /* =============================================================================
+   Inline Document List (embedded in upload dropdown)
+   ============================================================================= */
+
+.inline-document-list-slot {
+    border-top: 1px solid #e2e8f0;
+}
+
+.inline-doc-list {
+    max-height: 320px;
+    overflow-y: auto;
+}
+
+.inline-doc-list-loading {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px;
+    color: #64748b;
+    font-size: 0.8rem;
+}
+
+.inline-doc-list-empty {
+    padding: 8px 12px;
+}
+
+.inline-doc-list-empty p {
+    margin: 0;
+    color: #94a3b8;
+    font-size: 0.8rem;
+}
+
+.inline-doc-row {
+    padding: 6px 12px;
+    border-top: 1px solid #f1f5f9;
+}
+
+.inline-doc-row:first-child {
+    border-top: none;
+}
+
+.inline-doc-row-main {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.inline-doc-title {
+    font-size: 0.8rem;
+    color: #334155;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1;
+    min-width: 0;
+    text-decoration: none;
+}
+
+.inline-doc-title:hover {
+    color: #3b82f6;
+    text-decoration: underline;
+}
+
+.inline-doc-row .status-badge {
+    font-size: 0.65rem;
+    flex-shrink: 0;
+}
+
+.inline-doc-row .document-stats {
+    margin-top: 2px;
+}
+
+.inline-doc-row .document-stats-toggle {
+    font-size: 0.7rem;
+}
+
+.inline-doc-list-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 12px;
+    border-top: 1px solid #e2e8f0;
+    font-size: 0.7rem;
+    color: #64748b;
+}
+
+.inline-doc-pagination {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.inline-doc-pagination .pagination-btn {
+    padding: 2px 6px;
+    font-size: 0.75rem;
+}
+
+.inline-doc-count {
+    font-size: 0.7rem;
+    color: #64748b;
+}
+
+/* Inline doc action buttons (delete, retry) */
+.inline-doc-action-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 0.25rem;
+    color: #94a3b8;
+    cursor: pointer;
+    flex-shrink: 0;
+    padding: 0;
+    transition: all 0.15s ease;
+}
+
+.inline-delete-btn:hover {
+    background: #fee2e2;
+    border-color: #fca5a5;
+    color: #dc2626;
+}
+
+.inline-retry-btn:hover {
+    background: #dbeafe;
+    border-color: #93c5fd;
+    color: #1d4ed8;
+}
+
+.inline-doc-action-btn:focus {
+    outline: 2px solid #3b82f6;
+    outline-offset: 1px;
+}
+
+/* =============================================================================
    Document List Panel
    Requirements: 8.1, 8.2, 8.3, 8.4, 8.5
    ============================================================================= */
@@ -1360,6 +1497,16 @@ body {
     margin-bottom: 0.25rem;
 }
 
+.document-item-title a {
+    color: inherit;
+    text-decoration: none;
+}
+
+.document-item-title a:hover {
+    color: #3b82f6;
+    text-decoration: underline;
+}
+
 .document-item-meta {
     display: flex;
     flex-wrap: wrap;
@@ -1551,6 +1698,85 @@ body {
     text-align: center;
 }
 
+/* Document Stats */
+.document-stats {
+    padding: 4px 12px 8px 36px;
+}
+
+.document-stats-toggle {
+    background: none;
+    border: none;
+    color: #64748b;
+    font-size: 0.75rem;
+    cursor: pointer;
+    padding: 2px 0;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.document-stats-toggle:hover {
+    color: #3b82f6;
+}
+
+.stats-arrow {
+    font-size: 0.65rem;
+    display: inline-block;
+    width: 10px;
+}
+
+.document-stats-details {
+    padding: 4px 0 0 14px;
+}
+
+.stat-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.72rem;
+    padding: 1px 0;
+    color: #475569;
+}
+
+.stat-label {
+    color: #64748b;
+}
+
+.stat-value {
+    font-weight: 500;
+    color: #334155;
+}
+
+.stat-breakdown-header {
+    margin-top: 3px;
+    font-weight: 500;
+    color: #64748b;
+    font-size: 0.7rem;
+}
+
+.stat-source-header {
+    margin-top: 6px;
+    font-weight: 600;
+    color: #475569;
+    font-size: 0.72rem;
+    border-top: 1px solid #e2e8f0;
+    padding-top: 4px;
+}
+
+.stat-source-header:first-of-type {
+    margin-top: 3px;
+    border-top: none;
+    padding-top: 0;
+}
+
+.stat-breakdown .stat-label {
+    padding-left: 12px;
+    font-size: 0.7rem;
+}
+
+.stat-breakdown .stat-value {
+    font-size: 0.7rem;
+}
+
 /* Responsive Adjustments */
 @media (max-width: 480px) {
     .document-list-panel {
@@ -1621,6 +1847,55 @@ body {
         color: #94a3b8;
     }
 
+    .inline-document-list-slot {
+        border-top-color: #334155;
+    }
+
+    .inline-doc-row {
+        border-top-color: #1e293b;
+    }
+
+    .inline-doc-title {
+        color: #e2e8f0;
+    }
+
+    .inline-doc-title:hover {
+        color: #60a5fa;
+    }
+
+    .inline-doc-list-loading {
+        color: #94a3b8;
+    }
+
+    .inline-doc-list-empty p {
+        color: #64748b;
+    }
+
+    .inline-doc-list-footer {
+        border-top-color: #334155;
+        color: #94a3b8;
+    }
+
+    .inline-doc-count {
+        color: #94a3b8;
+    }
+
+    .inline-doc-action-btn {
+        color: #64748b;
+    }
+
+    .inline-delete-btn:hover {
+        background: #450a0a;
+        border-color: #7f1d1d;
+        color: #fca5a5;
+    }
+
+    .inline-retry-btn:hover {
+        background: #1e3a5f;
+        border-color: #1d4ed8;
+        color: #93c5fd;
+    }
+
     .document-list-panel {
         background: #1e293b;
         border-color: #334155;
@@ -1658,6 +1933,14 @@ body {
         color: #f1f5f9;
     }
 
+    .document-item-title a {
+        color: inherit;
+    }
+
+    .document-item-title a:hover {
+        color: #60a5fa;
+    }
+
     .document-item-meta {
         color: #94a3b8;
     }
@@ -1682,4 +1965,294 @@ body {
         border-color: #334155;
         color: #94a3b8;
     }
+
+    .document-stats-toggle {
+        color: #94a3b8;
+    }
+
+    .document-stats-toggle:hover {
+        color: #60a5fa;
+    }
+
+    .stat-row {
+        color: #cbd5e1;
+    }
+
+    .stat-label {
+        color: #94a3b8;
+    }
+
+    .stat-value {
+        color: #e2e8f0;
+    }
+
+    .stat-breakdown-header {
+        color: #94a3b8;
+    }
+
+    .stat-source-header {
+        color: #cbd5e1;
+        border-top-color: #334155;
+    }
+}
+
+
+/* =============================================================================
+   File Queue & Uploaded Files Panel (Upload Duplicate Filter)
+   Requirements: 2.2, 3.4, 3.7, 5.1, 5.3
+   ============================================================================= */
+
+/* File Queue Panel — container for the file queue */
+.file-queue-panel {
+    border: 1px solid #e2e8f0;
+    border-radius: 0.75rem;
+    padding: 1rem;
+    margin: 0.75rem 0;
+    background: #f8fafc;
+}
+
+/* Individual file row */
+.file-queue-entry {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.file-queue-entry:last-child {
+    border-bottom: none;
+}
+
+/* Duplicate file styling — amber/warning background tint */
+.file-queue-entry.duplicate {
+    background: rgba(245, 158, 11, 0.08);
+    border-left: 3px solid #f59e0b;
+}
+
+/* Flex container for name, size, badge */
+.file-queue-entry-info {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex: 1;
+    min-width: 0;
+}
+
+/* Filename text — truncate with ellipsis */
+.file-queue-entry-name {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: #1e293b;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 200px;
+}
+
+/* File size text — muted, smaller */
+.file-queue-entry-size {
+    font-size: 0.75rem;
+    color: #94a3b8;
+    flex-shrink: 0;
+}
+
+/* Amber badge/pill for "Duplicate" label */
+.duplicate-indicator {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.125rem 0.5rem;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: #92400e;
+    background: #fef3c7;
+    border-radius: 9999px;
+    flex-shrink: 0;
+}
+
+/* Small X button to remove a file from queue */
+.file-queue-remove-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    background: none;
+    border: 1px solid #e2e8f0;
+    border-radius: 0.375rem;
+    color: #94a3b8;
+    cursor: pointer;
+    font-size: 0.875rem;
+    line-height: 1;
+    transition: all 0.15s ease;
+    flex-shrink: 0;
+    margin-left: 0.5rem;
+}
+
+.file-queue-remove-btn:hover {
+    background: #fee2e2;
+    border-color: #fca5a5;
+    color: #dc2626;
+}
+
+.file-queue-remove-btn:focus {
+    outline: 2px solid #3b82f6;
+    outline-offset: 2px;
+}
+
+/* Summary text line — muted, small */
+.file-queue-summary {
+    font-size: 0.8rem;
+    color: #64748b;
+    padding: 0.5rem 0;
+}
+
+/* Button container */
+.file-queue-actions {
+    display: flex;
+    gap: 0.5rem;
+    padding-top: 0.75rem;
+}
+
+/* Primary upload button */
+.file-queue-upload-new-btn {
+    padding: 0.5rem 1rem;
+    background: #3b82f6;
+    color: white;
+    border: none;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+.file-queue-upload-new-btn:hover {
+    background: #2563eb;
+}
+
+.file-queue-upload-new-btn:disabled {
+    background: #cbd5e1;
+    color: #94a3b8;
+    cursor: not-allowed;
+}
+
+.file-queue-upload-new-btn:focus {
+    outline: 2px solid #3b82f6;
+    outline-offset: 2px;
+}
+
+/* Secondary/outline button */
+.file-queue-force-upload-btn {
+    padding: 0.5rem 1rem;
+    background: transparent;
+    color: #64748b;
+    border: 1px solid #e2e8f0;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.file-queue-force-upload-btn:hover {
+    background: #f1f5f9;
+    border-color: #cbd5e1;
+    color: #475569;
+}
+
+.file-queue-force-upload-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.file-queue-force-upload-btn:focus {
+    outline: 2px solid #3b82f6;
+    outline-offset: 2px;
+}
+
+/* Uploaded Files Panel — container for uploaded files list */
+.uploaded-files-panel {
+    border: 1px solid #e2e8f0;
+    border-radius: 0.75rem;
+    padding: 0.75rem;
+    max-height: 240px;
+    overflow-y: auto;
+    background: #f8fafc;
+}
+
+.uploaded-files-panel::-webkit-scrollbar {
+    width: 6px;
+}
+
+.uploaded-files-panel::-webkit-scrollbar-track {
+    background: #f1f5f9;
+}
+
+.uploaded-files-panel::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 3px;
+}
+
+/* Individual uploaded file row */
+.uploaded-file-entry {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.375rem 0;
+    font-size: 0.875rem;
+}
+
+.uploaded-file-entry+.uploaded-file-entry {
+    border-top: 1px solid #f1f5f9;
+}
+
+/* Filename text — truncate */
+.uploaded-file-name {
+    color: #1e293b;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1;
+    min-width: 0;
+}
+
+/* Empty state text — muted, italic */
+.uploaded-files-empty {
+    color: #94a3b8;
+    font-style: italic;
+    font-size: 0.875rem;
+    text-align: center;
+    padding: 1rem 0;
+}
+
+/* "+N more" text — muted, small */
+.uploaded-files-more {
+    color: #94a3b8;
+    font-size: 0.8rem;
+    text-align: center;
+    padding: 0.375rem 0;
+}
+
+/* Status badge aliases for uploaded files panel */
+.status-badge.completed {
+    background: #dcfce7;
+    color: #15803d;
+}
+
+.status-badge.processing {
+    background: #dbeafe;
+    color: #1d4ed8;
+}
+
+.status-badge.failed {
+    background: #fee2e2;
+    color: #dc2626;
+}
+
+/* Drag-over highlight */
+.drop-zone-active {
+    border: 2px dashed #3b82f6;
+    background: rgba(59, 130, 246, 0.05);
+    border-radius: 0.75rem;
 }

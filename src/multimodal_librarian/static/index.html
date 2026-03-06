@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Multimodal Librarian - Chat Interface</title>
+    <title>Librarian - Chat Interface</title>
     <link rel="stylesheet" href="/static/css/chat.css">
     <!-- document_manager.css removed - document management now integrated into chat UI -->
     <link rel="stylesheet" href="/static/css/quality-indicators.css">
@@ -20,7 +20,7 @@
         <header class="chat-header">
             <div class="header-content">
                 <div class="header-left">
-                    <h1>Multimodal Librarian</h1>
+                    <h1>Librarian</h1>
                     <div class="connection-status" id="connectionStatus" aria-live="polite">
                         <span class="status-indicator" id="statusIndicator"></span>
                         <span class="status-text" id="statusText">Connecting...</span>
@@ -54,7 +54,7 @@
             <div class="welcome-message">
                 <div class="message system-message">
                     <div class="message-content">
-                        <h2>Welcome to Multimodal Librarian!</h2>
+                        <h2>Welcome to Librarian!</h2>
                         <p>I'm here to help you explore your knowledge base. You can:</p>
                         <ul>
                             <li>Ask questions about your uploaded books</li>
@@ -143,6 +143,9 @@
     <!-- Scripts -->
     <script src="/static/js/websocket.js"></script>
     <script src="/static/js/filehandler.js"></script>
+    <script src="/static/js/duplicate-checker.js"></script>
+    <script src="/static/js/file-queue-panel.js"></script>
+    <script src="/static/js/uploaded-files-panel.js"></script>
     <script src="/static/js/chat-upload-handler.js"></script>
     <script src="/static/js/document-list-panel.js"></script>
     <!-- document_upload.js removed - document management now integrated into chat via ChatUploadHandler and DocumentListPanel -->

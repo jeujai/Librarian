@@ -294,9 +294,17 @@ class DocumentListPanel {
         this.documents = data.documents || [];
         this.totalCount = data.total_count || 0;
 
-        this.hideLoading();
-        this.updateDocumentList(this.documents);
-        this.updatePagination();
+        // Update inline list if mounted
+        if (this.inlineMounted) {
+            this.updateInlineList(this.documents);
+        }
+
+        // Update floating panel if visible
+        if (this.isVisible) {
+            this.hideLoading();
+            this.updateDocumentList(this.documents);
+            this.updatePagination();
+        }
     }
 
     /**
@@ -357,18 +365,21 @@ class DocumentListPanel {
         // Get status badge
         const statusBadge = this.getStatusBadge(doc.status);
 
+        const fmt = n => Number(n).toLocaleString();
+        const statsHtml = this.buildStatsHtml(doc, fmt);
+
         item.innerHTML = `
             <div class="document-item-main">
                 <div class="document-item-icon">📄</div>
                 <div class="document-item-info">
                     <div class="document-item-title" title="${this.escapeHtml(doc.title || doc.filename)}">
-                        ${this.escapeHtml(doc.title || doc.filename)}
+                        <a href="/api/documents/${encodeURIComponent(doc.document_id)}/download?redirect=true" target="_blank" rel="noopener">${this.escapeHtml(doc.title || doc.filename)}</a>
                     </div>
                     <div class="document-item-meta">
                         <span class="document-item-size">${fileSize}</span>
                         <span class="document-item-separator">•</span>
                         <span class="document-item-date">${timestamp}</span>
-                        ${doc.chunk_count ? `<span class="document-item-separator">•</span><span class="document-item-chunks">${doc.chunk_count} chunks</span>` : ''}
+                        ${doc.chunk_count ? `<span class="document-item-separator">•</span><span class="document-item-chunks">${fmt(doc.chunk_count)} chunks</span>` : ''}
                     </div>
                 </div>
                 ${statusBadge}
@@ -377,12 +388,90 @@ class DocumentListPanel {
                 ${this.getActionButtons(doc)}
             </div>
             ${doc.error_message ? `<div class="document-item-error">${this.escapeHtml(doc.error_message)}</div>` : ''}
+            ${statsHtml}
         `;
 
         // Set up action button handlers
         this.setupActionHandlers(item, doc);
 
         return item;
+    }
+
+    /**
+     * Build expandable stats HTML for a completed document.
+     *
+     * @param {Object} doc - Document information
+     * @param {Function} fmt - Number formatter
+     * @returns {string} Stats HTML or empty string
+     */
+    buildStatsHtml(doc, fmt) {
+        if (doc.status !== 'completed') return '';
+        const hasStats = doc.bridge_count || doc.concept_count || doc.relationship_count;
+        if (!hasStats) return '';
+
+        let rows = '';
+        if (doc.chunk_count) rows += `<div class="stat-row"><span class="stat-label">Chunks</span><span class="stat-value">${fmt(doc.chunk_count)}</span></div>`;
+        if (doc.bridge_count) rows += `<div class="stat-row"><span class="stat-label">Bridges</span><span class="stat-value">${fmt(doc.bridge_count)}</span></div>`;
+        if (doc.concept_count) rows += `<div class="stat-row"><span class="stat-label">Concepts</span><span class="stat-value">${fmt(doc.concept_count)}</span></div>`;
+        if (doc.relationship_count) rows += `<div class="stat-row"><span class="stat-label">Relationships</span><span class="stat-value">${fmt(doc.relationship_count)}</span></div>`;
+
+        // Breakdown by source then type
+        if (doc.relationship_breakdown && Object.keys(doc.relationship_breakdown).length > 0) {
+            // Group by source
+            const bySource = {};
+            for (const [type, info] of Object.entries(doc.relationship_breakdown)) {
+                // Support both old format (int) and new format ({count, source})
+                const count = typeof info === 'object' ? info.count : info;
+                const source = typeof info === 'object' ? (info.source || 'Document') : 'Document';
+                if (!bySource[source]) bySource[source] = { types: {}, total: 0 };
+                bySource[source].types[type] = count;
+                bySource[source].total += count;
+            }
+
+            // Render each source group
+            const sourceOrder = ['Document', 'ConceptNet', 'YAGO', 'Cross-document'];
+            const sourceLabels = {
+                'Document': '📄 Document KG',
+                'ConceptNet': '🌐 ConceptNet',
+                'YAGO': '🏛️ YAGO',
+                'Cross-document': '🔀 Cross-document'
+            };
+
+            for (const source of sourceOrder) {
+                const group = bySource[source];
+                if (!group) continue;
+                const label = sourceLabels[source] || source;
+                rows += `<div class="stat-row stat-source-header"><span class="stat-label">${label}</span><span class="stat-value">${fmt(group.total)}</span></div>`;
+                // Sort types by count descending
+                const sorted = Object.entries(group.types).sort((a, b) => b[1] - a[1]);
+                for (const [type, count] of sorted) {
+                    const typeLabel = type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+                    rows += `<div class="stat-row stat-breakdown"><span class="stat-label">${this.escapeHtml(typeLabel)}</span><span class="stat-value">${fmt(count)}</span></div>`;
+                }
+            }
+
+            // Any sources not in sourceOrder
+            for (const [source, group] of Object.entries(bySource)) {
+                if (sourceOrder.includes(source)) continue;
+                rows += `<div class="stat-row stat-source-header"><span class="stat-label">${this.escapeHtml(source)}</span><span class="stat-value">${fmt(group.total)}</span></div>`;
+                const sorted = Object.entries(group.types).sort((a, b) => b[1] - a[1]);
+                for (const [type, count] of sorted) {
+                    const typeLabel = type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+                    rows += `<div class="stat-row stat-breakdown"><span class="stat-label">${this.escapeHtml(typeLabel)}</span><span class="stat-value">${fmt(count)}</span></div>`;
+                }
+            }
+        }
+
+        return `
+            <div class="document-stats">
+                <button class="document-stats-toggle" aria-label="Toggle document stats">
+                    <span class="stats-arrow">▸</span> Stats
+                </button>
+                <div class="document-stats-details" style="display:none;">
+                    ${rows}
+                </div>
+            </div>
+        `;
     }
 
     /**
@@ -470,6 +559,21 @@ class DocumentListPanel {
                 this.handleRetry(doc.document_id);
             });
         }
+
+        // Stats toggle handler
+        const statsToggle = item.querySelector('.document-stats-toggle');
+        if (statsToggle) {
+            statsToggle.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const details = item.querySelector('.document-stats-details');
+                const arrow = statsToggle.querySelector('.stats-arrow');
+                if (details) {
+                    const isOpen = details.style.display !== 'none';
+                    details.style.display = isOpen ? 'none' : 'block';
+                    if (arrow) arrow.textContent = isOpen ? '▸' : '▾';
+                }
+            });
+        }
     }
 
     /**
@@ -544,7 +648,7 @@ class DocumentListPanel {
         const { document_id, success, message } = data;
 
         if (success) {
-            // Remove item from list
+            // Remove item from floating panel
             const item = this.panelElement.querySelector(`[data-document-id="${document_id}"]`);
             if (item) {
                 item.classList.add('deleted');
@@ -564,6 +668,16 @@ class DocumentListPanel {
                         }
                     }
                 }, 300);
+            }
+
+            // Remove item from inline list
+            if (this.inlineContainer) {
+                const inlineItem = this.inlineContainer.querySelector(`[data-document-id="${document_id}"]`);
+                if (inlineItem) {
+                    inlineItem.remove();
+                    this.totalCount = Math.max(0, this.totalCount - 1);
+                    this.updateInlinePagination();
+                }
             }
         } else {
             this.showError(message || 'Failed to delete document');
@@ -745,6 +859,209 @@ class DocumentListPanel {
         if (this.isVisible) {
             this.showLoading();
             this.requestDocumentList();
+        }
+    }
+
+    /**
+     * Mount an inline compact document list into a container element.
+     * This replaces the separate floating panel with an embedded list
+     * inside the upload dropdown.
+     *
+     * @param {HTMLElement} container - DOM element to render into
+     */
+    mountInline(container) {
+        this.inlineContainer = container;
+        this.inlineContainer.innerHTML = `
+            <div class="inline-doc-list">
+                <div class="inline-doc-list-loading" style="display: none;">
+                    <div class="document-list-spinner"></div>
+                    <span>Loading...</span>
+                </div>
+                <div class="inline-doc-list-empty" style="display: none;">
+                    <p class="uploaded-files-empty">No documents uploaded yet</p>
+                </div>
+                <div class="inline-doc-list-items"></div>
+                <div class="inline-doc-list-footer" style="display: none;">
+                    <span class="inline-doc-count"></span>
+                    <div class="inline-doc-pagination">
+                        <button class="pagination-btn inline-prev-btn" disabled aria-label="Previous page">‹</button>
+                        <span class="inline-page-info"></span>
+                        <button class="pagination-btn inline-next-btn" disabled aria-label="Next page">›</button>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // Pagination handlers
+        const prevBtn = this.inlineContainer.querySelector('.inline-prev-btn');
+        const nextBtn = this.inlineContainer.querySelector('.inline-next-btn');
+        if (prevBtn) {
+            prevBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (this.currentPage > 1) {
+                    this.currentPage--;
+                    this.requestDocumentList();
+                }
+            });
+        }
+        if (nextBtn) {
+            nextBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const totalPages = Math.ceil(this.totalCount / this.pageSize);
+                if (this.currentPage < totalPages) {
+                    this.currentPage++;
+                    this.requestDocumentList();
+                }
+            });
+        }
+
+        this.inlineMounted = true;
+    }
+
+    /**
+     * Refresh the inline document list (called when dropdown opens).
+     */
+    refreshInline() {
+        if (!this.inlineMounted || !this.inlineContainer) return;
+
+        // Show loading
+        const loading = this.inlineContainer.querySelector('.inline-doc-list-loading');
+        const items = this.inlineContainer.querySelector('.inline-doc-list-items');
+        const empty = this.inlineContainer.querySelector('.inline-doc-list-empty');
+        if (loading) loading.style.display = 'flex';
+        if (items) items.style.display = 'none';
+        if (empty) empty.style.display = 'none';
+
+        this.requestDocumentList();
+    }
+
+    /**
+     * Update the inline document list with data.
+     * Called from handleDocumentListResponse when inline mode is active.
+     *
+     * @param {Array<Object>} documents - Document list
+     */
+    updateInlineList(documents) {
+        if (!this.inlineContainer) return;
+
+        const loading = this.inlineContainer.querySelector('.inline-doc-list-loading');
+        const itemsContainer = this.inlineContainer.querySelector('.inline-doc-list-items');
+        const empty = this.inlineContainer.querySelector('.inline-doc-list-empty');
+
+        if (loading) loading.style.display = 'none';
+        if (itemsContainer) itemsContainer.style.display = 'block';
+
+        if (!documents || documents.length === 0) {
+            if (itemsContainer) itemsContainer.innerHTML = '';
+            if (empty) empty.style.display = 'block';
+            this.updateInlinePagination();
+            return;
+        }
+
+        if (empty) empty.style.display = 'none';
+
+        const fmt = n => Number(n).toLocaleString();
+        itemsContainer.innerHTML = '';
+
+        documents.forEach(doc => {
+            const row = document.createElement('div');
+            row.className = `inline-doc-row status-${doc.status}`;
+            row.setAttribute('data-document-id', doc.document_id);
+
+            const title = this.escapeHtml(doc.title || doc.filename);
+            const statusBadge = this.getStatusBadge(doc.status);
+            const statsHtml = this.buildStatsHtml(doc, fmt);
+
+            const retryBtn = doc.status === 'failed' ? `
+                <button class="inline-doc-action-btn inline-retry-btn" data-document-id="${doc.document_id}" aria-label="Retry processing" title="Retry">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23,4 23,10 17,10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+                </button>` : '';
+
+            row.innerHTML = `
+                <div class="inline-doc-row-main">
+                    <a class="inline-doc-title" href="/api/documents/${encodeURIComponent(doc.document_id)}/download?redirect=true" title="${title}" target="_blank" rel="noopener">${title}</a>
+                    ${statusBadge}
+                    ${retryBtn}
+                    <button class="inline-doc-action-btn inline-delete-btn" data-document-id="${doc.document_id}" aria-label="Delete document" title="Delete">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3,6 5,6 21,6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                    </button>
+                </div>
+                ${statsHtml}
+            `;
+
+            // Wire up stats toggle
+            const statsToggle = row.querySelector('.document-stats-toggle');
+            if (statsToggle) {
+                statsToggle.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const details = row.querySelector('.document-stats-details');
+                    const arrow = statsToggle.querySelector('.stats-arrow');
+                    if (details) {
+                        const isOpen = details.style.display !== 'none';
+                        details.style.display = isOpen ? 'none' : 'block';
+                        if (arrow) arrow.textContent = isOpen ? '▸' : '▾';
+                    }
+                });
+            }
+
+            // Wire up delete button
+            const deleteBtn = row.querySelector('.inline-delete-btn');
+            if (deleteBtn) {
+                deleteBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    this.handleDelete(doc.document_id, doc.title || doc.filename);
+                });
+            }
+
+            // Wire up retry button
+            const retryBtnEl = row.querySelector('.inline-retry-btn');
+            if (retryBtnEl) {
+                retryBtnEl.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    this.handleRetry(doc.document_id);
+                });
+            }
+
+            itemsContainer.appendChild(row);
+        });
+
+        this.updateInlinePagination();
+    }
+
+    /**
+     * Update inline pagination controls.
+     */
+    updateInlinePagination() {
+        if (!this.inlineContainer) return;
+
+        const footer = this.inlineContainer.querySelector('.inline-doc-list-footer');
+        const countSpan = this.inlineContainer.querySelector('.inline-doc-count');
+        const pageInfo = this.inlineContainer.querySelector('.inline-page-info');
+        const prevBtn = this.inlineContainer.querySelector('.inline-prev-btn');
+        const nextBtn = this.inlineContainer.querySelector('.inline-next-btn');
+
+        if (!footer) return;
+
+        const totalPages = Math.ceil(this.totalCount / this.pageSize);
+
+        if (this.totalCount > 0) {
+            footer.style.display = 'flex';
+            if (countSpan) countSpan.textContent = `${this.totalCount} doc${this.totalCount !== 1 ? 's' : ''}`;
+            if (pageInfo && totalPages > 1) {
+                pageInfo.textContent = `${this.currentPage}/${totalPages}`;
+                pageInfo.style.display = 'inline';
+            } else if (pageInfo) {
+                pageInfo.style.display = 'none';
+            }
+            if (prevBtn) prevBtn.disabled = this.currentPage <= 1;
+            if (nextBtn) nextBtn.disabled = this.currentPage >= totalPages;
+
+            const pagination = this.inlineContainer.querySelector('.inline-doc-pagination');
+            if (pagination) pagination.style.display = totalPages > 1 ? 'flex' : 'none';
+        } else {
+            footer.style.display = 'none';
         }
     }
 }

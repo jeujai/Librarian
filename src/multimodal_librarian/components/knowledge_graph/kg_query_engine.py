@@ -39,15 +39,21 @@ class KnowledgeGraphQueryEngine:
     relying on in-memory dictionaries that don't persist across restarts.
     """
     
-    def __init__(self, kg_builder=None):
+    # UMLS scoring multipliers
+    UMLS_BOOST = 1.2   # Boost for UMLS-grounded concepts matching query domain
+    UMLS_PENALTY = 0.7  # Penalty for semantic type contradictions
+
+    def __init__(self, kg_builder=None, umls_client=None):
         """
         Initialize the query engine.
         
         Args:
             kg_builder: Legacy parameter, kept for backward compatibility.
                        The engine now queries Neo4j directly.
+            umls_client: Optional UMLSClient for semantic type scoring.
         """
         self.kg_builder = kg_builder  # Keep for backward compatibility
+        self._umls_client = umls_client
         self._model_server_client = None
         self._neo4j_client = None
         self._neo4j_initialized = False
@@ -604,7 +610,7 @@ class KnowledgeGraphQueryEngine:
         chunks: List[KnowledgeChunk], 
         related_concepts: List[RelatedConcept]
     ) -> List[KnowledgeChunk]:
-        """Re-rank chunks based on concept relevance."""
+        """Re-rank chunks based on concept relevance with UMLS scoring."""
         if not related_concepts:
             return chunks
         
@@ -620,13 +626,39 @@ class KnowledgeGraphQueryEngine:
             for rc in related_concepts:
                 concept_name = rc.concept.concept_name.lower()
                 if concept_name in content_lower:
-                    score += rc.relevance_score
+                    adjusted = rc.relevance_score
+                    # Apply UMLS scoring when client is available
+                    adjusted *= self._umls_score_factor(rc.concept)
+                    score += adjusted
             
             chunk_scores.append((chunk, score))
         
         # Sort by score (higher is better), then by original order
         chunk_scores.sort(key=lambda x: x[1], reverse=True)
         return [chunk for chunk, score in chunk_scores]
+    
+    def _umls_score_factor(self, concept: ConceptNode) -> float:
+        """Return UMLS-based scoring multiplier for a concept.
+
+        - 1.2x boost when the concept has a UMLS CUI (grounded in UMLS)
+        - 0.7x penalty when concept_type contradicts UMLS semantic type
+          (i.e. concept has a UMLS CUI but concept_type is a generic
+          non-biomedical NER label like ORG/PERSON/GPE)
+        - 1.0 (no change) when UMLS client is unavailable
+        """
+        if self._umls_client is None:
+            return 1.0
+
+        umls_cui = concept.external_ids.get("umls_cui") if concept.external_ids else None
+        if not umls_cui:
+            return 1.0
+
+        # Concept is UMLS-grounded — check for semantic type contradiction
+        non_biomedical_types = {"ORG", "PERSON", "GPE", "LOC", "FAC", "NORP"}
+        if concept.concept_type in non_biomedical_types:
+            return self.UMLS_PENALTY
+
+        return self.UMLS_BOOST
     
     def _expand_with_related_chunks(
         self, 

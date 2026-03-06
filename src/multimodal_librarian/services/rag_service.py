@@ -873,7 +873,7 @@ Instructions:
         async for chunk in self.ai_service.generate_response_stream(
             messages=messages,
             temperature=0.7,
-            max_tokens=1024
+            max_tokens=2048
         ):
             yield chunk
 
@@ -910,7 +910,7 @@ Instructions:
         async for chunk in self.ai_service.generate_response_stream(
             messages=messages,
             temperature=0.7,
-            max_tokens=1024
+            max_tokens=2048
         ):
             yield chunk
     

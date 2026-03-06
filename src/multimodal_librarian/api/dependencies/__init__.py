@@ -94,6 +94,8 @@ from .services import (  # =====================================================
     get_search_service_optional,
     get_searxng_client,
     get_searxng_client_optional,
+    get_umls_client,
+    get_umls_client_optional,
     get_vector_store,
     get_vector_store_optional,
     get_yago_local_client,
@@ -129,6 +131,8 @@ __all__ = [
     "clear_processing_status_service_cache",
     # Enrichment Service Dependencies
     "get_yago_local_client",
+    "get_umls_client",
+    "get_umls_client_optional",
     "get_conceptnet_client",
     "get_conceptnet_client_optional",
     "get_enrichment_cache",

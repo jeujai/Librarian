@@ -435,7 +435,8 @@ Bridge:""",
     def batch_generate_bridges(self, boundary_pairs: List[Tuple[str, str, GapAnalysis]],
                              content_type: ContentType = ContentType.GENERAL,
                              domain_config: Optional[DomainConfig] = None,
-                             bisected_concepts_per_boundary: Optional[Dict[int, List[str]]] = None) -> List[BridgeChunk]:
+                             bisected_concepts_per_boundary: Optional[Dict[int, List[str]]] = None,
+                             progress_callback: Optional[callable] = None) -> List[BridgeChunk]:
         """
         Batch process multiple bridges for cost optimization.
         
@@ -506,6 +507,17 @@ Bridge:""",
                 # Update statistics
                 batch_stats.total_tokens_used += result.token_usage.get('total_tokens', 0)
                 batch_stats.total_cost_estimate += self._estimate_cost(result.token_usage)
+            
+            # Report incremental progress after each batch
+            if progress_callback:
+                try:
+                    progress_callback(
+                        bridges_so_far=len(bridge_chunks),
+                        total_bridges=len(requests),
+                        failed=batch_stats.failed_generations,
+                    )
+                except Exception:
+                    pass  # Don't let callback errors break generation
         
         batch_stats.batch_processing_time = time.time() - start_time
         batch_stats.average_generation_time = (

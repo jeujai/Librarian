@@ -101,9 +101,11 @@ STEP_TO_STATUS_MAPPING = {
     'Generating chunks': ProcessingStatus.CHUNKING,
     'Storing chunks and embeddings': ProcessingStatus.EMBEDDING,
     'Storing embeddings': ProcessingStatus.EMBEDDING,
+    'Chunks and embeddings stored': ProcessingStatus.EMBEDDING,
     'Cleaning up existing chunks': ProcessingStatus.EMBEDDING,
-    'Generating bridges': ProcessingStatus.CHUNKING,
+    'Generating bridges': ProcessingStatus.BRIDGING,
     'Updating knowledge graph': ProcessingStatus.KG_EXTRACTION,
+    'Finalizing': ProcessingStatus.FINALIZING,
     'Processing completed successfully': ProcessingStatus.COMPLETED,
     'Processing failed': ProcessingStatus.FAILED,
 }

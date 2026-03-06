@@ -1305,6 +1305,81 @@ async def get_graph_client_optional(
 
 
 # =============================================================================
+# UMLS Client Dependencies
+# =============================================================================
+_umls_client: Optional[Any] = None
+
+
+async def get_umls_client(
+    graph_client: Optional["GraphStoreClient"] = Depends(
+        get_graph_client_optional,
+    ),
+) -> Optional[Any]:
+    """
+    FastAPI dependency for UMLSClient.
+
+    Lazily creates and caches the UMLS client on first use.
+    The client queries UMLS data stored in Neo4j by UMLSLoader.
+    Returns None if Neo4j is unavailable or UMLS data is not
+    loaded, enabling graceful degradation.
+
+    Returns:
+        UMLSClient instance or None if unavailable
+    """
+    global _umls_client
+
+    if _umls_client is not None:
+        return _umls_client
+
+    if graph_client is None:
+        return None
+
+    from ...components.knowledge_graph.umls_client import UMLSClient
+
+    try:
+        logger.info("Initializing UMLSClient via DI (lazy)")
+        client = UMLSClient(neo4j_client=graph_client)
+        await client.initialize()
+
+        if not await client.is_available():
+            logger.warning(
+                "UMLS data not loaded in Neo4j, "
+                "UMLSClient returning None"
+            )
+            return None
+
+        _umls_client = client
+        logger.info(
+            "UMLSClient initialized successfully via DI"
+        )
+        return _umls_client
+
+    except Exception as e:
+        logger.warning(
+            f"UMLSClient initialization failed: {e}, "
+            "returning None"
+        )
+        return None
+
+
+async def get_umls_client_optional() -> Optional[Any]:
+    """
+    Optional UMLS client dependency — returns None if unavailable.
+
+    Convenience wrapper that catches all errors and returns None,
+    suitable for endpoints that can function without UMLS data.
+    """
+    try:
+        graph = await get_graph_client_optional()
+        return await get_umls_client(graph)
+    except Exception as e:
+        logger.warning(
+            f"UMLS client error, returning None: {e}"
+        )
+        return None
+
+
+# =============================================================================
 # KG Retrieval Service Dependencies
 # =============================================================================
 
@@ -2446,6 +2521,7 @@ def clear_all_caches():
     global _query_decomposer
     global _relation_type_registry
     global _searxng_client
+    global _umls_client
     
     # Disconnect OpenSearch if connected
     if _opensearch_client is not None:
@@ -2527,6 +2603,9 @@ def clear_all_caches():
     # Clear SearXNG client cache
     _searxng_client = None
 
+    # Clear UMLS client cache
+    _umls_client = None
+
     logger.info("All dependency caches cleared")
 
 
@@ -2539,8 +2618,17 @@ async def cleanup_all_dependencies():
     """
     global _database_factory, _query_logger, _model_server_client, _model_status_service
     global _searxng_client, _yago_local_client
+    global _umls_client
     
     logger.info("Cleaning up all dependencies...")
+    
+    # Cleanup UMLS client
+    if _umls_client is not None:
+        try:
+            _umls_client = None
+            logger.info("UMLS client cleaned up successfully")
+        except Exception as e:
+            logger.warning(f"Error cleaning up UMLS client: {e}")
     
     # Cleanup YAGO local client
     if _yago_local_client is not None:

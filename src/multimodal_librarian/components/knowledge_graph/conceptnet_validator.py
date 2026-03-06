@@ -38,21 +38,28 @@ class ValidationResult:
     discarded_count: int = 0
     kept_by_ner: int = 0
     kept_by_conceptnet: int = 0
+    kept_by_umls: int = 0
     kept_by_pattern: int = 0
 
 
 class ConceptNetValidator:
     """Validate concepts against local ConceptNet data.
 
-    Three-tier filtering:
-      Tier 1 - concept exists in ConceptNet -> keep + rels
-      Tier 2 - spaCy NER entity type -> keep
-      Tier 3 - CODE_TERM/MULTI_WORD/ACRONYM -> keep
+    Four-tier filtering:
+      Tier 1  - concept exists in ConceptNet -> keep + rels
+      Tier 1b - concept exists in UMLS (when available) -> keep
+      Tier 2  - spaCy NER entity type -> keep
+      Tier 3  - CODE_TERM/MULTI_WORD/ACRONYM -> keep
       Otherwise - discard
     """
 
-    def __init__(self, neo4j_client: Any) -> None:
+    def __init__(
+        self,
+        neo4j_client: Any,
+        umls_client: Optional[Any] = None,
+    ) -> None:
         self._neo4j = neo4j_client
+        self._umls_client = umls_client
 
     async def lookup_concept(
         self, name: str,
@@ -142,14 +149,19 @@ class ConceptNetValidator:
     async def validate_concepts(
         self, candidates: List[ConceptNode],
     ) -> ValidationResult:
-        """Run three-tier validation on candidates.
+        """Run four-tier validation on candidates.
 
         Uses batch query for Tier 1 (N -> 1 round-trips).
+        Tier 1b checks unmatched concepts against UMLS when available.
         """
         result = ValidationResult()
         conceptnet_names: List[str] = []
         all_names = [c.concept_name for c in candidates]
         found = await self.batch_lookup_concepts(all_names)
+
+        # Collect concepts not matched by ConceptNet for UMLS check
+        unmatched: List[ConceptNode] = []
+
         for concept in candidates:
             low = concept.concept_name.lower()
             if low in found:
@@ -158,6 +170,32 @@ class ConceptNetValidator:
                 conceptnet_names.append(
                     concept.concept_name,
                 )
+            else:
+                unmatched.append(concept)
+
+        # Tier 1b: UMLS batch lookup for unmatched concepts
+        umls_matched: set = set()
+        if unmatched and self._umls_client is not None:
+            try:
+                umls_names = [c.concept_name for c in unmatched]
+                umls_map = await self._umls_client.batch_search_by_names(
+                    umls_names,
+                )
+                if umls_map:
+                    umls_matched = {
+                        name for name in umls_map
+                    }
+            except Exception:
+                logger.warning(
+                    "UMLS batch lookup failed",
+                    exc_info=True,
+                )
+
+        # Classify unmatched concepts through remaining tiers
+        for concept in unmatched:
+            if concept.concept_name in umls_matched:
+                result.validated_concepts.append(concept)
+                result.kept_by_umls += 1
             elif concept.concept_type in NER_ENTITY_LABELS:
                 result.validated_concepts.append(concept)
                 result.kept_by_ner += 1
@@ -166,6 +204,7 @@ class ConceptNetValidator:
                 result.kept_by_pattern += 1
             else:
                 result.discarded_count += 1
+
         if conceptnet_names:
             try:
                 rels = (

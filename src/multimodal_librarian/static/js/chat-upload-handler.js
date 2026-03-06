@@ -31,14 +31,68 @@ class ChatUploadHandler extends FileHandler {
         this.uploadQueue = [];
         this.isProcessingQueue = false;
 
+        // Upload lock to prevent concurrent uploads
+        this.isUploading = false;
+
         // Track active uploads for status updates
         this.activeUploads = new Map();
 
         // Processing status elements
         this.processingStatusCards = new Map();
 
+        // Initialize duplicate checking and file queue components
+        this._initDuplicateFilterComponents();
+
         // Set up WebSocket handlers for processing status
         this.setupProcessingStatusHandlers();
+    }
+
+    /**
+     * Initialize DuplicateChecker, FileQueuePanel, and UploadedFilesPanel.
+     * Creates container elements and wires callbacks.
+     */
+    _initDuplicateFilterComponents() {
+        // DuplicateChecker
+        if (typeof DuplicateChecker !== 'undefined') {
+            this.duplicateChecker = new DuplicateChecker();
+        } else {
+            this.duplicateChecker = null;
+        }
+
+        // FileQueuePanel — create container and insert before the input area
+        this.fileQueueContainer = document.createElement('div');
+        this.fileQueueContainer.id = 'fileQueueContainer';
+        this.fileQueueContainer.style.display = 'none';
+        var inputContainer = document.querySelector('.chat-input-container');
+        if (inputContainer && inputContainer.parentNode) {
+            inputContainer.parentNode.insertBefore(this.fileQueueContainer, inputContainer);
+        }
+
+        if (typeof FileQueuePanel !== 'undefined') {
+            this.fileQueuePanel = new FileQueuePanel(this.fileQueueContainer);
+            var self = this;
+            this.fileQueuePanel.onUploadNew = function (files) {
+                self.uploadFiles(files, false);
+            };
+            this.fileQueuePanel.onForceUploadAll = function (files) {
+                self.uploadFiles(files, true);
+            };
+            this.fileQueuePanel.onRemoveFile = function () {
+                // no-op — panel handles removal internally
+            };
+        } else {
+            this.fileQueuePanel = null;
+        }
+
+        // UploadedFilesPanel — container created but wired in by chat.js
+        this.uploadedFilesPanelContainer = document.createElement('div');
+        this.uploadedFilesPanelContainer.id = 'uploadedFilesPanelContainer';
+
+        if (typeof UploadedFilesPanel !== 'undefined') {
+            this.uploadedFilesPanel = new UploadedFilesPanel(this.uploadedFilesPanelContainer);
+        } else {
+            this.uploadedFilesPanel = null;
+        }
     }
 
     /**
@@ -57,6 +111,23 @@ class ChatUploadHandler extends FileHandler {
             this.showProcessingStatus(data);
         });
 
+        // Handle retry started — immediately create a progress card so the
+        // user sees feedback before the first processing status arrives
+        this.wsManager.on('document_retry_started', (data) => {
+            const { document_id, filename } = data;
+            const card = this.createProcessingStatusCard(document_id, filename || 'Retrying...');
+            if (card) {
+                card.classList.remove('status-failed');
+                card.classList.add('status-processing');
+                const stageEl = card.querySelector('.processing-stage');
+                if (stageEl) stageEl.textContent = 'Retrying...';
+                const progressFill = card.querySelector('.processing-progress-fill');
+                if (progressFill) progressFill.style.width = '0%';
+                const progressText = card.querySelector('.processing-progress-text');
+                if (progressText) progressText.textContent = '0%';
+            }
+        });
+
         // Note: document_upload_error is handled by chat.js which delegates
         // to this.handleUploadError() - no need to register here to avoid
         // duplicate error messages
@@ -71,7 +142,7 @@ class ChatUploadHandler extends FileHandler {
      * 
      * Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6
      */
-    handleChatUpload(files) {
+    async handleChatUpload(files) {
         const fileArray = Array.from(files);
 
         // Validate and filter files
@@ -94,8 +165,27 @@ class ChatUploadHandler extends FileHandler {
             });
         }
 
-        // Queue valid files for upload (Requirement 1.6)
-        if (validFiles.length > 0) {
+        if (validFiles.length === 0) return;
+
+        // If duplicate checker is available, run duplicate detection and show queue
+        if (this.duplicateChecker && this.fileQueuePanel) {
+            try {
+                if (!this.duplicateChecker.loaded) {
+                    await this.duplicateChecker.fetchUploadedFilenames();
+                }
+            } catch (e) {
+                console.error('Failed to fetch uploaded filenames:', e);
+            }
+
+            const annotated = this.duplicateChecker.checkFiles(validFiles);
+            this.fileQueuePanel.show(annotated);
+
+            // Update uploaded files panel with current docs
+            if (this.uploadedFilesPanel) {
+                this.uploadedFilesPanel.updateDocuments(this.duplicateChecker.getDocuments());
+            }
+        } else {
+            // Fallback: upload immediately without duplicate checking
             this.queueFilesForUpload(validFiles);
         }
     }
@@ -178,6 +268,56 @@ class ChatUploadHandler extends FileHandler {
         }
 
         this.isProcessingQueue = false;
+    }
+
+
+    /**
+     * Upload files with optional force-upload for duplicates.
+     * Uses the upload lock to prevent concurrent uploads.
+     *
+     * @param {File[]} files - Files to upload
+     * @param {boolean} forceUpload - If true, upload even if server detects duplicate
+     */
+    async uploadFiles(files, forceUpload) {
+        if (this.isUploading) {
+            this.chatApp.addSystemMessage('An upload is already in progress. Please wait.', 'error');
+            return;
+        }
+
+        this.isUploading = true;
+
+        try {
+            for (const file of files) {
+                await this.uploadFileViaWebSocket(file);
+
+                // Update duplicate checker cache and uploaded files panel
+                if (this.duplicateChecker) {
+                    this.duplicateChecker.addUploadedDocument(file.name, {
+                        filename: file.name,
+                        title: file.name.replace(/\.pdf$/i, ''),
+                        status: 'processing',
+                        fileSize: file.size
+                    });
+                }
+                if (this.uploadedFilesPanel) {
+                    this.uploadedFilesPanel.addDocument({
+                        filename: file.name,
+                        title: file.name.replace(/\.pdf$/i, ''),
+                        status: 'processing',
+                        fileSize: file.size
+                    });
+                }
+            }
+        } catch (error) {
+            console.error('Upload batch error:', error);
+            this.chatApp.addSystemMessage(`Upload error: ${error.message}`, 'error');
+        } finally {
+            this.isUploading = false;
+            // Hide the file queue panel after uploads complete
+            if (this.fileQueuePanel) {
+                this.fileQueuePanel.hide();
+            }
+        }
     }
 
 
@@ -339,7 +479,7 @@ class ChatUploadHandler extends FileHandler {
      */
     showProcessingStatus(status) {
         const { document_id, filename, status: processingStatus,
-            progress_percentage, current_stage, error_message, summary } = status;
+            progress_percentage, current_stage, error_message, summary, metadata } = status;
 
         // Get or create status card
         let statusCard = this.processingStatusCards.get(document_id);
@@ -353,7 +493,8 @@ class ChatUploadHandler extends FileHandler {
             progress: progress_percentage,
             stage: current_stage,
             error: error_message,
-            summary: summary
+            summary: summary,
+            metadata: metadata
         });
 
         // Handle completion states
@@ -425,7 +566,7 @@ class ChatUploadHandler extends FileHandler {
      * Requirements: 4.3, 4.4, 4.5
      */
     updateProcessingStatusCard(card, statusData) {
-        const { status, progress, stage, error, summary } = statusData;
+        const { status, progress, stage, error, summary, metadata } = statusData;
 
         const stageElement = card.querySelector('.processing-stage');
         const progressFill = card.querySelector('.processing-progress-fill');
@@ -445,6 +586,9 @@ class ChatUploadHandler extends FileHandler {
             progressText.textContent = `${progress}%`;
         }
 
+        // Update live stats from metadata
+        this.updateLiveStats(card, metadata, status);
+
         // Update card styling based on status
         card.classList.remove('status-processing', 'status-completed', 'status-failed');
 
@@ -460,6 +604,77 @@ class ChatUploadHandler extends FileHandler {
     }
 
     /**
+     * Update live processing stats display on the status card.
+     * Shows stage-relevant metrics like page count, chunks, bridges, concepts, etc.
+     *
+     * @param {HTMLElement} card - Status card element
+     * @param {Object|null} metadata - Stage-specific stats from backend
+     * @param {string} status - Current processing status
+     */
+    updateLiveStats(card, metadata, status) {
+        let statsEl = card.querySelector('.processing-live-stats');
+
+        // Remove stats on completion/failure (summary takes over)
+        if (status === 'completed' || status === 'failed') {
+            if (statsEl) statsEl.remove();
+            return;
+        }
+
+        if (!metadata || typeof metadata !== 'object') return;
+
+        // Create stats element if it doesn't exist
+        if (!statsEl) {
+            statsEl = document.createElement('div');
+            statsEl.className = 'processing-live-stats';
+            statsEl.style.cssText = 'font-size:0.75rem;color:#64748b;margin-top:4px;line-height:1.5;font-variant-numeric:tabular-nums;';
+            const stageEl = card.querySelector('.processing-stage');
+            if (stageEl) {
+                stageEl.parentNode.insertBefore(statsEl, stageEl.nextSibling);
+            }
+        }
+
+        // Build stats string based on what's available
+        const fmt = n => Number(n).toLocaleString();
+        const parts = [];
+        if (metadata.pages_extracted) parts.push(`${fmt(metadata.pages_extracted)} pages`);
+        if (metadata.pages) parts.push(`${fmt(metadata.pages)} pages`);
+        if (metadata.images) parts.push(`${fmt(metadata.images)} images`);
+        if (metadata.tables) parts.push(`${fmt(metadata.tables)} tables`);
+        if (metadata.text_length) parts.push(`${fmt(Math.round(metadata.text_length / 1024))}KB text`);
+        if (metadata.chunks_generated) parts.push(`${fmt(metadata.chunks_generated)} chunks`);
+        // Incremental chunk storage progress
+        if (metadata.chunks_stored_so_far && metadata.total_chunks) {
+            parts.push(`chunk ${fmt(metadata.chunks_stored_so_far)}/${fmt(metadata.total_chunks)} stored`);
+        } else if (metadata.chunks_stored) {
+            parts.push(`${fmt(metadata.chunks_stored)} chunks stored`);
+        }
+        // Incremental embedding storage progress
+        if (metadata.embeddings_stored_so_far && metadata.total_chunks) {
+            parts.push(`embedding ${fmt(metadata.embeddings_stored_so_far)}/${fmt(metadata.total_chunks)}`);
+        } else if (metadata.embeddings_stored) {
+            parts.push(`${fmt(metadata.embeddings_stored)} embeddings`);
+        }
+        // Page progress
+        if (metadata.current_page && metadata.total_pages) {
+            parts.push(`page ${fmt(metadata.current_page)}/${fmt(metadata.total_pages)}`);
+        }
+        if (metadata.bridges_generated !== undefined) {
+            if (metadata.total_bridges) {
+                parts.push(`bridge ${fmt(metadata.bridges_generated)}/${fmt(metadata.total_bridges)}`);
+            } else {
+                parts.push(`${fmt(metadata.bridges_generated)} bridges`);
+            }
+        }
+        if (metadata.concepts !== undefined) parts.push(`${fmt(metadata.concepts)} concepts`);
+        if (metadata.relationships !== undefined) parts.push(`${fmt(metadata.relationships)} relationships`);
+        if (metadata.kg_batch && metadata.kg_total_batches) {
+            parts.push(`batch ${metadata.kg_batch}/${metadata.kg_total_batches}`);
+        }
+
+        statsEl.textContent = parts.length > 0 ? parts.join(' · ') : '';
+    }
+
+    /**
      * Get display text for processing stage.
      * 
      * @param {string} status - Processing status
@@ -472,7 +687,9 @@ class ChatUploadHandler extends FileHandler {
             'extracting': 'Extracting content from PDF...',
             'chunking': 'Processing document content...',
             'embedding': 'Generating embeddings...',
+            'bridging': 'Generating bridges...',
             'kg_extraction': 'Building knowledge graph...',
+            'finalizing': 'Finalizing...',
             'completed': 'Processing complete!',
             'failed': 'Processing failed'
         };

@@ -24,7 +24,9 @@ class ProcessingStatus(str, Enum):
     EXTRACTING = "extracting"
     CHUNKING = "chunking"
     EMBEDDING = "embedding"
+    BRIDGING = "bridging"
     KG_EXTRACTION = "kg_extraction"
+    FINALIZING = "finalizing"
     COMPLETED = "completed"
     FAILED = "failed"
 
@@ -56,6 +58,7 @@ class ProcessingStatusMessage(BaseModel):
     error_message: Optional[str] = None
     retry_available: Optional[bool] = None
     summary: Optional[DocumentProcessingSummary] = None
+    metadata: Optional[Dict[str, Any]] = None  # Stage-specific live stats
 
 
 class ProcessingStatusTracker(BaseModel):
@@ -315,7 +318,8 @@ class ProcessingStatusService:
             estimated_time_remaining=estimated_time,
             error_message=error_message or tracker.error_message,
             retry_available=retry_available,
-            summary=summary
+            summary=summary,
+            metadata=metadata
         )
         
         # Send only to the originating connection (Requirement 6.4)
