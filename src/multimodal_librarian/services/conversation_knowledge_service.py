@@ -252,8 +252,9 @@ class ConversationKnowledgeService:
     async def _store_vectors(self, chunks: List[KnowledgeChunk]) -> int:
         """Store chunks in vector store.
 
-        Chunks already have source_type=CONVERSATION and source_id=thread_id
-        set by ConversationManager.  Raises on failure (fail-fast).
+        Chunks have source_type=CONVERSATION (set by ConversationManager)
+        and source_id=UUID5 (overridden in convert_conversation to match
+        the knowledge_sources.id).  Raises on failure (fail-fast).
 
         Uses the async store_embeddings_async path to properly await the
         underlying vector client (Milvus or OpenSearch).

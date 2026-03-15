@@ -1126,6 +1126,45 @@ class KGRetrievalService:
         logger.info(f"Cleared {count} cache entries")
         return count
 
+    def evict_chunks(self, stale_chunk_ids: set) -> int:
+        """Surgically remove specific chunk IDs from the source_chunks cache.
+
+        Iterates every cached entry and removes any chunk_id that appears
+        in *stale_chunk_ids*.  Entries that become empty are dropped
+        entirely.
+
+        Args:
+            stale_chunk_ids: Set of chunk IDs to evict.
+
+        Returns:
+            Number of cache entries modified or dropped.
+        """
+        if not stale_chunk_ids:
+            return 0
+
+        affected = 0
+        to_delete: list = []
+
+        for concept_id, entry in self._source_chunks_cache.items():
+            before = len(entry.chunk_ids)
+            entry.chunk_ids = [
+                cid for cid in entry.chunk_ids if cid not in stale_chunk_ids
+            ]
+            if len(entry.chunk_ids) < before:
+                affected += 1
+                if not entry.chunk_ids:
+                    to_delete.append(concept_id)
+
+        for concept_id in to_delete:
+            del self._source_chunks_cache[concept_id]
+
+        if affected:
+            logger.info(
+                f"Evicted chunks from {affected} cache entries "
+                f"({len(to_delete)} entries dropped entirely)"
+            )
+        return affected
+
     def cleanup_expired_cache(self) -> int:
         """
         Remove expired entries from cache.

@@ -318,6 +318,57 @@ async def delete_document(
     Returns deletion confirmation.
     """
     try:
+        doc_id = str(document_id)
+
+        # Collect chunk IDs belonging to this document BEFORE deletion
+        # so we can surgically evict them from the KG retrieval cache.
+        # Query with both doc UUID and thread_id (conversations store
+        # Chunk nodes under the raw thread_id as source_id).
+        stale_chunk_ids: set = set()
+        try:
+            source_ids = [doc_id]
+            # Resolve thread_id for conversation documents
+            from sqlalchemy import text as sa_text
+
+            from ...database.connection import db_manager
+            try:
+                async with db_manager.get_async_session() as sess:
+                    row = (await sess.execute(
+                        sa_text(
+                            "SELECT source_type, file_path, metadata "
+                            "FROM multimodal_librarian.knowledge_sources "
+                            "WHERE id = :did"
+                        ),
+                        {"did": doc_id},
+                    )).fetchone()
+                if row and row.source_type == "CONVERSATION":
+                    tid = None
+                    if row.metadata and isinstance(row.metadata, dict):
+                        tid = row.metadata.get("source_thread_id")
+                    if not tid and row.file_path:
+                        tid = str(row.file_path).replace("conversation://", "")
+                    if tid and tid != doc_id:
+                        source_ids.append(tid)
+            except Exception:
+                pass
+
+            from ...services.knowledge_graph_service import KnowledgeGraphService
+            kg = KnowledgeGraphService()
+            await kg.client.connect()
+            try:
+                rows = await kg.client.execute_query(
+                    "MATCH (ch:Chunk) WHERE ch.source_id IN $ids "
+                    "RETURN ch.chunk_id AS chunk_id",
+                    {"ids": source_ids},
+                )
+                stale_chunk_ids = {
+                    r["chunk_id"] for r in (rows or []) if r.get("chunk_id")
+                }
+            finally:
+                await kg.client.disconnect()
+        except Exception as e:
+            logger.debug(f"Could not pre-fetch chunk IDs for cache eviction: {e}")
+
         result = await document_manager.delete_document_completely(document_id)
         
         if not result.get('success'):
@@ -326,6 +377,16 @@ async def delete_document(
                 detail=f"Document not found: {document_id}"
             )
         
+        # Targeted cache eviction: remove only this document's chunks
+        evicted = 0
+        if stale_chunk_ids:
+            try:
+                from ..dependencies.services import _kg_retrieval_service
+                if _kg_retrieval_service is not None:
+                    evicted = _kg_retrieval_service.evict_chunks(stale_chunk_ids)
+            except Exception as e:
+                logger.warning(f"KG cache eviction failed: {e}")
+
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={
@@ -333,6 +394,7 @@ async def delete_document(
                 "document_id": str(document_id),
                 "milvus_deleted": result.get('milvus_deleted', 0),
                 "neo4j_deleted": result.get('neo4j_deleted', 0),
+                "cache_entries_evicted": evicted,
             }
         )
         

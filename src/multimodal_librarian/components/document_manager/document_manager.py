@@ -421,16 +421,32 @@ class DocumentManager:
                 pass  # best-effort
 
             # 1. Milvus — delete vectors
-            results['milvus_deleted'] = await self._delete_from_milvus(
-                vector_id, results
-            )
-
-            # 2. Neo4j — batch-delete Concept nodes
-            #    Neo4j Chunks use the original document UUID as source_id,
-            #    NOT the thread_id that Milvus uses for conversation docs.
-            results['neo4j_deleted'] = await self._delete_from_neo4j(
+            #    Conversation chunks are stored with source_id = UUID5.
+            #    Regular documents use the doc UUID directly.
+            #    Delete with BOTH IDs to handle any legacy data.
+            milvus_total = 0
+            milvus_total += await self._delete_from_milvus(
                 doc_id, results
             )
+            if vector_id != doc_id:
+                milvus_total += await self._delete_from_milvus(
+                    vector_id, results
+                )
+            results['milvus_deleted'] = milvus_total
+
+            # 2. Neo4j — batch-delete Chunk nodes and orphaned Concepts
+            #    Conversation Chunk nodes use the raw thread_id as
+            #    source_id (set in _persist_concepts).  Regular docs
+            #    use the doc UUID.  Delete with BOTH IDs to be safe.
+            neo4j_total = 0
+            neo4j_total += await self._delete_from_neo4j(
+                doc_id, results
+            )
+            if vector_id != doc_id:
+                neo4j_total += await self._delete_from_neo4j(
+                    vector_id, results
+                )
+            results['neo4j_deleted'] = neo4j_total
 
             # 3. MinIO + PostgreSQL via UploadService
             #    (deletes the S3 object and knowledge_sources row,
