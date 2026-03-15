@@ -25,6 +25,10 @@ from ..models.chat_document_models import (
     DocumentUploadErrorCodes,
     DocumentUploadErrorMessage,
     DocumentUploadStartedMessage,
+    RelatedDocsGraphEdge,
+    RelatedDocsGraphError,
+    RelatedDocsGraphNode,
+    RelatedDocsGraphResponse,
 )
 
 if TYPE_CHECKING:
@@ -206,24 +210,76 @@ async def _fetch_document_stats(document_ids: list) -> dict:
     """Fetch chunk/bridge/concept/relationship stats for a batch of documents.
     
     Returns dict keyed by document_id string with stats sub-dicts.
+    
+    For conversation documents, the knowledge_sources.id is a UUID5 derived
+    from the thread_id. Chunks in PostgreSQL are stored under the raw
+    thread_id, while concepts in Neo4j are stored under the UUID5 source_id.
+    This function resolves that mapping so stats are found correctly.
     """
     stats = {}
     if not document_ids:
         return stats
 
+    # Build a mapping: query_id -> original_doc_id
+    # For conversations, query_id = source_thread_id (raw thread UUID)
+    # For regular docs, query_id = document_id (same)
+    query_to_doc: dict = {}  # query_id_str -> doc_id_str
+    all_query_ids = []       # UUIDs to use in SQL queries
+
     try:
         from ...database.connection import get_async_connection
         conn = await get_async_connection()
         try:
-            # Chunk counts
+            # Look up conversation documents to get their source_thread_id
+            rows = await conn.fetch("""
+                SELECT id::text AS doc_id,
+                       source_type::text AS stype,
+                       metadata->>'source_thread_id' AS thread_id
+                FROM multimodal_librarian.knowledge_sources
+                WHERE id = ANY($1::uuid[])
+            """, document_ids)
+
+            import uuid as _uuid_mod
+            thread_id_set = set()
+            for r in rows:
+                doc_id_str = r['doc_id']
+                stype = (r['stype'] or '').upper()
+                thread_id = r['thread_id']
+                if stype == 'CONVERSATION' and thread_id:
+                    try:
+                        tid_uuid = _uuid_mod.UUID(thread_id)
+                        query_to_doc[str(tid_uuid)] = doc_id_str
+                        all_query_ids.append(tid_uuid)
+                        thread_id_set.add(str(tid_uuid))
+                    except ValueError:
+                        query_to_doc[doc_id_str] = doc_id_str
+                        all_query_ids.append(_uuid_mod.UUID(doc_id_str))
+                else:
+                    query_to_doc[doc_id_str] = doc_id_str
+                    all_query_ids.append(_uuid_mod.UUID(doc_id_str))
+
+            # Also include any document_ids that weren't found in the lookup
+            # (shouldn't happen, but be safe)
+            found_doc_ids = {r['doc_id'] for r in rows}
+            for did in document_ids:
+                did_str = str(did)
+                if did_str not in found_doc_ids and did_str not in query_to_doc.values():
+                    query_to_doc[did_str] = did_str
+                    all_query_ids.append(did)
+
+            if not all_query_ids:
+                return stats
+
+            # Chunk counts — query using resolved IDs
             rows = await conn.fetch("""
                 SELECT source_id::text AS doc_id, count(*) AS cnt
                 FROM multimodal_librarian.knowledge_chunks
                 WHERE source_id = ANY($1::uuid[])
                 GROUP BY source_id
-            """, document_ids)
+            """, all_query_ids)
             for r in rows:
-                stats.setdefault(r['doc_id'], {})['chunk_count'] = r['cnt']
+                orig = query_to_doc.get(r['doc_id'], r['doc_id'])
+                stats.setdefault(orig, {})['chunk_count'] = r['cnt']
 
             # Bridge counts
             rows = await conn.fetch("""
@@ -233,15 +289,22 @@ async def _fetch_document_stats(document_ids: list) -> dict:
                     ON bc.source_chunk_id = kc.id
                 WHERE kc.source_id = ANY($1::uuid[])
                 GROUP BY kc.source_id
-            """, document_ids)
+            """, all_query_ids)
             for r in rows:
-                stats.setdefault(r['doc_id'], {})['bridge_count'] = r['cnt']
+                orig = query_to_doc.get(r['doc_id'], r['doc_id'])
+                stats.setdefault(orig, {})['bridge_count'] = r['cnt']
         finally:
             await conn.close()
     except Exception as e:
         logger.warning(f"Failed to fetch PG document stats: {e}")
+        # If the metadata lookup failed, fall back to using document_ids directly
+        if not query_to_doc:
+            for did in document_ids:
+                query_to_doc[str(did)] = str(did)
+                all_query_ids.append(did)
 
-    # Neo4j concept/relationship stats
+    # Neo4j concept/relationship stats — batched into 2 queries total
+    # (instead of 2 per document) for O(1) round-trips.
     try:
         from ...clients.database_factory import get_database_factory
         factory = get_database_factory()
@@ -249,42 +312,40 @@ async def _fetch_document_stats(document_ids: list) -> dict:
         if not getattr(client, '_is_connected', False):
             await client.connect()
 
-        for doc_id in document_ids:
+        # Build a flat list of all source_ids to query and a reverse map
+        # from each source_id back to the original doc_id_str.
+        all_neo4j_ids: list[str] = []
+        neo4j_id_to_doc: dict[str, str] = {}  # neo4j source_id -> doc_id_str
+        for query_id_str, doc_id_str in query_to_doc.items():
+            for sid in {query_id_str, doc_id_str}:
+                if sid not in neo4j_id_to_doc:
+                    neo4j_id_to_doc[sid] = doc_id_str
+                    all_neo4j_ids.append(sid)
+
+        if all_neo4j_ids:
+            # Query 1: concept counts per source_id
             try:
-                doc_id_str = str(doc_id)
-                s = stats.setdefault(doc_id_str, {})
-
-                # Count concepts
                 result = await client.execute_query(
-                    "MATCH (c:Concept {source_document: $doc_id}) "
-                    "RETURN count(c) AS concepts",
-                    {"doc_id": doc_id_str}
+                    "MATCH (ch:Chunk) WHERE ch.source_id IN $ids "
+                    "MATCH (ch)<-[:EXTRACTED_FROM]-(c:Concept) "
+                    "RETURN ch.source_id AS sid, count(DISTINCT c) AS concepts",
+                    {"ids": all_neo4j_ids}
                 )
-                if result and len(result) > 0:
-                    s['concept_count'] = result[0].get('concepts', 0)
-
-                # Count relationships grouped by type
-                result = await client.execute_query(
-                    "MATCH (c:Concept {source_document: $doc_id})-[r]->() "
-                    "RETURN type(r) AS rel_type, count(r) AS cnt",
-                    {"doc_id": doc_id_str}
-                )
-                total_rels = 0
-                bd = {}
                 for row in (result or []):
-                    rt = row.get('rel_type')
-                    cnt = row.get('cnt', 0)
-                    total_rels += cnt
-                    if rt:
-                        source = _classify_rel_source(rt)
-                        bd[rt] = {'count': cnt, 'source': source}
-                s['relationship_count'] = total_rels
-                if bd:
-                    s['relationship_breakdown'] = bd
+                    sid = row.get('sid')
+                    doc_id_str = neo4j_id_to_doc.get(sid)
+                    if doc_id_str:
+                        s = stats.setdefault(doc_id_str, {})
+                        # Take the max in case both query_id and doc_id match
+                        s['concept_count'] = max(
+                            s.get('concept_count', 0), row.get('concepts', 0)
+                        )
             except Exception as e:
-                logger.debug(
-                    f"Neo4j stats failed for {doc_id}: {e}"
-                )
+                logger.debug(f"Neo4j batch concept count failed: {e}")
+
+            # Relationship breakdown removed from list view for performance.
+            # Concept-to-concept edge traversal across 260K+ nodes was ~10s.
+            # Can be fetched on-demand per document if needed.
     except Exception as e:
         logger.debug(f"KG stats unavailable: {e}")
 
@@ -356,35 +417,15 @@ async def handle_document_list_request(
                 status=status_str,
                 upload_timestamp=doc.get('upload_timestamp', datetime.utcnow()),
                 file_size=doc.get('file_size', 0),
+                source_type=doc.get('source_type'),
+                thread_id=doc.get('thread_id'),
                 chunk_count=doc.get('chunk_count'),
                 error_message=doc.get('processing_error')
             )
             document_infos.append(doc_info)
         
-        # Fetch stats for completed documents
-        completed_ids = [
-            doc.get('document_id')
-            for doc in documents_result.get('documents', [])
-            if _map_status_to_string(doc.get('status')) == 'completed'
-            and doc.get('document_id')
-        ]
-        if completed_ids:
-            try:
-                stats_map = await _fetch_document_stats(completed_ids)
-                for di in document_infos:
-                    s = stats_map.get(di.document_id, {})
-                    if s:
-                        di.chunk_count = s.get('chunk_count')
-                        di.bridge_count = s.get('bridge_count')
-                        di.concept_count = s.get('concept_count')
-                        di.relationship_count = s.get(
-                            'relationship_count'
-                        )
-                        di.relationship_breakdown = s.get(
-                            'relationship_breakdown'
-                        )
-            except Exception as e:
-                logger.warning(f"Failed to enrich doc stats: {e}")
+        # Stats are fetched on-demand per document (document_stats_request)
+        # to keep the list response fast.
 
         # Send response
         response = DocumentListMessage(
@@ -408,6 +449,128 @@ async def handle_document_list_request(
             'type': 'error',
             'message': 'Failed to retrieve document list'
         }, connection_id)
+
+
+async def handle_document_stats_request(
+    message_data: dict,
+    connection_id: str,
+    manager: "ConnectionManager",
+) -> None:
+    """Fetch detailed stats for a single document on demand.
+
+    Returns chunk_count, bridge_count, concept_count, relationship_count,
+    and relationship_breakdown via a ``document_stats`` WebSocket message.
+    """
+    document_id = (message_data.get("document_id") or "").strip()
+    if not document_id:
+        await manager.send_personal_message({
+            'type': 'document_stats',
+            'document_id': '',
+            'error': 'document_id is required',
+        }, connection_id)
+        return
+
+    stats: dict = {'document_id': document_id, 'type': 'document_stats'}
+
+    # --- Resolve conversation mapping ---
+    import uuid as _uuid_mod
+    query_ids: list = []  # UUIDs for PG queries
+    neo4j_ids: list[str] = []  # strings for Neo4j
+    try:
+        from ...database.connection import get_async_connection
+        conn = await get_async_connection()
+        try:
+            row = await conn.fetchrow(
+                "SELECT id::text AS doc_id, source_type::text AS stype, "
+                "metadata->>'source_thread_id' AS thread_id "
+                "FROM multimodal_librarian.knowledge_sources WHERE id = $1::uuid",
+                _uuid_mod.UUID(document_id),
+            )
+            if row and (row['stype'] or '').upper() == 'CONVERSATION' and row['thread_id']:
+                tid = _uuid_mod.UUID(row['thread_id'])
+                doc_uuid = _uuid_mod.UUID(document_id)
+                # Include both thread_id and UUID5 document_id so we
+                # match chunks regardless of which ID was used as source_id
+                query_ids.extend([tid, doc_uuid])
+                neo4j_ids.extend([str(tid), document_id])
+            else:
+                query_ids.append(_uuid_mod.UUID(document_id))
+                neo4j_ids.append(document_id)
+
+            # Chunk count
+            r = await conn.fetchrow(
+                "SELECT count(*) AS cnt FROM multimodal_librarian.knowledge_chunks "
+                "WHERE source_id = ANY($1::uuid[])", query_ids,
+            )
+            if r:
+                stats['chunk_count'] = r['cnt']
+
+            # Bridge count
+            r = await conn.fetchrow(
+                "SELECT count(*) AS cnt FROM multimodal_librarian.bridge_chunks bc "
+                "JOIN multimodal_librarian.knowledge_chunks kc ON bc.source_chunk_id = kc.id "
+                "WHERE kc.source_id = ANY($1::uuid[])", query_ids,
+            )
+            if r:
+                stats['bridge_count'] = r['cnt']
+        finally:
+            await conn.close()
+    except Exception as e:
+        logger.warning(f"PG stats failed for {document_id}: {e}")
+        if not neo4j_ids:
+            neo4j_ids.append(document_id)
+
+    # --- Neo4j: concept count + relationship breakdown ---
+    try:
+        from ...clients.database_factory import get_database_factory
+        factory = get_database_factory()
+        client = factory.get_graph_client()
+        if not getattr(client, '_is_connected', False):
+            await client.connect()
+
+        # Concept count
+        try:
+            result = await client.execute_query(
+                "MATCH (ch:Chunk) WHERE ch.source_id IN $ids "
+                "MATCH (ch)<-[:EXTRACTED_FROM]-(c:Concept) "
+                "RETURN count(DISTINCT c) AS concepts",
+                {"ids": neo4j_ids},
+            )
+            for row in (result or []):
+                stats['concept_count'] = row.get('concepts', 0)
+        except Exception as e:
+            logger.debug(f"Neo4j concept count failed for {document_id}: {e}")
+
+        # Relationship breakdown — single doc so much smaller working set
+        try:
+            result = await client.execute_query(
+                "MATCH (ch:Chunk) WHERE ch.source_id IN $ids "
+                "MATCH (ch)<-[:EXTRACTED_FROM]-(c:Concept) "
+                "WITH DISTINCT c "
+                "MATCH (c)-[r]->(:Concept) "
+                "RETURN type(r) AS rel_type, count(r) AS cnt",
+                {"ids": neo4j_ids},
+            )
+            total_rels = 0
+            breakdown = {}
+            for row in (result or []):
+                rt = row.get('rel_type')
+                cnt = row.get('cnt', 0)
+                total_rels += cnt
+                if rt:
+                    breakdown[rt] = {
+                        'count': cnt,
+                        'source': _classify_rel_source(rt),
+                    }
+            stats['relationship_count'] = total_rels
+            if breakdown:
+                stats['relationship_breakdown'] = breakdown
+        except Exception as e:
+            logger.debug(f"Neo4j relationship breakdown failed for {document_id}: {e}")
+    except Exception as e:
+        logger.debug(f"KG stats unavailable for {document_id}: {e}")
+
+    await manager.send_personal_message(stats, connection_id)
 
 
 async def handle_document_delete_request(
@@ -653,3 +816,277 @@ def _classify_rel_source(rel_type: str) -> str:
             and '_' not in rel_type):
         return 'ConceptNet'
     return 'Document'
+
+
+async def _resolve_conversation_source_id(document_id: str) -> str:
+    """Resolve a knowledge_sources.id to the Neo4j source_document key.
+
+    Conversation documents store concepts in Neo4j using the UUID5
+    knowledge_sources.id as source_document (not the raw thread_id).
+    For regular documents the id is used directly.  In both cases the
+    document_id passed in is already the correct Neo4j key, so this
+    function simply returns it unchanged.
+    """
+    return document_id
+
+
+async def handle_related_docs_graph(
+    message_data: dict,
+    connection_id: str,
+    manager: "ConnectionManager",
+) -> None:
+    """
+    Handle request for the related documents graph.
+
+    Queries Neo4j for all RELATED_DOCS edges involving the requested document,
+    resolves document titles from PostgreSQL, and returns a nodes-and-edges
+    payload for the frontend force-directed graph popup.
+
+    Args:
+        message_data: WebSocket message with ``document_id``.
+        connection_id: WebSocket connection ID.
+        manager: Connection manager for sending responses.
+
+    Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8
+    """
+    document_id = (message_data.get("document_id") or "").strip()
+
+    # --- Validate document_id (Req 6.8) ---
+    if not document_id:
+        error_resp = RelatedDocsGraphError(
+            document_id=document_id,
+            message="document_id is required and must be non-empty",
+        )
+        await manager.send_personal_message(
+            error_resp.model_dump(mode="json"), connection_id
+        )
+        return
+
+    # --- Obtain Neo4j client (Req 6.7) ---
+    try:
+        from ...clients.database_factory import get_database_factory
+        factory = get_database_factory()
+        client = factory.get_graph_client()
+        if not getattr(client, "_is_connected", False):
+            await client.connect()
+    except Exception as exc:
+        logger.error(f"Neo4j client unavailable for related docs graph: {exc}")
+        error_resp = RelatedDocsGraphError(
+            document_id=document_id,
+            message="Knowledge graph service is unavailable",
+        )
+        await manager.send_personal_message(
+            error_resp.model_dump(mode="json"), connection_id
+        )
+        return
+
+    # --- Resolve conversation source_id (UUID5 → thread_id) ---
+    neo4j_doc_id = await _resolve_conversation_source_id(document_id)
+
+    # --- Query RELATED_DOCS edges (Req 6.1) ---
+    # Optimized: collect source concept IDs first via CALL {},
+    # then traverse RELATED_DOCS → target concept → chunk in a
+    # single pass.  Avoids the 4-hop cartesian explosion that
+    # timed out on large documents (9k+ concepts).
+    try:
+        results = await client.execute_query(
+            "CALL { "
+            "  MATCH (ch1:Chunk {source_id: $doc_id})"
+            "        <-[:EXTRACTED_FROM]-(c1:Concept) "
+            "  RETURN collect(DISTINCT id(c1)) AS src_ids "
+            "} "
+            "MATCH (c1)-[r:RELATED_DOCS]->(c2) "
+            "WHERE id(c1) IN src_ids AND NOT id(c2) IN src_ids "
+            "WITH c2, max(r.score) AS best_score, "
+            "     sum(r.edge_count) AS total_ec "
+            "MATCH (c2)-[:EXTRACTED_FROM]->(ch2:Chunk) "
+            "WITH DISTINCT ch2.source_id AS related_doc_id, "
+            "     best_score, total_ec "
+            "RETURN related_doc_id, "
+            "  max(best_score) AS score, "
+            "  sum(total_ec) AS edge_count",
+            {"doc_id": neo4j_doc_id},
+        )
+    except Exception as exc:
+        logger.error(f"Neo4j query failed for related docs graph ({document_id}): {exc}")
+        error_resp = RelatedDocsGraphError(
+            document_id=document_id,
+            message=f"Failed to query related documents: {exc}",
+        )
+        await manager.send_personal_message(
+            error_resp.model_dump(mode="json"), connection_id
+        )
+        return
+
+    # --- Collect all document IDs that need title lookup ---
+    related_rows = results or []
+    all_doc_ids = [document_id]
+    for row in related_rows:
+        rid = row.get("related_doc_id")
+        if rid and rid not in all_doc_ids:
+            all_doc_ids.append(rid)
+
+    # --- Look up titles and source types from PostgreSQL (Req 6.4, 6.5) ---
+    titles: dict = {}
+    source_types: dict = {}
+    try:
+        from ...database.connection import get_async_connection
+        conn = await get_async_connection()
+        try:
+            rows = await conn.fetch(
+                "SELECT id::text, title, source_type::text "
+                "FROM multimodal_librarian.knowledge_sources "
+                "WHERE id = ANY($1::uuid[])",
+                all_doc_ids,
+            )
+            for r in rows:
+                titles[r["id"]] = r["title"] or r["id"]
+                source_types[r["id"]] = (r["source_type"] or "").upper()
+        finally:
+            await conn.close()
+    except Exception as exc:
+        logger.warning(f"PostgreSQL title lookup failed, using document_id fallback: {exc}")
+
+    def _title(doc_id: str) -> str:
+        from urllib.parse import unquote
+        raw = titles.get(doc_id, doc_id)
+        return unquote(raw) if raw else doc_id
+
+    origin_is_conversation = (
+        source_types.get(document_id) == "CONVERSATION"
+    )
+
+    if origin_is_conversation:
+        # --- Conversation origin: use actual citations, not RELATED_DOCS ---
+        # RELATED_DOCS edges for conversations are spurious (generic
+        # concept overlap like "data", "use", "applications").  Instead,
+        # extract the real cited document IDs from the messages table.
+        cited_doc_ids: set = set()
+        try:
+            import json as _json
+            conn2 = await get_async_connection()
+            try:
+                # Get the thread_id from knowledge_sources metadata
+                meta_row = await conn2.fetchrow(
+                    "SELECT metadata->>'source_thread_id' AS tid "
+                    "FROM multimodal_librarian.knowledge_sources "
+                    "WHERE id::text = $1",
+                    document_id,
+                )
+                thread_id = meta_row["tid"] if meta_row else None
+                if thread_id:
+                    ref_rows = await conn2.fetch(
+                        "SELECT knowledge_references "
+                        "FROM multimodal_librarian.messages "
+                        "WHERE thread_id = $1::uuid "
+                        "AND knowledge_references IS NOT NULL",
+                        thread_id,
+                    )
+                    for rr in ref_rows:
+                        refs = rr["knowledge_references"]
+                        if isinstance(refs, str):
+                            refs = _json.loads(refs)
+                        if isinstance(refs, list):
+                            for ref in refs:
+                                did = ref.get("document_id")
+                                if did:
+                                    cited_doc_ids.add(str(did))
+            finally:
+                await conn2.close()
+        except Exception as exc:
+            logger.warning(
+                f"Citation lookup failed for conversation "
+                f"{document_id}: {exc}"
+            )
+
+        # Filter out non-UUID document IDs (e.g. web_brave, web_google)
+        # before passing to PostgreSQL — invalid UUIDs cause the entire
+        # ANY($1::uuid[]) cast to fail, silently dropping all results.
+        import uuid as _uuid_mod
+        valid_cited: set = set()
+        for _cid in cited_doc_ids:
+            try:
+                _uuid_mod.UUID(_cid)
+                valid_cited.add(_cid)
+            except (ValueError, AttributeError):
+                pass
+        cited_doc_ids = valid_cited
+
+        # Fetch titles for cited docs not already loaded
+        missing = [d for d in cited_doc_ids if d not in titles]
+        if missing:
+            try:
+                conn3 = await get_async_connection()
+                try:
+                    extra = await conn3.fetch(
+                        "SELECT id::text, title "
+                        "FROM multimodal_librarian.knowledge_sources "
+                        "WHERE id = ANY($1::uuid[])",
+                        missing,
+                    )
+                    for r in extra:
+                        titles[r["id"]] = r["title"] or r["id"]
+                finally:
+                    await conn3.close()
+            except Exception:
+                logger.warning(
+                    f"Title lookup failed for cited docs {missing}",
+                    exc_info=True,
+                )
+
+        # Build citation-based related_rows (score=1.0 for cited docs)
+        # Exclude the origin document itself to avoid self-edges.
+        related_rows = [
+            {"related_doc_id": did, "score": 1.0, "edge_count": 1}
+            for did in cited_doc_ids
+            if did in titles and did != document_id
+        ]
+    else:
+        # --- Regular document origin ---
+        # Filter out deleted docs and conversation documents.
+        # Conversation RELATED_DOCS edges are based on shallow
+        # generic concept overlap, not real topical similarity.
+        related_rows = [
+            row for row in related_rows
+            if row.get("related_doc_id") in titles
+            and source_types.get(
+                row.get("related_doc_id")
+            ) != "CONVERSATION"
+        ]
+
+    # --- Build nodes (Req 6.2, 6.3) ---
+    seen_node_ids = {document_id}
+    nodes = [RelatedDocsGraphNode(document_id=document_id, title=_title(document_id), is_origin=True)]
+    for row in related_rows:
+        rid = row.get("related_doc_id")
+        if rid and rid not in seen_node_ids:
+            seen_node_ids.add(rid)
+            nodes.append(RelatedDocsGraphNode(document_id=rid, title=_title(rid)))
+
+    # --- Build edges (Req 6.2) ---
+    edges = []
+    for row in related_rows:
+        rid = row.get("related_doc_id")
+        if rid:
+            score = row.get("score", 0.0)
+            edge_count = row.get("edge_count", 0)
+            edges.append(RelatedDocsGraphEdge(
+                source=document_id,
+                target=rid,
+                score=float(score),
+                edge_count=int(edge_count),
+            ))
+
+    # --- Send response (Req 6.6 — valid even if no edges) ---
+    response = RelatedDocsGraphResponse(
+        document_id=document_id,
+        nodes=nodes,
+        edges=edges,
+    )
+    await manager.send_personal_message(
+        response.model_dump(mode="json"), connection_id
+    )
+    logger.debug(
+        f"Sent related docs graph for {document_id}: "
+        f"{len(nodes)} nodes, {len(edges)} edges"
+    )

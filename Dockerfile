@@ -99,8 +99,10 @@ RUN python -c "import spacy; spacy.cli.download('en_core_web_sm')" && \
 # Create necessary directories with proper permissions
 RUN mkdir -p uploads media exports logs audit_logs \
     .cache/torch .cache/transformers .cache/huggingface \
+    .cache/matplotlib \
     && chmod 755 uploads media exports logs audit_logs \
-    && chmod 755 .cache/torch .cache/transformers .cache/huggingface
+    && chmod 755 .cache/torch .cache/transformers .cache/huggingface \
+    && chmod 755 .cache/matplotlib
 
 # =============================================================================
 # DEVELOPMENT STAGE - For local development with hot reload
@@ -151,6 +153,7 @@ USER appuser
 
 # Set up development environment
 ENV PYTHONPATH=/app/src:/app \
+    MPLCONFIGDIR=/app/.cache/matplotlib \
     ML_ENVIRONMENT=local \
     DATABASE_TYPE=local \
     DEBUG=true \
@@ -186,6 +189,7 @@ USER appuser
 
 # Production environment variables
 ENV ML_ENVIRONMENT=aws \
+    MPLCONFIGDIR=/app/.cache/matplotlib \
     DATABASE_TYPE=aws \
     DEBUG=false \
     LOG_LEVEL=INFO

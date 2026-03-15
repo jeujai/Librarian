@@ -8,6 +8,8 @@ It provides unified storage and retrieval capabilities with metadata filtering.
 Migrated from Milvus to OpenSearch as part of AWS-native database implementation.
 """
 
+import asyncio
+import inspect
 import logging
 import uuid
 from datetime import datetime
@@ -100,54 +102,98 @@ class VectorStore:
     
     def store_embeddings(self, chunks: List[KnowledgeChunk]) -> None:
         """
-        Store chunk embeddings with metadata in the vector database.
-        
+        Store chunk embeddings with metadata in the vector database (sync version).
+
+        For use from synchronous contexts only. If called from within an
+        async event loop with an async backend (Milvus), this will deadlock.
+        Use ``store_embeddings_async`` from async code instead.
+
         Args:
             chunks: List of knowledge chunks to store
-            
+
         Raises:
             VectorStoreError: If storage operation fails
         """
         if not self._connected or not self.opensearch_client:
             raise VectorStoreError("Vector store not connected")
-        
+
         if not chunks:
             logger.warning("No chunks provided for storage")
             return
-        
+
         try:
-            # Prepare data for OpenSearch
-            chunk_data = []
-            
-            for chunk in chunks:
-                # Generate embedding if not present
-                if chunk.embedding is None:
-                    chunk.embedding = self.generate_embedding(chunk.content)
-                
-                # Prepare document
-                doc = {
-                    'chunk_id': chunk.id,
-                    'id': chunk.id,  # For compatibility
-                    'embedding': chunk.embedding if isinstance(chunk.embedding, list) else chunk.embedding.tolist(),
-                    'source_type': chunk.source_type.value,
-                    'source_id': chunk.source_id,
-                    'content_type': chunk.content_type.value,
-                    'location_reference': chunk.location_reference,
-                    'section': chunk.section,
-                    'content': chunk.content[:65535],  # Truncate if too long
-                    'created_at': int(datetime.now().timestamp() * 1000)  # Milliseconds
-                }
-                
-                chunk_data.append(doc)
-            
-            # Store using OpenSearch client
-            self.opensearch_client.store_embeddings(chunk_data)
-            
+            chunk_data = self._prepare_chunk_data(chunks)
+
+            result = self.opensearch_client.store_embeddings(chunk_data)
+
+            if inspect.isawaitable(result):
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = None
+
+                if loop and loop.is_running():
+                    raise VectorStoreError(
+                        "Cannot call sync store_embeddings from within "
+                        "a running event loop. Use store_embeddings_async instead."
+                    )
+                asyncio.run(result)
+
             logger.info(f"Successfully stored {len(chunks)} chunks in vector database")
-            
+
+        except VectorStoreError:
+            raise
         except Exception as e:
             logger.error(f"Failed to store embeddings: {e}")
             raise VectorStoreError(f"Failed to store embeddings: {e}")
+    @staticmethod
+    def _ensure_uuid(raw_id: str) -> str:
+        """Return *raw_id* if it is already a valid UUID, otherwise
+        derive a deterministic UUID5 from it so Milvus accepts it."""
+        try:
+            uuid.UUID(raw_id)
+            return raw_id
+        except (ValueError, TypeError):
+            return str(uuid.uuid5(uuid.NAMESPACE_URL, raw_id))
+
+    def _prepare_chunk_data(self, chunks: List[KnowledgeChunk]) -> List[Dict[str, Any]]:
+        """Prepare chunk data dicts for storage (shared by sync and async paths)."""
+        chunk_data = []
+        for chunk in chunks:
+            if chunk.embedding is None:
+                chunk.embedding = self.generate_embedding(chunk.content)
+
+            embedding_list = (
+                chunk.embedding if isinstance(chunk.embedding, list)
+                else chunk.embedding.tolist()
+            )
+
+            safe_id = self._ensure_uuid(chunk.id)
+            title = chunk.section or chunk.source_id
+            doc = {
+                'chunk_id': safe_id,
+                'id': safe_id,
+                'embedding': embedding_list,
+                'source_type': chunk.source_type.value,
+                'source_id': chunk.source_id,
+                'content_type': chunk.content_type.value,
+                'location_reference': chunk.location_reference,
+                'section': chunk.section,
+                'document_title': title,
+                'content': chunk.content[:65535],
+                'created_at': int(datetime.now().timestamp() * 1000),
+                'metadata': {
+                    'source_id': chunk.source_id,
+                    'source_type': chunk.source_type.value,
+                    'content_type': chunk.content_type.value,
+                    'content': chunk.content[:65535],
+                    'section': chunk.section,
+                    'title': title,
+                    'location_reference': chunk.location_reference,
+                },
+            }
+            chunk_data.append(doc)
+        return chunk_data
     
     def store_bridge_chunks(self, bridge_chunks: List[KnowledgeChunk]) -> None:
         """
@@ -296,22 +342,45 @@ class VectorStore:
     
     def delete_chunks_by_source(self, source_id: str) -> int:
         """
-        Delete all chunks from a specific source.
-        
+        Delete all chunks from a specific source (sync version).
+
+        For use from synchronous contexts only. If called from within an
+        async event loop with an async backend (Milvus), this will deadlock.
+        Use ``delete_chunks_by_source_async`` from async code instead.
+
         Args:
             source_id: ID of the source to delete chunks from
-            
+
         Returns:
             Number of chunks deleted
         """
         if not self._connected or not self.opensearch_client:
             raise VectorStoreError("Vector store not connected")
-        
+
         try:
-            deleted_count = self.opensearch_client.delete_chunks_by_source(source_id)
+            result = self.opensearch_client.delete_chunks_by_source(source_id)
+
+            if inspect.isawaitable(result):
+                # Sync caller with async backend — only works outside event loop
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = None
+
+                if loop and loop.is_running():
+                    raise VectorStoreError(
+                        "Cannot call sync delete_chunks_by_source from within "
+                        "a running event loop. Use delete_chunks_by_source_async instead."
+                    )
+                deleted_count = asyncio.run(result)
+            else:
+                deleted_count = result
+
             logger.info(f"Deleted {deleted_count} chunks for source: {source_id}")
             return deleted_count
-            
+
+        except VectorStoreError:
+            raise
         except Exception as e:
             logger.error(f"Failed to delete chunks by source: {e}")
             raise VectorStoreError(f"Failed to delete chunks by source: {e}")
@@ -425,3 +494,107 @@ class VectorStore:
         except Exception as e:
             logger.error(f"Failed to perform async semantic search: {e}")
             raise VectorStoreError(f"Failed to perform async semantic search: {e}")
+
+    async def store_embeddings_async(self, chunks: List[KnowledgeChunk]) -> None:
+        """
+        Store chunk embeddings asynchronously (non-blocking).
+
+        This is the async counterpart of store_embeddings().  It properly
+        awaits the underlying client when it exposes an async
+        ``store_embeddings`` method (e.g. MilvusClient) and falls back to
+        running the sync path in a thread pool otherwise.
+
+        Args:
+            chunks: List of knowledge chunks to store
+
+        Raises:
+            VectorStoreError: If storage operation fails
+        """
+        if not self._connected or not self.opensearch_client:
+            raise VectorStoreError("Vector store not connected")
+
+        if not chunks:
+            logger.warning("No chunks provided for storage")
+            return
+
+        try:
+            chunk_data = []
+
+            for chunk in chunks:
+                # Generate embedding if not present
+                if chunk.embedding is None:
+                    chunk.embedding = await self.generate_embedding_async(chunk.content)
+
+                embedding_list = (
+                    chunk.embedding
+                    if isinstance(chunk.embedding, list)
+                    else chunk.embedding.tolist()
+                )
+
+                safe_id = self._ensure_uuid(chunk.id)
+                title = chunk.section or chunk.source_id
+                doc = {
+                    'chunk_id': safe_id,
+                    'id': safe_id,
+                    'embedding': embedding_list,
+                    'source_type': chunk.source_type.value,
+                    'source_id': chunk.source_id,
+                    'content_type': chunk.content_type.value,
+                    'location_reference': chunk.location_reference,
+                    'section': chunk.section,
+                    'document_title': title,
+                    'content': chunk.content[:65535],
+                    'created_at': int(datetime.now().timestamp() * 1000),
+                    'metadata': {
+                        'source_id': chunk.source_id,
+                        'source_type': chunk.source_type.value,
+                        'content_type': chunk.content_type.value,
+                        'content': chunk.content[:65535],
+                        'section': chunk.section,
+                        'title': title,
+                        'location_reference': chunk.location_reference,
+                    },
+                }
+                chunk_data.append(doc)
+
+            result = self.opensearch_client.store_embeddings(chunk_data)
+
+            if inspect.isawaitable(result):
+                await result
+
+            logger.info(
+                f"Successfully stored {len(chunks)} chunks in vector database (async)"
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to store embeddings (async): {e}")
+            raise VectorStoreError(f"Failed to store embeddings: {e}")
+    async def delete_chunks_by_source_async(self, source_id: str) -> int:
+        """
+        Delete all chunks from a specific source (async version).
+
+        Properly awaits async backends like MilvusClient.
+
+        Args:
+            source_id: ID of the source to delete chunks from
+
+        Returns:
+            Number of chunks deleted
+        """
+        if not self._connected or not self.opensearch_client:
+            raise VectorStoreError("Vector store not connected")
+
+        try:
+            result = self.opensearch_client.delete_chunks_by_source(source_id)
+
+            if inspect.isawaitable(result):
+                deleted_count = await result
+            else:
+                deleted_count = result
+
+            logger.info(f"Deleted {deleted_count} chunks for source: {source_id} (async)")
+            return deleted_count
+
+        except Exception as e:
+            logger.error(f"Failed to delete chunks by source (async): {e}")
+            raise VectorStoreError(f"Failed to delete chunks by source: {e}")

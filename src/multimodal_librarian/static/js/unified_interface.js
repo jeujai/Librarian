@@ -289,7 +289,16 @@ class UnifiedInterface {
         this.wsManager.on('connected', () => {
             console.log('Connected to server');
             this.updateConnectionStatus('connected');
-            this.startNewConversation();
+            // On reconnect, resume existing thread instead of creating a new one
+            if (this.currentThreadId) {
+                console.log('Resuming conversation:', this.currentThreadId);
+                this.wsManager.send({
+                    type: 'resume_conversation',
+                    thread_id: this.currentThreadId
+                });
+            } else {
+                this.startNewConversation();
+            }
         });
 
         this.wsManager.on('disconnected', () => {
@@ -655,6 +664,11 @@ class UnifiedInterface {
                 console.log('Conversation started:', this.currentThreadId);
                 break;
 
+            case 'conversation_resumed':
+                this.currentThreadId = data.thread_id;
+                console.log('Conversation resumed:', this.currentThreadId);
+                break;
+
             case 'response':
                 this.handleChatResponse(data);
                 break;
@@ -958,9 +972,55 @@ class UnifiedInterface {
     }
 
     /**
+     * Generate a document title from the current conversation.
+     * @returns {string}
+     */
+    _generateDocumentTitle() {
+        const firstUserMsg = this.messageHistory.find(m => m.type === 'user');
+        const date = new Date().toLocaleDateString('en-US', {
+            month: 'short', day: 'numeric', year: 'numeric'
+        });
+        if (!firstUserMsg) return `Conversation: (untitled) (${date})`;
+
+        let content = firstUserMsg.content;
+        if (content.length > 80) content = content.substring(0, 80) + '\u2026';
+        return `Conversation: ${content} (${date})`;
+    }
+
+    /**
+     * Fire-and-forget POST to convert current conversation to knowledge.
+     * Mirrors chat.js _convertCurrentConversation().
+     */
+    async _convertCurrentConversation() {
+        const threadId = this.currentThreadId;
+        const title = this._generateDocumentTitle();
+
+        try {
+            const response = await fetch(
+                `/api/conversations/${threadId}/convert-to-knowledge`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ title })
+                }
+            );
+            if (!response.ok) throw new Error(await response.text());
+        } catch (err) {
+            console.error('Conversation conversion failed:', err);
+        }
+    }
+
+    /**
      * Clear chat history
      */
     clearChat() {
+        // Convert current conversation if it has messages (fire-and-forget)
+        if (this.messageHistory.length > 0 && this.currentThreadId) {
+            this._convertCurrentConversation().catch(err => {
+                console.error('Conversion on clear failed:', err);
+            });
+        }
+
         // Remove all messages except welcome message
         const messages = this.chatMessages.querySelectorAll('.message:not(.welcome-message .message)');
         messages.forEach(message => message.remove());

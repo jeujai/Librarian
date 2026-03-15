@@ -5,14 +5,18 @@ This module tests the LocalDatabaseConfig class and related functions
 for local development database configuration.
 """
 
-import pytest
 import os
 import tempfile
-from unittest.mock import patch, mock_open
+from unittest.mock import mock_open, patch
+
+import pytest
 from pydantic import ValidationError
 
 from src.multimodal_librarian.config.local_config import (
-    LocalDatabaseConfig, get_local_config, reload_local_config, create_local_env_template
+    LocalDatabaseConfig,
+    create_local_env_template,
+    get_local_config,
+    reload_local_config,
 )
 
 
@@ -42,7 +46,7 @@ class TestLocalDatabaseConfig:
         assert config.connection_timeout == 60
         assert config.query_timeout == 30
         assert config.max_retries == 3
-        assert config.embedding_dimension == 384
+        assert config.embedding_dimension == 768
     
     def test_configuration_with_custom_values(self):
         """Test configuration with custom values."""

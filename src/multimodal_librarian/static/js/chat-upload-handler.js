@@ -572,6 +572,14 @@ class ChatUploadHandler extends FileHandler {
         const progressFill = card.querySelector('.processing-progress-fill');
         const progressText = card.querySelector('.processing-progress-text');
 
+        // Monotonic progress — never go backwards (guards against
+        // duplicate task deliveries or interleaved parallel updates)
+        const prevProgress = parseInt(card.dataset.lastProgress || '0', 10);
+        const effectiveProgress = (status === 'completed' || status === 'failed')
+            ? progress
+            : Math.max(progress, prevProgress);
+        card.dataset.lastProgress = String(effectiveProgress);
+
         // Update stage text
         if (stageElement) {
             stageElement.textContent = this.getStageDisplayText(status, stage);
@@ -579,11 +587,11 @@ class ChatUploadHandler extends FileHandler {
 
         // Update progress bar
         if (progressFill) {
-            progressFill.style.width = `${progress}%`;
+            progressFill.style.width = `${effectiveProgress}%`;
         }
 
         if (progressText) {
-            progressText.textContent = `${progress}%`;
+            progressText.textContent = `${effectiveProgress}%`;
         }
 
         // Update live stats from metadata
@@ -659,10 +667,14 @@ class ChatUploadHandler extends FileHandler {
             parts.push(`page ${fmt(metadata.current_page)}/${fmt(metadata.total_pages)}`);
         }
         if (metadata.bridges_generated !== undefined) {
+            // Monotonic: never show a lower bridge count than previously seen
+            const prevBridges = parseInt(card.dataset.lastBridges || '0', 10);
+            const curBridges = Math.max(metadata.bridges_generated, prevBridges);
+            card.dataset.lastBridges = String(curBridges);
             if (metadata.total_bridges) {
-                parts.push(`bridge ${fmt(metadata.bridges_generated)}/${fmt(metadata.total_bridges)}`);
+                parts.push(`bridge ${fmt(curBridges)}/${fmt(metadata.total_bridges)}`);
             } else {
-                parts.push(`${fmt(metadata.bridges_generated)} bridges`);
+                parts.push(`${fmt(curBridges)} bridges`);
             }
         }
         if (metadata.concepts !== undefined) parts.push(`${fmt(metadata.concepts)} concepts`);

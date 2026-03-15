@@ -5,13 +5,14 @@ This module contains the fundamental data structures used throughout the applica
 including document content, chunks, multimedia responses, and conversation models.
 """
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import List, Dict, Optional, Any, Union
-import json
-import numpy as np
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Union
+
+import numpy as np
 
 
 class SourceType(Enum):
@@ -269,10 +270,11 @@ class KnowledgeMetadata:
     processing_timestamp: datetime = field(default_factory=datetime.now)
     chunk_index: int = 0
     total_chunks: int = 1
-    
+    segments: List[Dict[str, str]] = field(default_factory=list)
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
-        return {
+        result = {
             'complexity_score': self.complexity_score,
             'domain_tags': self.domain_tags,
             'extraction_confidence': self.extraction_confidence,
@@ -280,7 +282,10 @@ class KnowledgeMetadata:
             'chunk_index': self.chunk_index,
             'total_chunks': self.total_chunks
         }
-    
+        if self.segments:
+            result['segments'] = self.segments
+        return result
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'KnowledgeMetadata':
         """Create from dictionary for JSON deserialization."""
@@ -290,7 +295,8 @@ class KnowledgeMetadata:
             extraction_confidence=data.get('extraction_confidence', 1.0),
             processing_timestamp=datetime.fromisoformat(data.get('processing_timestamp', datetime.now().isoformat())),
             chunk_index=data.get('chunk_index', 0),
-            total_chunks=data.get('total_chunks', 1)
+            total_chunks=data.get('total_chunks', 1),
+            segments=data.get('segments', [])
         )
 
 
@@ -418,7 +424,7 @@ class Message:
     multimedia_content: List[MultimediaElement] = field(default_factory=list)
     timestamp: datetime = field(default_factory=datetime.now)
     message_type: MessageType = MessageType.USER
-    knowledge_references: List[str] = field(default_factory=list)
+    knowledge_references: List[Any] = field(default_factory=list)
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""

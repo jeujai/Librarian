@@ -135,33 +135,61 @@ class CitationPopup {
 
         header.appendChild(title);
 
-        // Download button for non-web sources
+        // Download button for non-web sources; export button for conversation sources
         const isWebSource = citationData.url && citationData.source_type === 'web_search';
+        const isConvSource = (citationData.knowledge_source_type || citationData.knowledgeSourceType) === 'conversation';
         const docId = citationData.document_id || citationData.documentId;
         if (!isWebSource && docId) {
             const docTitle = citationData.document_title || citationData.documentTitle || 'Document';
-            const downloadBtn = document.createElement('button');
-            downloadBtn.className = 'citation-popup__download';
-            downloadBtn.innerHTML = '⬇';
-            downloadBtn.title = `Download ${docTitle}`;
-            downloadBtn.setAttribute('aria-label', `Download ${docTitle}`);
-            downloadBtn.style.cssText = 'background:none;border:1px solid #cbd5e1;border-radius:4px;cursor:pointer;padding:2px 8px;margin-left:auto;margin-right:8px;font-size:0.85rem;color:#64748b;transition:all 0.2s ease;line-height:1;flex-shrink:0;';
-            downloadBtn.addEventListener('mouseenter', () => {
-                downloadBtn.style.backgroundColor = '#3b82f6';
-                downloadBtn.style.color = '#fff';
-                downloadBtn.style.borderColor = '#3b82f6';
-            });
-            downloadBtn.addEventListener('mouseleave', () => {
-                downloadBtn.style.backgroundColor = '';
-                downloadBtn.style.color = '#64748b';
-                downloadBtn.style.borderColor = '#cbd5e1';
-            });
-            downloadBtn.addEventListener('click', (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                window.open(`/api/documents/${docId}/download?redirect=true`, '_blank');
-            });
-            header.appendChild(downloadBtn);
+            if (isConvSource) {
+                // Download conversation as PDF button
+                const exportBtn = document.createElement('button');
+                exportBtn.className = 'citation-popup__download';
+                exportBtn.innerHTML = '⬇';
+                exportBtn.title = `Download ${docTitle}`;
+                exportBtn.setAttribute('aria-label', `Download ${docTitle}`);
+                exportBtn.style.cssText = 'background:none;border:1px solid #cbd5e1;border-radius:4px;cursor:pointer;padding:2px 8px;margin-left:auto;margin-right:8px;font-size:0.85rem;color:#64748b;transition:all 0.2s ease;line-height:1;flex-shrink:0;';
+                exportBtn.addEventListener('mouseenter', () => {
+                    exportBtn.style.backgroundColor = '#3b82f6';
+                    exportBtn.style.color = '#fff';
+                    exportBtn.style.borderColor = '#3b82f6';
+                });
+                exportBtn.addEventListener('mouseleave', () => {
+                    exportBtn.style.backgroundColor = '';
+                    exportBtn.style.color = '#64748b';
+                    exportBtn.style.borderColor = '#cbd5e1';
+                });
+                exportBtn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    window.open(`/api/documents/${docId}/export-conversation`, '_blank');
+                });
+                header.appendChild(exportBtn);
+            } else {
+                // Regular document download button
+                const downloadBtn = document.createElement('button');
+                downloadBtn.className = 'citation-popup__download';
+                downloadBtn.innerHTML = '⬇';
+                downloadBtn.title = `Download ${docTitle}`;
+                downloadBtn.setAttribute('aria-label', `Download ${docTitle}`);
+                downloadBtn.style.cssText = 'background:none;border:1px solid #cbd5e1;border-radius:4px;cursor:pointer;padding:2px 8px;margin-left:auto;margin-right:8px;font-size:0.85rem;color:#64748b;transition:all 0.2s ease;line-height:1;flex-shrink:0;';
+                downloadBtn.addEventListener('mouseenter', () => {
+                    downloadBtn.style.backgroundColor = '#3b82f6';
+                    downloadBtn.style.color = '#fff';
+                    downloadBtn.style.borderColor = '#3b82f6';
+                });
+                downloadBtn.addEventListener('mouseleave', () => {
+                    downloadBtn.style.backgroundColor = '';
+                    downloadBtn.style.color = '#64748b';
+                    downloadBtn.style.borderColor = '#cbd5e1';
+                });
+                downloadBtn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    window.open(`/api/documents/${docId}/download?redirect=true`, '_blank');
+                });
+                header.appendChild(downloadBtn);
+            }
         }
 
         header.appendChild(closeBtn);

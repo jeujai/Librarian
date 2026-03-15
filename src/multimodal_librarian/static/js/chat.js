@@ -7,6 +7,8 @@ class ChatApp {
         this.wsManager = new WebSocketManager();
         this.currentThreadId = null;
         this.messageHistory = [];
+        this.activeThreadId = null;
+        this.toast = new ToastNotification();
 
         // Initialize CitationPopup singleton (Requirements: 1.2, 2.2)
         this.initializeCitationPopup();
@@ -128,6 +130,9 @@ class ChatApp {
             if (this.isUploadDropdownVisible &&
                 !this.uploadDropdown.contains(e.target) &&
                 !this.uploadBtn.contains(e.target)) {
+                // Don't close if interacting with the related docs popup
+                const relatedPopup = this.documentListPanel && this.documentListPanel._relatedDocsPopup;
+                if (relatedPopup && relatedPopup.contains(e.target)) return;
                 this.hideUploadDropdown();
             }
         });
@@ -292,6 +297,18 @@ class ChatApp {
             this.wsManager.disconnect();
         });
 
+        // Listen for conversation document deletion so we can remove
+        // UI handles to the source conversation (Requirement 8.5)
+        document.addEventListener('conversation-document-deleted', (e) => {
+            const { threadId } = e.detail;
+            if (this.currentThreadId === threadId) {
+                // The active conversation's knowledge doc was deleted — reset chat state
+                this.currentThreadId = null;
+                this.activeThreadId = null;
+                this._notifyActiveThreadChanged(null);
+            }
+        });
+
         // Accessibility: Focus management
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
@@ -332,11 +349,27 @@ class ChatApp {
 
         this.wsManager.on('connected', () => {
             console.log('Chat connected to server');
-            this.startNewConversation();
+            // On reconnect, resume existing thread instead of creating a new one
+            if (this.currentThreadId) {
+                console.log('Resuming conversation:', this.currentThreadId);
+                this.wsManager.send({
+                    type: 'resume_conversation',
+                    thread_id: this.currentThreadId
+                });
+            } else {
+                this.startNewConversation();
+            }
         });
 
         this.wsManager.on('disconnected', () => {
             console.log('Chat disconnected from server');
+            // Convert current conversation on disconnect if it has messages
+            // Requirements: 2.1, 2.2, 2.3
+            if (this.messageHistory.length > 0 && this.currentThreadId) {
+                this._convertCurrentConversation().catch(err => {
+                    console.error('Conversion on disconnect failed:', err);
+                });
+            }
         });
 
         this.wsManager.on('message', (data) => {
@@ -684,6 +717,13 @@ class ChatApp {
         const progressText = card.querySelector('.processing-progress-text');
         const progressBar = card.querySelector('.processing-progress-bar');
 
+        // Monotonic progress — never go backwards
+        const prevProgress = parseInt(card.dataset.lastProgress || '0', 10);
+        const effectiveProgress = (status === 'completed' || status === 'failed')
+            ? progress
+            : Math.max(progress, prevProgress);
+        card.dataset.lastProgress = String(effectiveProgress);
+
         // Update stage text
         if (stageElement) {
             stageElement.textContent = this.getProcessingStageText(status, stage);
@@ -691,16 +731,16 @@ class ChatApp {
 
         // Update progress bar
         if (progressFill) {
-            progressFill.style.width = `${progress}%`;
+            progressFill.style.width = `${effectiveProgress}%`;
         }
 
         if (progressText) {
-            progressText.textContent = `${progress}%`;
+            progressText.textContent = `${effectiveProgress}%`;
         }
 
         // Update ARIA attributes for accessibility
         if (progressBar) {
-            progressBar.setAttribute('aria-valuenow', progress);
+            progressBar.setAttribute('aria-valuenow', effectiveProgress);
         }
 
         // Update live stats from metadata
@@ -774,10 +814,14 @@ class ChatApp {
             parts.push(`page ${fmt(metadata.current_page)}/${fmt(metadata.total_pages)}`);
         }
         if (metadata.bridges_generated !== undefined) {
+            // Monotonic: never show a lower bridge count than previously seen
+            const prevBridges = parseInt(card.dataset.lastBridges || '0', 10);
+            const curBridges = Math.max(metadata.bridges_generated, prevBridges);
+            card.dataset.lastBridges = String(curBridges);
             if (metadata.total_bridges) {
-                parts.push(`bridge ${fmt(metadata.bridges_generated)}/${fmt(metadata.total_bridges)}`);
+                parts.push(`bridge ${fmt(curBridges)}/${fmt(metadata.total_bridges)}`);
             } else {
-                parts.push(`${fmt(metadata.bridges_generated)} bridges`);
+                parts.push(`${fmt(curBridges)} bridges`);
             }
         }
         if (metadata.concepts !== undefined) parts.push(`${fmt(metadata.concepts)} concepts`);
@@ -987,7 +1031,7 @@ class ChatApp {
 
             const isWebSource = citation.url && citation.source_type === 'web_search';
             const icon = document.createElement('span');
-            icon.textContent = isWebSource ? '🔗' : '📖';
+            icon.textContent = isWebSource ? '🔗' : (citation.knowledge_source_type === 'conversation' ? '💬' : '📖');
             icon.setAttribute('aria-hidden', 'true');
 
             const text = document.createElement('span');
@@ -1011,30 +1055,9 @@ class ChatApp {
             citationDiv.appendChild(sourceNum);
             citationDiv.appendChild(icon);
 
-            // Add download button (to the left of the source text)
-            if (!isWebSource && citation.document_id) {
-                const downloadBtn = document.createElement('button');
-                downloadBtn.innerHTML = '⬇';
-                downloadBtn.title = `Download ${docTitle}`;
-                downloadBtn.setAttribute('aria-label', `Download ${docTitle}`);
-                downloadBtn.style.cssText = 'background:none;border:1px solid #cbd5e1;border-radius:4px;cursor:pointer;padding:1px 5px;margin-right:6px;font-size:0.75rem;color:#64748b;transition:all 0.2s ease;line-height:1;';
-                downloadBtn.addEventListener('mouseenter', () => {
-                    downloadBtn.style.backgroundColor = '#3b82f6';
-                    downloadBtn.style.color = '#fff';
-                    downloadBtn.style.borderColor = '#3b82f6';
-                });
-                downloadBtn.addEventListener('mouseleave', () => {
-                    downloadBtn.style.backgroundColor = '';
-                    downloadBtn.style.color = '#64748b';
-                    downloadBtn.style.borderColor = '#cbd5e1';
-                });
-                downloadBtn.addEventListener('click', (e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    window.open(`/api/documents/${citation.document_id}/download?redirect=true`, '_blank');
-                });
-                citationDiv.appendChild(downloadBtn);
-            }
+            // Add action button (download for docs, export for conversations)
+            const actionBtn = this._createCitationActionButton(citation, docTitle, isWebSource);
+            if (actionBtn) citationDiv.appendChild(actionBtn);
 
             citationDiv.appendChild(text);
 
@@ -1196,6 +1219,11 @@ class ChatApp {
             case 'conversation_started':
                 this.currentThreadId = data.thread_id;
                 console.log('Conversation started:', this.currentThreadId);
+                break;
+
+            case 'conversation_resumed':
+                this.currentThreadId = data.thread_id;
+                console.log('Conversation resumed:', this.currentThreadId);
                 break;
 
             // These types are handled by dedicated handlers in setupWebSocketHandlers()
@@ -1398,7 +1426,7 @@ class ChatApp {
 
             const isWebSource = citation.url && citation.source_type === 'web_search';
             const icon = document.createElement('span');
-            icon.textContent = isWebSource ? '🔗' : '📖';
+            icon.textContent = isWebSource ? '🔗' : (citation.knowledge_source_type === 'conversation' ? '💬' : '📖');
             icon.setAttribute('aria-hidden', 'true');
 
             const text = document.createElement('span');
@@ -1422,30 +1450,9 @@ class ChatApp {
             citationDiv.appendChild(sourceNum);
             citationDiv.appendChild(icon);
 
-            // Add download button (to the left of the source text)
-            if (!isWebSource && citation.document_id) {
-                const downloadBtn = document.createElement('button');
-                downloadBtn.innerHTML = '⬇';
-                downloadBtn.title = `Download ${docTitle}`;
-                downloadBtn.setAttribute('aria-label', `Download ${docTitle}`);
-                downloadBtn.style.cssText = 'background:none;border:1px solid #cbd5e1;border-radius:4px;cursor:pointer;padding:1px 5px;margin-right:6px;font-size:0.75rem;color:#64748b;transition:all 0.2s ease;line-height:1;';
-                downloadBtn.addEventListener('mouseenter', () => {
-                    downloadBtn.style.backgroundColor = '#3b82f6';
-                    downloadBtn.style.color = '#fff';
-                    downloadBtn.style.borderColor = '#3b82f6';
-                });
-                downloadBtn.addEventListener('mouseleave', () => {
-                    downloadBtn.style.backgroundColor = '';
-                    downloadBtn.style.color = '#64748b';
-                    downloadBtn.style.borderColor = '#cbd5e1';
-                });
-                downloadBtn.addEventListener('click', (e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    window.open(`/api/documents/${citation.document_id}/download?redirect=true`, '_blank');
-                });
-                citationDiv.appendChild(downloadBtn);
-            }
+            // Add action button (download for docs, export for conversations)
+            const actionBtn = this._createCitationActionButton(citation, docTitle, isWebSource);
+            if (actionBtn) citationDiv.appendChild(actionBtn);
 
             citationDiv.appendChild(text);
 
@@ -1541,7 +1548,7 @@ class ChatApp {
      * Show export options
      */
     showExportOptions() {
-        if (this.messageHistory.length === 0) {
+        if (!this._hasExportableContent()) {
             this.addSystemMessage('No conversation to export', 'error');
             return;
         }
@@ -1652,7 +1659,7 @@ class ChatApp {
      * Export conversation via WebSocket
      */
     exportConversation(format) {
-        if (this.messageHistory.length === 0) {
+        if (!this._hasExportableContent()) {
             this.addSystemMessage('No conversation to export');
             return;
         }
@@ -1740,6 +1747,66 @@ class ChatApp {
     }
 
     /**
+     * Check if there is exportable content — either messageHistory
+     * entries (new conversations) or a currentThreadId with visible
+     * messages in the DOM (reactivated conversations).
+     */
+    _hasExportableContent() {
+        if (this.messageHistory.length > 0) return true;
+        // Reactivated conversations: messages are in the DOM and
+        // currentThreadId is set even if messageHistory wasn't populated.
+        if (this.currentThreadId) {
+            const visibleMsgs = this.chatMessages.querySelectorAll(
+                '.message:not(.welcome-message .message)'
+            );
+            if (visibleMsgs.length > 0) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Create action button for a citation (download for docs, export for conversations).
+     * @param {Object} citation - Citation data
+     * @param {string} docTitle - Display title
+     * @param {boolean} isWebSource - Whether this is a web source
+     * @returns {HTMLElement|null} Button element or null
+     */
+    _createCitationActionButton(citation, docTitle, isWebSource) {
+        if (isWebSource || !citation.document_id) return null;
+
+        if (citation.knowledge_source_type === 'conversation') {
+            const btn = document.createElement('button');
+            btn.innerHTML = '⬇';
+            btn.title = `Download ${docTitle}`;
+            btn.setAttribute('aria-label', `Download ${docTitle}`);
+            btn.style.cssText = 'background:none;border:1px solid #cbd5e1;border-radius:4px;cursor:pointer;padding:1px 5px;margin-right:6px;font-size:0.75rem;color:#64748b;transition:all 0.2s ease;line-height:1;';
+            btn.addEventListener('mouseenter', () => { btn.style.backgroundColor = '#3b82f6'; btn.style.color = '#fff'; btn.style.borderColor = '#3b82f6'; });
+            btn.addEventListener('mouseleave', () => { btn.style.backgroundColor = ''; btn.style.color = '#64748b'; btn.style.borderColor = '#cbd5e1'; });
+            btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); this._openConversationSource(citation.document_id); });
+            return btn;
+        }
+
+        const btn = document.createElement('button');
+        btn.innerHTML = '⬇';
+        btn.title = `Download ${docTitle}`;
+        btn.setAttribute('aria-label', `Download ${docTitle}`);
+        btn.style.cssText = 'background:none;border:1px solid #cbd5e1;border-radius:4px;cursor:pointer;padding:1px 5px;margin-right:6px;font-size:0.75rem;color:#64748b;transition:all 0.2s ease;line-height:1;';
+        btn.addEventListener('mouseenter', () => { btn.style.backgroundColor = '#3b82f6'; btn.style.color = '#fff'; btn.style.borderColor = '#3b82f6'; });
+        btn.addEventListener('mouseleave', () => { btn.style.backgroundColor = ''; btn.style.color = '#64748b'; btn.style.borderColor = '#cbd5e1'; });
+        btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); window.open(`/api/documents/${citation.document_id}/download?redirect=true`, '_blank'); });
+        return btn;
+    }
+
+    /**
+     * Download a conversation source as a text file by its document_id.
+     * Triggers a direct file download via the export-conversation endpoint.
+     * @param {string} documentId - The conversation document UUID
+     */
+    _openConversationSource(documentId) {
+        window.open(`/api/documents/${documentId}/export-conversation`, '_blank');
+    }
+
+    /**
      * Update send button state
      */
     updateSendButton() {
@@ -1748,22 +1815,192 @@ class ChatApp {
         const withinLimit = this.messageInput.value.length <= 4000;
 
         this.sendBtn.disabled = !hasContent || !isConnected || !withinLimit;
-        this.exportBtn.disabled = this.messageHistory.length === 0;
+        this.exportBtn.disabled = !this._hasExportableContent();
     }
 
     /**
-     * Clear chat history
+     * Generate a document title from the current conversation.
+     * Format: "Conversation: {first_user_message_truncated} ({Mon D, YYYY})"
+     * Fallback: "Conversation: (untitled) ({date})" if no user messages.
+     * Requirements: 3.1, 3.2, 3.3
+     * @returns {string}
+     */
+    _generateDocumentTitle() {
+        const firstUserMsg = this.messageHistory.find(m => m.type === 'user');
+        const date = new Date().toLocaleDateString('en-US', {
+            month: 'short', day: 'numeric', year: 'numeric'
+        });
+        if (!firstUserMsg) return `Conversation: (untitled) (${date})`;
+
+        let content = firstUserMsg.content;
+        if (content.length > 80) content = content.substring(0, 80) + '\u2026';
+        return `Conversation: ${content} (${date})`;
+    }
+
+    /**
+     * Fire-and-forget POST to convert current conversation to knowledge.
+     * Shows loading toast, updates to success/error on completion.
+     * Requirements: 1.3, 1.4, 1.5, 10.1, 10.2, 10.3
+     */
+    async _convertCurrentConversation() {
+        const threadId = this.currentThreadId;
+        const title = this._generateDocumentTitle();
+        const toastId = `convert-${threadId}`;
+
+        this.toast.show({
+            id: toastId,
+            message: `Saving conversation to knowledge... "${title}"`,
+            type: 'loading'
+        });
+
+        try {
+            const response = await fetch(
+                `/api/conversations/${threadId}/convert-to-knowledge`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ title })
+                }
+            );
+            if (!response.ok) throw new Error(await response.text());
+
+            this.toast.update(toastId, {
+                message: `Conversation saved to knowledge: "${title}"`,
+                type: 'success',
+                autoDismissMs: 5000
+            });
+        } catch (err) {
+            console.error('Conversion failed:', err);
+            this.toast.update(toastId, {
+                message: `Failed to save conversation: ${err.message}`,
+                type: 'error',
+                autoDismissMs: null
+            });
+        }
+    }
+
+    /**
+     * Dispatch active-thread-changed event for DocumentListPanel integration.
+     * Requirements: 7.1, 7.4
+     * @param {string|null} threadId
+     */
+    _notifyActiveThreadChanged(threadId) {
+        document.dispatchEvent(new CustomEvent('active-thread-changed', {
+            detail: { threadId }
+        }));
+    }
+
+    /**
+     * Reopen a previously converted conversation in the chat view.
+     * If current chat has messages and a different thread, converts current first.
+     * Requirements: 6.1, 6.2, 6.3, 6.4, 6.5
+     * @param {string} threadId - The thread ID to reopen
+     */
+    async reopenConversation(threadId) {
+        // Save current conversation first if it has messages and is a different thread
+        if (this.messageHistory.length > 0 && this.currentThreadId
+            && this.currentThreadId !== threadId) {
+            await this._convertCurrentConversation();
+        }
+
+        // Clear current chat UI (messages only, not welcome)
+        const messages = this.chatMessages.querySelectorAll('.message:not(.welcome-message .message)');
+        messages.forEach(msg => msg.remove());
+        this.messageHistory = [];
+
+        // Load conversation history from server
+        try {
+            const response = await fetch(`/api/conversations/${threadId}/history`);
+            if (!response.ok) throw new Error('Failed to load conversation');
+            const data = await response.json();
+
+            // Render each message
+            data.messages.forEach(msg => {
+                if (msg.role === 'user') {
+                    this.addUserMessage(msg.content);
+                } else {
+                    // Render assistant message with citations if available
+                    const messageElement = this.createMessageElement('system', msg.content);
+                    this.chatMessages.appendChild(messageElement);
+
+                    if (msg.citations && msg.citations.length > 0) {
+                        // Re-render content with inline citation links
+                        const contentDiv = messageElement.querySelector('.message-content');
+                        if (contentDiv && typeof CitationRenderer !== 'undefined') {
+                            contentDiv.innerHTML = '';
+                            const paragraphs = msg.content.split('\n\n');
+                            paragraphs.forEach(paragraph => {
+                                if (paragraph.trim()) {
+                                    const p = document.createElement('p');
+                                    const rendered = CitationRenderer.renderCitations(
+                                        paragraph.trim(), msg.citations
+                                    );
+                                    p.appendChild(rendered);
+                                    contentDiv.appendChild(p);
+                                }
+                            });
+                        }
+                        // Add citations list below the message
+                        this.addCitationsToElement(messageElement, msg.citations);
+                    }
+
+                    this.messageHistory.push({
+                        type: 'system',
+                        content: msg.content,
+                        messageType: 'info',
+                        timestamp: new Date(msg.timestamp),
+                        citations: msg.citations || []
+                    });
+                    this.scrollToBottom();
+                }
+            });
+
+            // Set thread as active
+            this.currentThreadId = threadId;
+            this.activeThreadId = threadId;
+            this._notifyActiveThreadChanged(threadId);
+
+            // Refresh button states so Export is enabled
+            this.updateSendButton();
+
+            // Tell server to resume this thread
+            if (this.wsManager.isConnected()) {
+                this.wsManager.send({
+                    type: 'resume_conversation',
+                    thread_id: threadId
+                });
+            }
+        } catch (err) {
+            console.error('Failed to reopen conversation:', err);
+            this.addSystemMessage(`Error loading conversation: ${err.message}`, 'error');
+        }
+    }
+
+
+    /**
+     * Clear chat history.
+     * Triggers fire-and-forget conversion if the current conversation has messages.
+     * Requirements: 1.1, 1.2, 1.6
      */
     clearChat() {
+        // Convert current conversation if it has messages (fire-and-forget)
+        if (this.messageHistory.length > 0 && this.currentThreadId) {
+            this._convertCurrentConversation();
+        }
+
         // Remove all messages except welcome message
         const messages = this.chatMessages.querySelectorAll('.message:not(.welcome-message .message)');
         messages.forEach(message => message.remove());
 
         this.messageHistory = [];
         this.currentThreadId = null;
+        this.activeThreadId = null;
 
         // Update button states
         this.updateSendButton();
+
+        // Notify document list panel that active thread changed
+        this._notifyActiveThreadChanged(null);
 
         // Start new conversation
         if (this.wsManager.isConnected()) {

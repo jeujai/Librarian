@@ -85,8 +85,8 @@ class QueryDecomposer:
         self,
         neo4j_client: Optional[Any] = None,
         model_server_client: Optional[Any] = None,
-        similarity_threshold: float = 0.80,
-        semantic_max_results: int = 10,
+        similarity_threshold: float = 0.75,
+        semantic_max_results: int = 20,
         semantic_enabled: bool = True,
     ):
         """

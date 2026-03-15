@@ -17,7 +17,7 @@ class EmbeddingModel:
     
     def __init__(
         self,
-        model_name: str = "all-MiniLM-L6-v2",
+        model_name: str = "BAAI/bge-base-en-v1.5",
         device: str = "cpu",
         cache_dir: Optional[str] = None
     ):
@@ -144,7 +144,7 @@ def get_embedding_model() -> Optional[EmbeddingModel]:
 
 
 def initialize_embedding_model(
-    model_name: str = "all-MiniLM-L6-v2",
+    model_name: str = "BAAI/bge-base-en-v1.5",
     device: str = "cpu",
     cache_dir: Optional[str] = None
 ) -> EmbeddingModel:

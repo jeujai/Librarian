@@ -6,8 +6,8 @@ Extend the cross-document relationship system to include ConceptNet-derived rela
 
 ## Tasks
 
-- [ ] 1. Add Pydantic models for WebSocket messages
-  - [ ] 1.1 Add RelatedDocsGraph models to `src/multimodal_librarian/api/models/chat_document_models.py`
+- [x] 1. Add Pydantic models for WebSocket messages
+  - [x] 1.1 Add RelatedDocsGraph models to `src/multimodal_librarian/api/models/chat_document_models.py`
     - Add `RelatedDocsGraphRequest` with `type` literal `"related_docs_graph"` and `document_id` string field
     - Add `RelatedDocsGraphNode` with `document_id`, `title`, `is_origin` (default false) fields
     - Add `RelatedDocsGraphEdge` with `source`, `target`, `score` (float, ge=0.0, le=1.0), `edge_count` (int, ge=0) fields
@@ -28,21 +28,21 @@ Extend the cross-document relationship system to include ConceptNet-derived rela
     - Test literal type fields reject wrong values
     - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6_
 
-- [ ] 2. Implement CompositeScoreEngine
-  - [ ] 2.1 Create `src/multimodal_librarian/services/composite_score_engine.py` with dataclasses and engine class
+- [x] 2. Implement CompositeScoreEngine
+  - [x] 2.1 Create `src/multimodal_librarian/services/composite_score_engine.py` with dataclasses and engine class
     - Define `EdgeScore`, `DocumentPairScore`, `CompositeScoreResult` dataclasses
     - Define `CompositeScoreEngine` class with `TYPE_WEIGHTS` dict and formula weight constants
     - Implement `__init__(self, kg_client)` storing the Neo4j client reference
     - _Requirements: 2.2_
 
-  - [ ] 2.2 Implement `_discover_cross_doc_edges()` method
+  - [x] 2.2 Implement `_discover_cross_doc_edges()` method
     - Execute two Cypher queries (forward and reverse direction) to find all cross-document concept pairs connected via qualifying relationship types (SAME_AS, IsA, PartOf, RelatedTo, UsedFor, CapableOf, HasProperty, AtLocation, Causes, HasPrerequisite, MotivatedByGoal, Synonym, SimilarTo)
     - Filter out edges where `source_document == 'conceptnet'`
     - Deduplicate edges from both directions
     - Return list of edge dicts with concept IDs, document IDs, embeddings, relationship type, and CN weight
     - _Requirements: 1.1, 1.2, 1.3, 1.4_
 
-  - [ ] 2.3 Implement `_compute_edge_score()` method
+  - [x] 2.3 Implement `_compute_edge_score()` method
     - Compute cosine similarity between embedding vectors (default 0.0 if either is missing/zero)
     - Look up type_weight from `TYPE_WEIGHTS` dict (default 0.3 for unknown types)
     - Normalize cn_weight to [0.0, 1.0]; use 1.0 for SAME_AS edges, 0.0 if weight property is missing
@@ -74,7 +74,7 @@ Extend the cross-document relationship system to include ConceptNet-derived rela
     - Generate extreme inputs (type_weight in [0.0, 1.0], embedding_similarity in [-1.0, 1.0], cn_weight in [0.0, 1.0]); verify output always in [0.0, 1.0]
     - **Validates: Requirements 2.7**
 
-  - [ ] 2.8 Implement `_get_concept_counts()` and `_aggregate_document_pairs()` methods
+  - [x] 2.8 Implement `_get_concept_counts()` and `_aggregate_document_pairs()` methods
     - `_get_concept_counts()`: query Neo4j for concept count per document using UNWIND + count
     - `_aggregate_document_pairs()`: group edge scores by (doc_id_a, doc_id_b) pair, compute avg_edge_score, compute neighborhood_density as `min(edge_count / min(concept_count_a, concept_count_b), 1.0)` (use 1 as denominator if concept count is 0), compute doc_score as `clamp(avg_edge_score × 0.7 + neighborhood_density × 0.3, 0.0, 1.0)`
     - Return list of `DocumentPairScore` dataclasses with ISO 8601 `computed_at` timestamp
@@ -86,7 +86,7 @@ Extend the cross-document relationship system to include ConceptNet-derived rela
     - Generate random lists of edge scores and concept counts; verify computed doc_score matches the formula and is in [0.0, 1.0]
     - **Validates: Requirements 3.1, 3.2, 3.3, 3.4**
 
-  - [ ] 2.10 Implement `_persist_related_docs()` method
+  - [x] 2.10 Implement `_persist_related_docs()` method
     - Select representative concept per document from the edge set (concept with highest individual edge score)
     - Execute MERGE Cypher query with UNWIND for batch upsert of RELATED_DOCS edges
     - Store properties: score, edge_count, avg_edge_score, neighborhood_density, computed_at
@@ -94,7 +94,7 @@ Extend the cross-document relationship system to include ConceptNet-derived rela
     - Return count of edges created/updated
     - _Requirements: 4.1, 4.2, 4.3, 4.4_
 
-  - [ ] 2.11 Implement `compute_composite_scores()` main entry point
+  - [x] 2.11 Implement `compute_composite_scores()` main entry point
     - Orchestrate: discover edges → compute per-edge scores → get concept counts → aggregate document pairs → persist RELATED_DOCS
     - Track timing for `duration_ms`
     - Return `CompositeScoreResult` with all metrics
@@ -123,8 +123,8 @@ Extend the cross-document relationship system to include ConceptNet-derived rela
     - Test unknown relationship type uses default weight 0.3
     - _Requirements: 2.4, 2.6, 3.3_
 
-- [ ] 3. Integrate CompositeScoreEngine into EnrichmentService
-  - [ ] 3.1 Add composite scoring step to `src/multimodal_librarian/services/enrichment_service.py`
+- [x] 3. Integrate CompositeScoreEngine into EnrichmentService
+  - [x] 3.1 Add composite scoring step to `src/multimodal_librarian/services/enrichment_service.py`
     - After the batch ConceptNet persistence block in `enrich_concepts()`, add step 6: instantiate `CompositeScoreEngine` with `self.kg_service.client` and call `compute_composite_scores(document_id)`
     - Log result metrics (edges_discovered, document_pairs, duration_ms)
     - Let exceptions propagate to fail the enrichment pipeline
@@ -138,12 +138,12 @@ Extend the cross-document relationship system to include ConceptNet-derived rela
     - Test engine is not called when `kg_service` is None
     - _Requirements: 5.1, 5.3_
 
-- [ ] 4. Checkpoint - Ensure scoring engine and integration tests pass
+- [x] 4. Checkpoint - Ensure scoring engine and integration tests pass
   - Ensure all tests pass, ask the user if questions arise.
   - After editing Python files: `docker exec librarian-app-1 find /app -name "*.pyc" -delete` then `docker restart librarian-app-1 librarian-celery-worker-1`
 
-- [ ] 5. Implement Related Docs Graph backend handler and WebSocket routing
-  - [ ] 5.1 Add `handle_related_docs_graph()` to `src/multimodal_librarian/api/routers/chat_document_handlers.py`
+- [x] 5. Implement Related Docs Graph backend handler and WebSocket routing
+  - [x] 5.1 Add `handle_related_docs_graph()` to `src/multimodal_librarian/api/routers/chat_document_handlers.py`
     - Validate `document_id` is present and non-empty; return `related_docs_graph_error` if missing
     - Query Neo4j for all `RELATED_DOCS` edges where one endpoint concept has `source_document` matching the requested document_id
     - Build `nodes` list with origin node (`is_origin=True`) and all related document nodes
@@ -153,7 +153,7 @@ Extend the cross-document relationship system to include ConceptNet-derived rela
     - Return `related_docs_graph_error` if Neo4j client is unavailable or query fails
     - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8_
 
-  - [ ] 5.2 Add WebSocket route dispatch in `src/multimodal_librarian/api/routers/chat.py`
+  - [x] 5.2 Add WebSocket route dispatch in `src/multimodal_librarian/api/routers/chat.py`
     - Add `elif message_type == 'related_docs_graph'` branch calling `handle_related_docs_graph(message_data, connection_id, manager)`
     - Import the handler function
     - _Requirements: 6.1_
@@ -199,18 +199,18 @@ Extend the cross-document relationship system to include ConceptNet-derived rela
     - Set up existing RELATED_DOCS edges between documents not involving the new document; run composite scoring for new document; verify pre-existing edges remain unchanged
     - **Validates: Requirements 5.4**
 
-- [ ] 7. Checkpoint - Ensure all backend tests pass
+- [x] 7. Checkpoint - Ensure all backend tests pass
   - Ensure all tests pass, ask the user if questions arise.
   - After editing Python files: `docker exec librarian-app-1 find /app -name "*.pyc" -delete` then `docker restart librarian-app-1 librarian-celery-worker-1`
 
-- [ ] 8. Implement frontend Related Docs button and popup
-  - [ ] 8.1 Add Related Docs button to `src/multimodal_librarian/static/js/document-list-panel.js`
+- [x] 8. Implement frontend Related Docs button and popup
+  - [x] 8.1 Add Related Docs button to `src/multimodal_librarian/static/js/document-list-panel.js`
     - Modify `buildStatsHtml()` to render a `document-related-docs-btn` button with "📎 Related Docs" label to the right of the Stats toggle
     - Only render when `doc.status === 'completed'` and `doc.concept_count > 0`
     - Add click event listener that opens the Related Docs Graph popup
     - _Requirements: 7.1_
 
-  - [ ] 8.2 Implement Related Docs Graph popup DOM and lifecycle in `src/multimodal_librarian/static/js/document-list-panel.js`
+  - [x] 8.2 Implement Related Docs Graph popup DOM and lifecycle in `src/multimodal_librarian/static/js/document-list-panel.js`
     - Create popup DOM structure: backdrop, popup container, header with title ("Related Documents: {title}") and close button (✕), controls area with threshold slider, body with loading indicator and message area
     - Append popup to `document.body` to avoid overflow clipping
     - Implement close on: close button click, backdrop click, Escape key, Related Docs button re-click
@@ -220,18 +220,18 @@ Extend the cross-document relationship system to include ConceptNet-derived rela
     - Send `{type: "related_docs_graph", document_id}` via WebSocket
     - _Requirements: 7.2, 7.3, 7.4, 7.16, 7.17_
 
-  - [ ] 8.3 Implement D3.js lazy loading in `src/multimodal_librarian/static/js/document-list-panel.js`
+  - [x] 8.3 Implement D3.js lazy loading in `src/multimodal_librarian/static/js/document-list-panel.js`
     - Add `_loadD3()` method returning a cached Promise that loads D3.js v7 from CDN
     - Prevent duplicate script tags using cached promise pattern
     - Show error message "Could not load visualization library. Please check your internet connection." if CDN load fails
     - _Requirements: 7.5, 7.15_
 
-  - [ ] 8.4 Add WebSocket response handler for `related_docs_graph` and `related_docs_graph_error` messages
+  - [x] 8.4 Add WebSocket response handler for `related_docs_graph` and `related_docs_graph_error` messages
     - Wire incoming WebSocket messages to the popup: on success, call graph rendering; on error, show error message in popup body
     - _Requirements: 6.7, 7.2_
 
-- [ ] 9. Implement frontend force-directed graph rendering
-  - [ ] 9.1 Implement `_renderRelatedDocsGraph(container, data)` in `src/multimodal_librarian/static/js/document-list-panel.js`
+- [x] 9. Implement frontend force-directed graph rendering
+  - [x] 9.1 Implement `_renderRelatedDocsGraph(container, data)` in `src/multimodal_librarian/static/js/document-list-panel.js`
     - Create SVG element sized to popup body
     - Create D3 force simulation with `forceLink`, `forceManyBody`, `forceCenter`
     - Render edges as `<line>` elements with `<text>` labels showing score as percentage (e.g., "72%")
@@ -240,13 +240,13 @@ Extend the cross-document relationship system to include ConceptNet-derived rela
     - Add drag behavior via `d3.drag()`
     - _Requirements: 7.6, 7.7, 7.8, 7.9_
 
-  - [ ] 9.2 Implement center-node navigation
+  - [x] 9.2 Implement center-node navigation
     - On Satellite_Node click: transition clicked node to center position as new Center_Node, move previous Center_Node to satellite orbit
     - Update node colors to reflect new center/satellite roles
     - Scroll document list panel to the corresponding document item and apply a visual highlight CSS class
     - _Requirements: 7.10, 7.11_
 
-  - [ ] 9.3 Implement threshold slider filtering
+  - [x] 9.3 Implement threshold slider filtering
     - Listen to Threshold_Slider `input` event (range 0.0–1.0, step 0.01, default 0.5)
     - Update threshold display value as percentage
     - Hide all edges with score < threshold
@@ -254,8 +254,8 @@ Extend the cross-document relationship system to include ConceptNet-derived rela
     - Always keep Center_Node visible regardless of threshold
     - _Requirements: 7.12, 7.13, 7.14_
 
-- [ ] 10. Add CSS styles for Related Docs popup and button
-  - [ ] 10.1 Add styles to `src/multimodal_librarian/static/css/chat.css`
+- [x] 10. Add CSS styles for Related Docs popup and button
+  - [x] 10.1 Add styles to `src/multimodal_librarian/static/css/chat.css`
     - Style `.related-docs-popup-backdrop` with semi-transparent overlay
     - Style `.related-docs-popup` with appropriate dimensions, matching panel color palette, font family, and border-radius
     - Style header, close button, controls area (threshold slider), loading indicator, message area, and SVG container
@@ -263,7 +263,7 @@ Extend the cross-document relationship system to include ConceptNet-derived rela
     - Style `.document-highlight` class for document list focus shift animation
     - _Requirements: 7.1, 7.2, 7.7, 7.12_
 
-- [ ] 11. Checkpoint - Ensure frontend works end-to-end
+- [x] 11. Checkpoint - Ensure frontend works end-to-end
   - Ensure all tests pass, ask the user if questions arise.
   - For static JS/CSS/HTML files, no Docker restart needed — just hard refresh the browser.
 
@@ -310,7 +310,7 @@ Extend the cross-document relationship system to include ConceptNet-derived rela
     - Generate random title strings; verify popup title equals `"Related Documents: " + title`
     - **Validates: Requirements 7.17**
 
-- [ ] 13. Final checkpoint - Ensure all tests pass
+- [x] 13. Final checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 ## Notes

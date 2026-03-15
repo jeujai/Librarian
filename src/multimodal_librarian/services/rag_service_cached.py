@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from ..clients.opensearch_client import OpenSearchClient
     from ..clients.searxng_client import SearXNGClient
     from ..components.kg_retrieval.query_decomposer import QueryDecomposer
+    from ..components.kg_retrieval.relevance_detector import RelevanceDetector
     from ..components.knowledge_graph.kg_builder import KnowledgeGraphBuilder
     from ..components.knowledge_graph.kg_query_engine import KnowledgeGraphQueryEngine
     from .ai_service import AIService
@@ -68,6 +69,7 @@ class CachedRAGService(RAGService):
         cache_service: Optional[CacheService] = None,
         query_decomposer: Optional["QueryDecomposer"] = None,
         searxng_client: Optional["SearXNGClient"] = None,
+        relevance_detector: Optional["RelevanceDetector"] = None,
         # Legacy parameter for backward compatibility
         opensearch_client: "OpenSearchClient" = None
     ):
@@ -88,6 +90,9 @@ class CachedRAGService(RAGService):
             searxng_client: Optional SearXNGClient for supplementary web search.
                             When provided and enabled, web results supplement thin
                             Librarian results. Requirements: 5.3, 6.1, 6.2, 6.3
+            relevance_detector: Optional RelevanceDetector for identifying irrelevant
+                                results via score distribution and concept specificity
+                                analysis. Requirements: 4.1, 4.2, 4.4
             opensearch_client: DEPRECATED - use vector_client instead. Kept for backward compatibility.
         """
         # Support both new vector_client and legacy opensearch_client parameter
@@ -101,7 +106,8 @@ class CachedRAGService(RAGService):
             kg_query_engine=kg_query_engine,
             kg_retrieval_service=kg_retrieval_service,
             query_decomposer=query_decomposer,
-            searxng_client=searxng_client
+            searxng_client=searxng_client,
+            relevance_detector=relevance_detector
         )
         
         # Cache service can be injected or initialized lazily

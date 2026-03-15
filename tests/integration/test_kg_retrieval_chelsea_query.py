@@ -97,13 +97,14 @@ def chelsea_chunk_data():
 def related_concept_data():
     """
     Mock data for concepts related to Chelsea via graph relationships.
+    Returns chunk_ids as lists (via EXTRACTED_FROM traversal).
     """
     return [
         {
             "concept_id": "concept-ai-research-001",
             "name": "AI Research",
             "type": "TOPIC",
-            "source_chunks": "chunk-ai-001",
+            "chunk_ids": ["chunk-ai-001"],
             "hop_distance": 1,
             "relationship_path": ["RELATED_TO"],
         },
@@ -111,7 +112,7 @@ def related_concept_data():
             "concept_id": "concept-ml-deployment-001",
             "name": "Machine Learning Deployment",
             "type": "TOPIC",
-            "source_chunks": "chunk-ml-001",
+            "chunk_ids": ["chunk-ml-001"],
             "hop_distance": 2,
             "relationship_path": ["RELATED_TO", "PART_OF"],
         },
@@ -123,17 +124,31 @@ def mock_neo4j_client(chelsea_concept_data, related_concept_data):
     """
     Create a mock Neo4j client that returns Chelsea concept data.
     
-    Handles the following query patterns from QueryDecomposer:
+    Handles the following query patterns from QueryDecomposer and KGRetrievalService:
     1. Full-text index search (db.index.fulltext.queryNodes) with $search_terms
     2. CONTAINS fallback with $words list
     3. Vector similarity search (db.index.vector.queryNodes) with $embedding
-    4. Related concepts traversal (MATCH path / *1..)
+    4. EXTRACTED_FROM chunk ID traversal for direct concepts
+    5. Related concepts traversal with EXTRACTED_FROM chunk collection
     """
     mock = MagicMock()
+
+    # Map concept_id -> chunk_ids for EXTRACTED_FROM traversal
+    _chunk_map = {
+        "concept-chelsea-001": ["chunk-chelsea-001", "chunk-chelsea-002", "chunk-chelsea-003"],
+        "concept-ai-research-001": ["chunk-ai-001"],
+        "concept-ml-deployment-001": ["chunk-ml-001"],
+    }
     
     async def execute_query(query: str, params: Dict[str, Any] = None):
         params = params or {}
         query_lower = query.lower()
+        
+        # Handle EXTRACTED_FROM chunk ID query (_query_chunk_ids_for_concept)
+        if "extracted_from" in query_lower and "ch.chunk_id" in query_lower and "related" not in query_lower and "start" not in query_lower:
+            concept_id = params.get("concept_id", "")
+            chunk_ids = _chunk_map.get(concept_id, [])
+            return [{"chunk_id": cid} for cid in chunk_ids]
         
         # Handle full-text index search (primary path in _find_entity_matches)
         if "fulltext.querynodes" in query_lower:
@@ -153,8 +168,8 @@ def mock_neo4j_client(chelsea_concept_data, related_concept_data):
         if "vector.querynodes" in query_lower:
             return [{**chelsea_concept_data, "similarity_score": 0.85}]
         
-        # Handle related concepts query
-        if "match path" in query_lower or "*1.." in query_lower:
+        # Handle related concepts query (now uses EXTRACTED_FROM for chunk collection)
+        if ("extracted_from" in query_lower and "related" in query_lower) or "match path" in query_lower or "*1.." in query_lower:
             concept_id = params.get("concept_id", "")
             if concept_id == chelsea_concept_data["concept_id"]:
                 return related_concept_data

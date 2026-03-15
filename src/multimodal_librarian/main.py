@@ -1219,7 +1219,7 @@ def create_minimal_app() -> FastAPI:
         app.add_middleware(
             TimeoutMiddleware,
             timeout_seconds=30.0,  # 30 second timeout for most requests
-            exclude_paths=["/health/simple", "/health/alb", "/ws/", "/static/"]
+            exclude_paths=["/health/simple", "/health/alb", "/ws/", "/static/", "/api/conversations/"]
         )
         
         if logger:
@@ -2112,6 +2112,32 @@ def create_minimal_app() -> FastAPI:
         FEATURES["resource_optimization"] = False
         FEATURES["container_resource_monitoring"] = False
         FEATURES["resource_efficiency_analysis"] = False
+    
+    # Add Conversation Knowledge API router
+    try:
+        from .api.routers.conversation_knowledge import (
+            router as conversation_knowledge_router,
+        )
+        app.include_router(conversation_knowledge_router)
+        FEATURES["conversation_knowledge"] = True
+        if logger:
+            logger.info("Conversation Knowledge API router added successfully")
+    except ImportError as e:
+        if logger:
+            logger.warning(f"Failed to import Conversation Knowledge router: {e}")
+        FEATURES["conversation_knowledge"] = False
+    
+    # Add KG Explorer API router (neighborhood + search endpoints)
+    try:
+        from .api.routers.kg_explorer import router as kg_explorer_router
+        app.include_router(kg_explorer_router)
+        FEATURES["kg_explorer"] = True
+        if logger:
+            logger.info("KG Explorer API router added successfully")
+    except ImportError as e:
+        if logger:
+            logger.warning(f"Failed to import KG Explorer router: {e}")
+        FEATURES["kg_explorer"] = False
     
     @app.get("/")
     async def root():

@@ -59,6 +59,17 @@ def get_processing_service() -> ProcessingService:
     return ProcessingService()
 
 
+_conversation_manager_instance = None
+
+def get_conversation_manager():
+    """Dependency to get conversation manager instance."""
+    global _conversation_manager_instance
+    if _conversation_manager_instance is None:
+        from ...components.conversation.conversation_manager import ConversationManager
+        _conversation_manager_instance = ConversationManager()
+    return _conversation_manager_instance
+
+
 @router.post("/upload", response_model=DocumentUploadResponse)
 async def upload_document(
     file: UploadFile = File(..., description="PDF file to upload"),
@@ -463,8 +474,43 @@ async def download_document(
     - **redirect**: If true, redirect to the presigned URL instead of returning JSON
     
     Returns file content or presigned URL for download.
+    For conversation sources, redirects to the conversation view.
     """
     try:
+        # Check if this is a conversation source first
+        from sqlalchemy import text as sa_text
+
+        from ...database.connection import db_manager
+        try:
+            async with db_manager.get_async_session() as sess:
+                row = (await sess.execute(
+                    sa_text(
+                        "SELECT source_type, file_path, title "
+                        "FROM multimodal_librarian.knowledge_sources "
+                        "WHERE id = :did"
+                    ),
+                    {"did": str(document_id)},
+                )).fetchone()
+        except Exception:
+            row = None
+
+        if row and row.source_type == "CONVERSATION":
+            # Extract thread_id from file_path
+            thread_id = (row.file_path or "").replace(
+                "conversation://", ""
+            )
+            return JSONResponse(
+                status_code=status.HTTP_200_OK,
+                content={
+                    "source_type": "conversation",
+                    "thread_id": thread_id,
+                    "title": row.title,
+                    "redirect_url": (
+                        f"/api/conversations/{thread_id}"
+                    ),
+                },
+            )
+
         document = await upload_service.get_document(document_id)
         
         if not document:
@@ -515,6 +561,187 @@ async def download_document(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to process download request"
         )
+
+
+@router.get("/{document_id}/export-conversation")
+async def export_conversation_by_document(document_id: UUID):
+    """
+    Export a conversation source as a downloadable PDF file.
+
+    Resolves the thread_id from knowledge_sources, loads messages
+    directly from the DB (including knowledge_references / citations),
+    builds markdown content matching the main Export format, and
+    uses ExportEngine to generate a styled PDF.
+    """
+    import io
+    import json as _json
+    import re
+
+    from sqlalchemy import text as sa_text
+
+    from ...components.export_engine.export_engine import ExportEngine
+    from ...database.connection import db_manager
+    from ...models.core import MultimediaResponse
+
+    # 1. Look up the conversation thread_id from knowledge_sources
+    try:
+        async with db_manager.get_async_session() as sess:
+            row = (await sess.execute(
+                sa_text(
+                    "SELECT source_type, file_path, title "
+                    "FROM multimodal_librarian.knowledge_sources "
+                    "WHERE id = :did"
+                ),
+                {"did": str(document_id)},
+            )).fetchone()
+    except Exception as exc:
+        logger.error(
+            f"DB error looking up document {document_id}: {exc}"
+        )
+        raise HTTPException(status_code=500, detail="Database error")
+
+    if not row or row.source_type != "CONVERSATION":
+        raise HTTPException(
+            status_code=404, detail="Conversation source not found"
+        )
+
+    thread_id = (row.file_path or "").replace(
+        "conversation://", ""
+    )
+    if not thread_id:
+        raise HTTPException(
+            status_code=404,
+            detail="Thread ID not found for document",
+        )
+
+    # 2. Load thread metadata + messages directly from DB
+    try:
+        async with db_manager.get_async_session() as sess:
+            t_row = (await sess.execute(
+                sa_text(
+                    "SELECT created_at "
+                    "FROM multimodal_librarian.conversation_threads "
+                    "WHERE id = :tid"
+                ),
+                {"tid": thread_id},
+            )).fetchone()
+
+            msg_rows = (await sess.execute(
+                sa_text(
+                    "SELECT content, message_type::text, "
+                    "       knowledge_references, created_at "
+                    "FROM multimodal_librarian.messages "
+                    "WHERE thread_id = :tid "
+                    "ORDER BY created_at ASC"
+                ),
+                {"tid": thread_id},
+            )).fetchall()
+    except Exception as exc:
+        logger.error(
+            f"DB error loading conversation {thread_id}: {exc}"
+        )
+        raise HTTPException(status_code=500, detail="Database error")
+
+    if not t_row or not msg_rows:
+        raise HTTPException(
+            status_code=404, detail="Conversation not found"
+        )
+
+    # 3. Build markdown content matching the main Export format
+    content_parts = []
+    content_parts.append("# Conversation Export")
+    content_parts.append(f"**Title:** {row.title or 'Untitled'}")
+    content_parts.append(f"**Started:** {t_row.created_at.strftime('%Y-%m-%d %H:%M:%S')}")
+    content_parts.append(f"**Messages:** {len(msg_rows)}")
+    content_parts.append("")
+
+    for mr in msg_rows:
+        content = mr.content or ""
+        mt_str = (mr.message_type or "USER").upper()
+        sender = "User" if mt_str == "USER" else "Assistant"
+        ts = mr.created_at.strftime("%H:%M:%S")
+
+        content_parts.append(f"## {sender} ({ts})")
+
+        # Parse knowledge_references (JSONB column)
+        kr_raw = mr.knowledge_references
+        refs = []
+        if kr_raw:
+            if isinstance(kr_raw, str):
+                try:
+                    kr_raw = _json.loads(kr_raw)
+                except Exception:
+                    kr_raw = []
+            if isinstance(kr_raw, list):
+                refs = [r for r in kr_raw if isinstance(r, dict)]
+
+        # Replace inline [Source N] references with markdown links
+        msg_content = content
+        if refs and mt_str != "USER":
+            def _expand_multi(m):
+                inner = m.group(1)
+                parts = [p.strip() for p in inner.split(',')]
+                return ' '.join(f'[{p}]' for p in parts)
+            msg_content = re.sub(
+                r'\[(Source \d+(?:\s*,\s*Source \d+)+)\]',
+                _expand_multi, msg_content,
+            )
+
+            def _replace_source_ref(match):
+                idx = int(match.group(1)) - 1
+                if 0 <= idx < len(refs):
+                    url = refs[idx].get("url", "")
+                    if url:
+                        return f"[Source {idx+1}]({url})"
+                return match.group(0)
+            msg_content = re.sub(r'\[Source (\d+)\]', _replace_source_ref, msg_content)
+
+        content_parts.append(msg_content)
+
+        # Add citations section for assistant messages
+        if refs and mt_str != "USER":
+            content_parts.append("")
+            content_parts.append("**Sources:**")
+            for idx, ref in enumerate(refs, 1):
+                title = ref.get("document_title") or "Unknown"
+                url = ref.get("url", "")
+                relevance = ref.get("relevance_score", 0)
+                if url:
+                    content_parts.append(
+                        f"  {idx}. [{title}]({url}) - {int(relevance * 100)}% relevant"
+                    )
+                else:
+                    page = ref.get("page_number", "")
+                    page_str = f" (p.{page})" if page else ""
+                    content_parts.append(
+                        f"  {idx}. {title}{page_str} - {int(relevance * 100)}% relevant"
+                    )
+
+        content_parts.append("")
+
+    # 4. Generate PDF via ExportEngine
+    export_content = MultimediaResponse(
+        text_content="\n".join(content_parts),
+        visualizations=[],
+        audio_content=None,
+        video_content=None,
+        knowledge_citations=[],
+        export_metadata=None,
+    )
+
+    export_engine = ExportEngine()
+    pdf_bytes = export_engine.export_to_format(export_content, "pdf")
+
+    safe_title = (row.title or "conversation").replace(" ", "_")[:60]
+    filename = f"{safe_title}.pdf"
+
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"'
+        },
+    )
 
 
 @router.get("/{document_id}/status")

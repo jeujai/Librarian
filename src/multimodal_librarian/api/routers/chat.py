@@ -40,7 +40,12 @@ try:
         UnifiedKnowledgeQueryProcessor,
     )
     from ...components.vector_store.search_service import SemanticSearchService
-    from ...models.core import ConversationThread, Message, MultimediaResponse
+    from ...models.core import (
+        ConversationThread,
+        Message,
+        MessageType,
+        MultimediaResponse,
+    )
     LEGACY_COMPONENTS_AVAILABLE = True
 except ImportError as e:
     logger.warning(f"Some components not available: {e}")
@@ -48,6 +53,7 @@ except ImportError as e:
     ConversationThread = dict
     MultimediaResponse = dict
     Message = dict
+    MessageType = None
     LEGACY_COMPONENTS_AVAILABLE = False
 
 from ...config import get_settings
@@ -57,6 +63,7 @@ from ..dependencies import (
     get_ai_service_optional,
     get_cached_rag_service,
     get_connection_manager_with_services,
+    get_conversation_manager,
     get_processing_status_service_optional,
     get_search_service,
     get_vector_store,
@@ -69,6 +76,8 @@ from .chat_document_handlers import (
     handle_document_delete_request,
     handle_document_list_request,
     handle_document_retry_request,
+    handle_document_stats_request,
+    handle_related_docs_graph,
 )
 
 # Router setup
@@ -122,7 +131,7 @@ async def _get_legacy_components(search_service=None):
                     logger.warning(f"Could not get search service via DI: {e}")
                     search_service = None
             
-            conversation_manager = ConversationManager()
+            conversation_manager = await get_conversation_manager()
             
             if search_service:
                 # Initialize knowledge graph components
@@ -150,7 +159,7 @@ async def _get_legacy_components(search_service=None):
             logger.warning(f"Could not initialize legacy components: {e}")
             # Use minimal implementations for development
             try:
-                conversation_manager = ConversationManager()
+                conversation_manager = await get_conversation_manager()
                 export_engine = None  # Skip ExportEngine if not available
                 logger.info("Minimal components initialized (lazy)")
             except Exception as e2:
@@ -189,6 +198,27 @@ def _get_expectation_manager():
         except Exception as e:
             logger.warning(f"Could not load expectation manager: {e}")
     return _expectation_manager
+
+
+async def _persist_message(thread_id: str, content: str, message_type: MessageType, citations: list = None):
+    """Persist a message to ConversationManager's thread. Non-fatal on failure."""
+    try:
+        conv_manager = await get_conversation_manager()
+        if conv_manager:
+            # Build knowledge_references from citations for persistence
+            knowledge_refs = []
+            if citations:
+                for c in citations:
+                    if isinstance(c, dict):
+                        knowledge_refs.append(c)
+                    else:
+                        knowledge_refs.append(str(c))
+            conv_manager.process_message(
+                thread_id, content, message_type=message_type,
+                knowledge_references=knowledge_refs,
+            )
+    except Exception as e:
+        logger.warning(f"Failed to persist {message_type.value} message to thread {thread_id}: {e}")
 
 
 @router.websocket("/ws/chat")
@@ -233,6 +263,9 @@ async def handle_websocket_message(message_data: dict, connection_id: str, manag
     try:
         if message_type == 'start_conversation':
             await handle_start_conversation(connection_id, manager)
+            
+        elif message_type == 'resume_conversation':
+            await handle_resume_conversation(message_data, connection_id, manager)
             
         elif message_type == 'chat_message':
             await handle_chat_message(message_data, connection_id, manager)
@@ -338,6 +371,14 @@ async def handle_websocket_message(message_data: dict, connection_id: str, manag
                 document_manager=document_manager
             )
         
+        # Handle on-demand document stats request
+        elif message_type == 'document_stats_request':
+            await handle_document_stats_request(
+                message_data=message_data,
+                connection_id=connection_id,
+                manager=manager,
+            )
+
         # Handle document delete request
         elif message_type == 'document_delete_request':
             from ...components.document_manager.document_manager import DocumentManager
@@ -370,6 +411,14 @@ async def handle_websocket_message(message_data: dict, connection_id: str, manag
                 manager=manager,
                 document_manager=document_manager,
                 processing_status_service=processing_status_service
+            )
+
+        # Handle related docs graph request
+        elif message_type == 'related_docs_graph':
+            await handle_related_docs_graph(
+                message_data=message_data,
+                connection_id=connection_id,
+                manager=manager,
             )
             
         else:
@@ -432,6 +481,48 @@ async def handle_start_conversation(connection_id: str, manager: ConnectionManag
         }, connection_id)
 
 
+async def handle_resume_conversation(message_data: dict, connection_id: str, manager: ConnectionManager):
+    """Resume an existing conversation thread after WebSocket reconnection."""
+    thread_id = message_data.get('thread_id')
+    if not thread_id:
+        # No thread to resume — fall back to starting a new one
+        await handle_start_conversation(connection_id, manager)
+        return
+
+    try:
+        # Re-associate this connection with the existing thread
+        manager.set_thread_id(connection_id, thread_id)
+
+        # Ensure the ConversationManager has the thread loaded
+        conv_manager, _, _ = await _get_legacy_components()
+        if conv_manager:
+            conversation = conv_manager.get_conversation(thread_id)
+            if conversation is None:
+                logger.warning(f"Thread {thread_id} not found during resume, starting new conversation")
+                await handle_start_conversation(connection_id, manager)
+                return
+
+        logger.info(f"Resumed conversation {thread_id} for connection {connection_id}")
+
+        await manager.send_personal_message({
+            'type': 'conversation_resumed',
+            'thread_id': thread_id,
+            'timestamp': datetime.now().isoformat(),
+            'features': {
+                'rag_enabled': manager.rag_available,
+                'document_aware_responses': manager.rag_available,
+                'citation_support': manager.rag_available,
+                'fallback_ai': True,
+                'conversation_memory': True
+            }
+        }, connection_id)
+
+    except Exception as e:
+        logger.error(f"Error resuming conversation {thread_id}: {e}")
+        # Fall back to starting a new conversation
+        await handle_start_conversation(connection_id, manager)
+
+
 async def handle_chat_message(message_data: dict, connection_id: str, manager: ConnectionManager):
     """Handle chat message from user with RAG integration and streaming support."""
     thread_id = manager.get_thread_id(connection_id)
@@ -454,6 +545,11 @@ async def handle_chat_message(message_data: dict, connection_id: str, manager: C
         
         # Add user message to conversation history
         manager.add_to_conversation_history(connection_id, "user", user_message)
+        
+        # Persist user message to ConversationManager thread for convert-to-knowledge
+        thread_id_for_persist = manager.get_thread_id(connection_id)
+        if thread_id_for_persist:
+            await _persist_message(thread_id_for_persist, user_message, MessageType.USER)
         
         # Send processing indicator
         await manager.send_personal_message({
@@ -549,6 +645,7 @@ async def handle_streaming_rag_response(
                         'excerpt_error': getattr(source, 'excerpt_error', None),
                         'url': getattr(source, 'url', None),
                         'source_type': getattr(source, 'source_type', None),
+                        'knowledge_source_type': getattr(source, 'knowledge_source_type', None),
                     })
                 await manager.send_streaming_start(connection_id, citations)
             
@@ -568,6 +665,11 @@ async def handle_streaming_rag_response(
                 
                 # Add assistant response to conversation history (with citations)
                 manager.add_to_conversation_history(connection_id, "assistant", cumulative_content, citations=citations)
+                
+                # Persist assistant response to ConversationManager thread
+                stream_thread_id = manager.get_thread_id(connection_id)
+                if stream_thread_id:
+                    await _persist_message(stream_thread_id, cumulative_content, MessageType.SYSTEM, citations=citations)
                 
                 # Check for timeout or error in metadata
                 chunk_metadata = chunk.metadata if chunk.metadata else {}
@@ -660,11 +762,39 @@ async def handle_non_streaming_rag_response(
             'excerpt_error': getattr(source, 'excerpt_error', None),
             'url': getattr(source, 'url', None),
             'source_type': getattr(source, 'source_type', None),
+            'knowledge_source_type': getattr(source, 'knowledge_source_type', None),
         })
     
     # Add assistant response to conversation history (with citations)
     manager.add_to_conversation_history(connection_id, "assistant", rag_response.response, citations=citations)
     
+    # Persist assistant response to ConversationManager thread
+    non_stream_thread_id = manager.get_thread_id(connection_id)
+    if non_stream_thread_id:
+        await _persist_message(non_stream_thread_id, rag_response.response, MessageType.SYSTEM, citations=citations)
+    
+    # Build response metadata
+    response_metadata = {
+        'rag_enabled': True,
+        'streaming': False,
+        'confidence_score': round(rag_response.confidence_score, 3),
+        'processing_time_ms': rag_response.processing_time_ms,
+        'search_results_count': rag_response.search_results_count,
+        'fallback_used': rag_response.fallback_used,
+        'ai_provider': rag_response.metadata.get('ai_provider', 'unknown'),
+        'tokens_used': rag_response.tokens_used,
+        'request_id': request_id,
+        'kg_retrieval_used': rag_response.metadata.get('kg_retrieval_used', False)
+    }
+
+    # Apply relevance detection display formatting (Req 5.1, 5.2, 5.3)
+    relevance_info = rag_response.metadata.get('relevance_detection')
+    if relevance_info is not None:
+        if not relevance_info.get('is_relevant', True):
+            response_metadata['confidence_label'] = 'low confidence'
+        if rag_response.confidence_score < 0.3:
+            response_metadata['relevance_disclaimer'] = 'Results may not be relevant to your query'
+
     # Send RAG response back to client
     await manager.send_personal_message({
         'type': 'response',
@@ -673,18 +803,7 @@ async def handle_non_streaming_rag_response(
             'visualizations': [],
             'knowledge_citations': citations
         },
-        'metadata': {
-            'rag_enabled': True,
-            'streaming': False,
-            'confidence_score': round(rag_response.confidence_score, 3),
-            'processing_time_ms': rag_response.processing_time_ms,
-            'search_results_count': rag_response.search_results_count,
-            'fallback_used': rag_response.fallback_used,
-            'ai_provider': rag_response.metadata.get('ai_provider', 'unknown'),
-            'tokens_used': rag_response.tokens_used,
-            'request_id': request_id,
-            'kg_retrieval_used': rag_response.metadata.get('kg_retrieval_used', False)
-        },
+        'metadata': response_metadata,
         'timestamp': datetime.now().isoformat()
     }, connection_id)
     
@@ -747,6 +866,11 @@ async def handle_chat_message_fallback(user_message: str, connection_id: str, ma
             # Add to conversation history
             response_text = contextual_response["response"]
             manager.add_to_conversation_history(connection_id, "assistant", response_text)
+            
+            # Persist assistant response to ConversationManager thread
+            fallback_thread_id = manager.get_thread_id(connection_id)
+            if fallback_thread_id:
+                await _persist_message(fallback_thread_id, response_text, MessageType.SYSTEM)
             
             # Send enhanced response back to client
             await manager.send_personal_message({
@@ -824,6 +948,11 @@ async def handle_chat_message_fallback(user_message: str, connection_id: str, ma
         
         # Add to conversation history
         manager.add_to_conversation_history(connection_id, "assistant", response_text)
+        
+        # Persist assistant response to ConversationManager thread
+        legacy_thread_id = manager.get_thread_id(connection_id)
+        if legacy_thread_id:
+            await _persist_message(legacy_thread_id, response_text, MessageType.SYSTEM)
         
         # Send response back to client
         await manager.send_personal_message({
@@ -994,6 +1123,42 @@ async def handle_export_conversation(message_data: dict, connection_id: str, man
         # Build export content from ConnectionManager's conversation history
         # (the RAG chat flow stores messages here, not in ConversationManager)
         history = manager.get_conversation_context(connection_id)
+
+        # Fallback: for reactivated conversations the in-memory history
+        # is empty because no new messages were sent via WebSocket.
+        # Load from the database instead.
+        if not history and thread_id:
+            try:
+                from ..dependencies.services import get_conversation_manager
+                conv_mgr = await get_conversation_manager()
+                conversation = conv_mgr.get_conversation(thread_id)
+                if conversation and conversation.messages:
+                    history = []
+                    for msg in conversation.messages:
+                        # Map DB message_type to WebSocket role names
+                        role = msg.message_type.value
+                        if role.lower() in ("system", "assistant"):
+                            role = "assistant"
+                        else:
+                            role = "user"
+                        entry = {
+                            "role": role,
+                            "content": msg.content,
+                            "timestamp": msg.timestamp.isoformat(),
+                        }
+                        if msg.knowledge_references:
+                            citations = [
+                                ref for ref in msg.knowledge_references
+                                if isinstance(ref, dict)
+                            ]
+                            if citations:
+                                entry["citations"] = citations
+                        history.append(entry)
+            except Exception as e:
+                logger.warning(
+                    f"Failed to load conversation from DB for export: {e}"
+                )
+
         if not history:
             await manager.send_personal_message({
                 'type': 'error',

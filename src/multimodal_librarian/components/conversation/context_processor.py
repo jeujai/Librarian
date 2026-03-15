@@ -8,17 +8,25 @@ and generating embeddings using the same methods as book content.
 
 import logging
 import uuid
-from datetime import datetime
-from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple
 
+from ...models.chunking import ChunkingRequirements, ContentProfile
 from ...models.core import (
-    ConversationThread, Message, KnowledgeChunk, SourceType, 
-    ContentType, KnowledgeMetadata, MediaElement
+    ContentType,
+    ConversationThread,
+    KnowledgeChunk,
+    KnowledgeMetadata,
+    MediaElement,
+    Message,
+    SourceType,
 )
-from ...models.chunking import ContentProfile, ChunkingRequirements
-from ..chunking_framework.framework import GenericMultiLevelChunkingFramework, ProcessedDocument
 from ..chunking_framework.content_analyzer import AutomatedContentAnalyzer
+from ..chunking_framework.framework import (
+    GenericMultiLevelChunkingFramework,
+    ProcessedDocument,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +152,11 @@ class ContextProcessor:
             conversation_doc = self._convert_conversation_to_document(conversation)
             
             # Create document content for chunking framework
-            from ...models.core import DocumentContent, DocumentMetadata, DocumentStructure
+            from ...models.core import (
+                DocumentContent,
+                DocumentMetadata,
+                DocumentStructure,
+            )
             
             document_content = DocumentContent(
                 text=conversation_doc.text,
@@ -546,8 +558,12 @@ class ContextProcessor:
             )
             
             # Create knowledge chunk
+            chunk_id = str(uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                f"conv_{conversation.thread_id}_chunk_{i}",
+            ))
             knowledge_chunk = KnowledgeChunk(
-                id=f"conv_{conversation.thread_id}_chunk_{i}",
+                id=chunk_id,
                 content=processed_chunk.content,
                 source_type=SourceType.CONVERSATION,
                 source_id=conversation.thread_id,

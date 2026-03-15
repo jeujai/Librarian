@@ -12,6 +12,7 @@ Requirements: 3.2
 
 import hashlib
 import logging
+import re
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -102,6 +103,7 @@ class SemanticReranker:
         chunks: List[RetrievedChunk],
         query: str,
         top_k: int = 15,
+        decomposition: Optional[Any] = None,
     ) -> List[RetrievedChunk]:
         """
         Re-rank chunks using semantic similarity.
@@ -114,12 +116,15 @@ class SemanticReranker:
         3. Generates embeddings for filtered chunk contents
         4. Calculates cosine similarity between query and each chunk
         5. Combines KG scores with semantic scores using configured weights
-        6. Sorts by final score and returns top_k results
+        6. Applies query-term content boost using decomposition
+        7. Sorts by final score and returns top_k results
 
         Args:
             chunks: Candidate chunks from Stage 1 (KG retrieval)
             query: Original query for embedding generation
             top_k: Maximum chunks to return (default 15)
+            decomposition: Optional QueryDecomposition with extracted
+                entities and actions from the query decomposer.
 
         Returns:
             Re-ranked list of chunks, sorted by final_score descending.
@@ -169,6 +174,71 @@ class SemanticReranker:
                     chunk.kg_relevance_score,
                     chunk.semantic_score,
                 )
+
+            # Query-term content boost using decomposition.
+            # The query decomposer already extracts entities (proper nouns
+            # like "Chelsea") and actions (verbs like "observe") via NLP.
+            # Chunks containing more of these key terms rank higher.
+            #   - Entity match: +0.03 per entity found in content
+            #   - Action match: +0.01 per action found in content
+            #   - Synergy bonus: +0.03 when BOTH entity AND action match
+            #     (a chunk with both the subject and verb from the query
+            #      is far more likely to be the answer)
+            # This is case-insensitive and uses substring matching to
+            # handle morphological variants (observe/observed/observing).
+            boost_entities: set = set()
+            boost_actions: set = set()
+            if decomposition is not None:
+                # Only use proper-noun entities for boosting.
+                # The decomposer's entities list includes both named
+                # entities ("Chelsea") and generic concept matches
+                # ("we saw", "we examine"). Generic phrases match too
+                # many chunks and dilute the boost signal. Filter to
+                # entities whose first word is capitalized and isn't a
+                # common pronoun/determiner.
+                _skip = {"we", "our", "the", "a", "an", "after"}
+                for e in getattr(decomposition, 'entities', []):
+                    if len(e) <= 2:
+                        continue
+                    first_word = e.split()[0] if e.split() else e
+                    if first_word[0].isupper() and first_word.lower() not in _skip:
+                        boost_entities.add(e.lower())
+                boost_actions = {
+                    a.lower() for a in getattr(decomposition, 'actions', [])
+                    if len(a) > 2
+                }
+            else:
+                # Fallback: extract proper nouns from query text
+                query_words = re.findall(r'[A-Za-z]+', query)
+                boost_entities = {
+                    w.lower() for w in query_words
+                    if len(w) > 2 and w[0].isupper()
+                }
+
+            if boost_entities or boost_actions:
+                ENTITY_BOOST = 0.03
+                ACTION_BOOST = 0.01
+                SYNERGY_BOOST = 0.03  # bonus when both entity+action match
+                for chunk in chunks_with_scores:
+                    content_lower = (chunk.content or "").lower()
+                    entity_matched = False
+                    action_matched = False
+                    boost = 0.0
+                    for ent in boost_entities:
+                        if ent in content_lower:
+                            boost += ENTITY_BOOST
+                            entity_matched = True
+                    for act in boost_actions:
+                        # Substring match handles morphology:
+                        # "observe" matches "observed", "observing"
+                        if act in content_lower:
+                            boost += ACTION_BOOST
+                            action_matched = True
+                    # Synergy: chunk contains both entity and action
+                    if entity_matched and action_matched:
+                        boost += SYNERGY_BOOST
+                    if boost > 0:
+                        chunk.final_score += boost
 
             # Sort by final score descending
             chunks_with_scores.sort(key=lambda c: c.final_score, reverse=True)
@@ -238,7 +308,7 @@ class SemanticReranker:
 
         # Always preserve chunks with high KG relevance scores
         # (direct concept matches) regardless of semantic similarity
-        KG_PRESERVE_THRESHOLD = 0.9
+        KG_PRESERVE_THRESHOLD = 0.7
         selected: List[RetrievedChunk] = []
         selected_ids: set = set()
 

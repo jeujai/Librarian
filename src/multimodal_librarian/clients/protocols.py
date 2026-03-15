@@ -32,13 +32,27 @@ Example Usage:
     ```
 """
 
-from typing import (
-    Protocol, List, Dict, Any, Optional, Union, AsyncGenerator, Generator,
-    TypeAlias, Literal, Callable, Awaitable, TypeVar, Generic, runtime_checkable
-)
 from contextlib import asynccontextmanager, contextmanager
-from sqlalchemy.orm import Session
+from typing import (
+    Any,
+    AsyncGenerator,
+    Awaitable,
+    Callable,
+    Dict,
+    Generator,
+    Generic,
+    List,
+    Literal,
+    Optional,
+    Protocol,
+    TypeAlias,
+    TypeVar,
+    Union,
+    runtime_checkable,
+)
+
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 # Type aliases for better code readability and type safety
 DatabaseMetadata: TypeAlias = Dict[str, Any]
@@ -628,7 +642,7 @@ class VectorStoreClient(Protocol):
     and high-level operations for document chunk storage and retrieval.
     
     Vector Operations:
-        - Store and retrieve high-dimensional vectors (typically 384-1536 dimensions)
+        - Store and retrieve high-dimensional vectors (typically 768-1536 dimensions)
         - Perform similarity search using various distance metrics (L2, cosine, inner product)
         - Manage collections/indexes for different document types
         - Support metadata filtering and hybrid search
@@ -743,7 +757,7 @@ class VectorStoreClient(Protocol):
         
         Args:
             collection_name: Name of the collection (must be unique)
-            dimension: Vector dimension (e.g., 384 for sentence-transformers,
+            dimension: Vector dimension (e.g., 768 for sentence-transformers,
                       1536 for OpenAI embeddings)
             metric_type: Distance metric for similarity search:
                         - "L2": Euclidean distance (default)
@@ -762,7 +776,7 @@ class VectorStoreClient(Protocol):
             # Create collection for sentence-transformer embeddings
             success = await client.create_collection(
                 "document_chunks", 
-                dimension=384, 
+                dimension=768, 
                 metric_type="COSINE"
             )
             if success:
@@ -860,7 +874,7 @@ class VectorStoreClient(Protocol):
             vectors = [
                 {
                     "id": "doc1_chunk1",
-                    "vector": [0.1, 0.2, 0.3, ...],  # 384-dim embedding
+                    "vector": [0.1, 0.2, 0.3, ...],  # 768-dim embedding
                     "metadata": {
                         "content": "Machine learning is a subset of AI...",
                         "source_id": "doc1",

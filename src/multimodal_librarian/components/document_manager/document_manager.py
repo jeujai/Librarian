@@ -256,7 +256,9 @@ class DocumentManager:
                     'file_size': document.file_size,
                     'status': status_value,
                     'upload_timestamp': document.upload_timestamp,
-                    'processing_completed_at': document.processing_completed_at
+                    'processing_completed_at': document.processing_completed_at,
+                    'source_type': 'conversation' if document.metadata.get('source_thread_id') else 'upload',
+                    'thread_id': document.metadata.get('source_thread_id'),
                 }
                 
                 # Note: Processing job info is available via get_processing_status()
@@ -375,6 +377,41 @@ class DocumentManager:
         doc_id = str(document_id)
 
         try:
+            # For conversation documents, chunks/concepts use the
+            # raw thread_id as source_id, not the UUID5.  Resolve
+            # the correct ID for Milvus/Neo4j cleanup.
+            vector_id = doc_id
+            try:
+                from sqlalchemy import text as sa_text
+
+                from ...database.connection import db_manager
+                async with db_manager.get_async_session() as sess:
+                    row = (await sess.execute(
+                        sa_text(
+                            "SELECT source_type, file_path, metadata "
+                            "FROM multimodal_librarian.knowledge_sources "
+                            "WHERE id = :did"
+                        ),
+                        {"did": doc_id},
+                    )).fetchone()
+                if row and row.source_type == "CONVERSATION":
+                    tid = None
+                    if row.metadata and isinstance(
+                        row.metadata, dict
+                    ):
+                        tid = row.metadata.get("source_thread_id")
+                    if not tid and row.file_path:
+                        tid = str(row.file_path).replace(
+                            "conversation://", ""
+                        )
+                    if tid:
+                        vector_id = tid
+            except Exception as e:
+                logger.debug(
+                    f"Could not resolve conversation thread_id "
+                    f"for {doc_id}: {e}"
+                )
+
             # Cancel any active Celery processing
             try:
                 await self.processing_service.cancel_processing(
@@ -385,10 +422,12 @@ class DocumentManager:
 
             # 1. Milvus — delete vectors
             results['milvus_deleted'] = await self._delete_from_milvus(
-                doc_id, results
+                vector_id, results
             )
 
             # 2. Neo4j — batch-delete Concept nodes
+            #    Neo4j Chunks use the original document UUID as source_id,
+            #    NOT the thread_id that Milvus uses for conversation docs.
             results['neo4j_deleted'] = await self._delete_from_neo4j(
                 doc_id, results
             )
@@ -452,103 +491,163 @@ class DocumentManager:
 
         Uses pymilvus directly with a unique connection alias to avoid
         conflicts with the application's existing 'default' connection.
+        Wrapped in a 15-second timeout to prevent blocking the event
+        loop if Milvus is slow (e.g. after a restart).
         """
         try:
             import asyncio
-            import os
 
-            from pymilvus import Collection, connections, utility
-
-            # Use environment variables with sensible defaults
-            host = os.environ.get('MILVUS_HOST', 'milvus')
-            port = os.environ.get('MILVUS_PORT', '19530')
-            collection_name = os.environ.get(
-                'MILVUS_COLLECTION_NAME', 'knowledge_chunks'
+            return await asyncio.wait_for(
+                self._delete_from_milvus_inner(document_id, results),
+                timeout=15,
             )
-            alias = f"delete_{document_id[:8]}"
-
-            loop = asyncio.get_event_loop()
-
-            # Connect with a unique alias
-            await loop.run_in_executor(
-                None,
-                lambda: connections.connect(
-                    alias=alias, host=host, port=port
-                ),
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"Milvus deletion timed out after 15s for {document_id}"
             )
-            try:
-                has = await loop.run_in_executor(
-                    None,
-                    lambda: utility.has_collection(
-                        collection_name, using=alias
-                    ),
-                )
-                if not has:
-                    logger.warning(
-                        f"Milvus collection '{collection_name}' "
-                        "not found"
-                    )
-                    return 0
-
-                col = await loop.run_in_executor(
-                    None,
-                    lambda: Collection(
-                        collection_name, using=alias
-                    ),
-                )
-                await loop.run_in_executor(None, col.load)
-
-                expr = (
-                    f'metadata["source_id"] == "{document_id}"'
-                )
-                mut = await loop.run_in_executor(
-                    None, col.delete, expr
-                )
-                await loop.run_in_executor(None, col.flush)
-
-                deleted = (
-                    mut.delete_count
-                    if hasattr(mut, 'delete_count')
-                    else 0
-                )
-                logger.info(
-                    f"Milvus: deleted {deleted} vectors "
-                    f"for {document_id}"
-                )
-                return deleted
-            finally:
-                await loop.run_in_executor(
-                    None, connections.disconnect, alias
-                )
+            results['errors'].append("Milvus: timed out after 15s")
+            return 0
         except Exception as e:
             logger.warning(f"Milvus deletion failed: {e}")
             results['errors'].append(f"Milvus: {e}")
             return 0
 
+    async def _delete_from_milvus_inner(
+        self, document_id: str, results: Dict[str, Any]
+    ) -> int:
+        """Inner Milvus delete logic (called with timeout wrapper)."""
+        import asyncio
+        import os
+
+        from pymilvus import Collection, connections, utility
+
+        host = os.environ.get('MILVUS_HOST', 'milvus')
+        port = os.environ.get('MILVUS_PORT', '19530')
+        collection_name = os.environ.get(
+            'MILVUS_COLLECTION_NAME', 'knowledge_chunks'
+        )
+        alias = f"delete_{document_id[:8]}"
+
+        loop = asyncio.get_event_loop()
+
+        await loop.run_in_executor(
+            None,
+            lambda: connections.connect(
+                alias=alias, host=host, port=port, timeout=10,
+            ),
+        )
+        try:
+            has = await loop.run_in_executor(
+                None,
+                lambda: utility.has_collection(
+                    collection_name, using=alias
+                ),
+            )
+            if not has:
+                logger.warning(
+                    f"Milvus collection '{collection_name}' "
+                    "not found"
+                )
+                return 0
+
+            col = await loop.run_in_executor(
+                None,
+                lambda: Collection(
+                    collection_name, using=alias
+                ),
+            )
+            await loop.run_in_executor(None, col.load)
+
+            expr = (
+                f'metadata["source_id"] == "{document_id}"'
+            )
+            mut = await loop.run_in_executor(
+                None, col.delete, expr
+            )
+            # NOTE: col.flush() removed — it can block indefinitely
+            # after Milvus restarts.  Milvus auto-flushes deletes.
+
+            deleted = (
+                mut.delete_count
+                if hasattr(mut, 'delete_count')
+                else 0
+            )
+            logger.info(
+                f"Milvus: deleted {deleted} vectors "
+                f"for {document_id}"
+            )
+            return deleted
+        finally:
+            await loop.run_in_executor(
+                None, connections.disconnect, alias
+            )
+
     async def _delete_from_neo4j(
         self, document_id: str, results: Dict[str, Any]
     ) -> int:
-        """Batch-delete Concept nodes from Neo4j."""
+        """Delete Chunk nodes, EXTRACTED_FROM relationships, and orphaned Concepts from Neo4j."""
+        try:
+            import asyncio
+
+            return await asyncio.wait_for(
+                self._delete_from_neo4j_inner(document_id, results),
+                timeout=30,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"Neo4j deletion timed out after 30s for {document_id}"
+            )
+            results['errors'].append("Neo4j: timed out after 30s")
+            return 0
+        except Exception as e:
+            logger.warning(f"Neo4j deletion failed: {e}")
+            results['errors'].append(f"Neo4j: {e}")
+            return 0
+
+    async def _delete_from_neo4j_inner(
+        self, document_id: str, results: Dict[str, Any]
+    ) -> int:
+        """Inner Neo4j delete logic (called with timeout wrapper)."""
         try:
             from ...services.knowledge_graph_service import KnowledgeGraphService
             kg = KnowledgeGraphService()
             await kg.client.connect()
             try:
-                total = 0
-                while True:
-                    res = await kg.client.execute_write_query(
-                        """
-                        MATCH (c:Concept {source_document: $doc_id})
-                        WITH c LIMIT 5000
-                        DETACH DELETE c
-                        RETURN count(*) AS deleted
-                        """,
-                        {"doc_id": document_id},
-                    )
-                    batch = res[0]["deleted"] if res else 0
-                    if batch == 0:
-                        break
-                    total += batch
+                # Step 1: Delete EXTRACTED_FROM relationships to this source's Chunk nodes
+                res_rels = await kg.client.execute_write_query(
+                    """
+                    MATCH (ch:Chunk {source_id: $doc_id})<-[r:EXTRACTED_FROM]-(c:Concept)
+                    DELETE r
+                    RETURN count(r) AS deleted_rels
+                    """,
+                    {"doc_id": document_id},
+                )
+                deleted_rels = res_rels[0]["deleted_rels"] if res_rels else 0
+
+                # Step 2: Delete Chunk nodes for this source_id
+                res_chunks = await kg.client.execute_write_query(
+                    """
+                    MATCH (ch:Chunk {source_id: $doc_id})
+                    DELETE ch
+                    RETURN count(ch) AS deleted_chunks
+                    """,
+                    {"doc_id": document_id},
+                )
+                deleted_chunks = res_chunks[0]["deleted_chunks"] if res_chunks else 0
+
+                # Step 3: Delete orphaned Concepts (no remaining EXTRACTED_FROM and no SAME_AS)
+                res_concepts = await kg.client.execute_write_query(
+                    """
+                    MATCH (c:Concept)
+                    WHERE NOT EXISTS { MATCH (c)-[:EXTRACTED_FROM]->() }
+                      AND NOT EXISTS { MATCH (c)<-[:SAME_AS]-() }
+                    DETACH DELETE c
+                    RETURN count(c) AS deleted_concepts
+                    """,
+                    {},
+                )
+                deleted_concepts = res_concepts[0]["deleted_concepts"] if res_concepts else 0
+
                 # Also remove Document nodes if any
                 try:
                     await kg.client.execute_write_query(
@@ -560,8 +659,12 @@ class DocumentManager:
                     )
                 except Exception:
                     pass
+
+                total = deleted_rels + deleted_chunks + deleted_concepts
                 logger.info(
-                    f"Neo4j: deleted {total} Concept nodes "
+                    f"Neo4j: deleted {deleted_rels} EXTRACTED_FROM rels, "
+                    f"{deleted_chunks} Chunk nodes, "
+                    f"{deleted_concepts} orphaned Concepts "
                     f"for {document_id}"
                 )
                 return total

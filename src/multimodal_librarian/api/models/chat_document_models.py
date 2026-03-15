@@ -87,6 +87,8 @@ class DocumentInfo(BaseModel):
     status: Literal["uploaded", "processing", "completed", "failed"]
     upload_timestamp: datetime
     file_size: int
+    source_type: Optional[str] = None
+    thread_id: Optional[str] = None
     chunk_count: Optional[int] = None
     bridge_count: Optional[int] = None
     concept_count: Optional[int] = None
@@ -169,6 +171,61 @@ class DocumentRetryStartedMessage(BaseModel):
     filename: str = Field("unknown", description="Original filename for UI card creation")
     message: str
     timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+
+# =============================================================================
+# Related Documents Graph Messages (Composite Document Relationships)
+# =============================================================================
+
+class RelatedDocsGraphRequest(BaseModel):
+    """WebSocket request for related documents graph data.
+
+    Requirements: 8.1
+    """
+    type: Literal["related_docs_graph"] = "related_docs_graph"
+    document_id: str = Field(..., description="Document ID to get related docs graph for")
+
+
+class RelatedDocsGraphNode(BaseModel):
+    """A document node in the related docs graph.
+
+    Requirements: 8.2
+    """
+    document_id: str = Field(..., description="UUID of the document")
+    title: str = Field(..., description="Document title for display")
+    is_origin: bool = Field(False, description="Whether this is the origin document")
+
+
+class RelatedDocsGraphEdge(BaseModel):
+    """An edge in the related docs graph representing a RELATED_DOCS relationship.
+
+    Requirements: 8.3
+    """
+    source: str = Field(..., description="Source document_id")
+    target: str = Field(..., description="Target document_id")
+    score: float = Field(..., ge=0.0, le=1.0, description="Composite relationship score")
+    edge_count: int = Field(..., ge=0, description="Number of cross-document concept edges")
+
+
+class RelatedDocsGraphResponse(BaseModel):
+    """WebSocket response containing the related docs graph data.
+
+    Requirements: 8.4
+    """
+    type: Literal["related_docs_graph"] = "related_docs_graph"
+    document_id: str
+    nodes: List[RelatedDocsGraphNode]
+    edges: List[RelatedDocsGraphEdge]
+
+
+class RelatedDocsGraphError(BaseModel):
+    """WebSocket error response for related docs graph requests.
+
+    Requirements: 8.5
+    """
+    type: Literal["related_docs_graph_error"] = "related_docs_graph_error"
+    document_id: str
+    message: str
 
 
 # =============================================================================

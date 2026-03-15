@@ -153,9 +153,13 @@
     <script src="/static/js/expectation-manager.js"></script>
     <script src="/static/js/limitation-messages.js"></script>
     <!-- Citation components - must load before chat.js (Requirements: 1.1) -->
-    <script src="/static/js/citation-popup.js?v=2"></script>
+    <script src="/static/js/citation-popup.js?v=6"></script>
     <script src="/static/js/citation-renderer.js"></script>
-    <script src="/static/js/chat.js"></script>
+    <!-- Toast notification system - must load before chat.js (Requirements: 10.1) -->
+    <script src="/static/js/toast-notification.js"></script>
+    <!-- KG Explorer panel - must load before chat.js (Requirements: 11.1) -->
+    <script src="/static/js/kg-explorer-panel.js"></script>
+    <script src="/static/js/chat.js?v=8"></script>
 </body>
 
 </html>

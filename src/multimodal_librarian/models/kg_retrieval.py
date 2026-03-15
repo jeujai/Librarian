@@ -57,6 +57,7 @@ class RetrievedChunk:
     final_score: float = 0.0                    # Combined score
     metadata: Dict[str, Any] = field(default_factory=dict)
     embedding: Optional[List[float]] = None     # Stored embedding from Milvus
+    matched_concepts: List[Dict[str, Any]] = field(default_factory=list)  # All concepts linking to this chunk
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""

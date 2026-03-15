@@ -17,7 +17,7 @@ class ModelServerSettings(BaseSettings):
     
     # Embedding model configuration
     embedding_model: str = Field(
-        default="all-MiniLM-L6-v2",
+        default="BAAI/bge-base-en-v1.5",
         env="EMBEDDING_MODEL",
         description="Sentence transformer model for embeddings"
     )

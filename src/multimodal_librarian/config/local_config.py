@@ -196,8 +196,8 @@ class LocalDatabaseConfig(BaseSettings):
     health_check_retries: int = Field(default=3, description="Health check retry attempts")
     
     # Embedding Configuration
-    embedding_dimension: int = Field(default=384, description="Vector embedding dimension")
-    embedding_model: str = Field(default="sentence-transformers/all-MiniLM-L6-v2", description="Embedding model name")
+    embedding_dimension: int = Field(default=768, description="Vector embedding dimension")
+    embedding_model: str = Field(default="BAAI/bge-base-en-v1.5", description="Embedding model name")
     
     # Docker Configuration (for health checks and service discovery)
     docker_network: str = Field(default="multimodal-librarian_default", description="Docker network name")
@@ -385,25 +385,26 @@ class LocalDatabaseConfig(BaseSettings):
         
         # Check embedding model compatibility
         if self.enable_vector_search and self.embedding_model:
-            if 'sentence-transformers' in self.embedding_model:
-                # Common sentence-transformers models and their dimensions
-                model_dimensions = {
-                    'sentence-transformers/all-MiniLM-L6-v2': 384,
-                    'sentence-transformers/all-mpnet-base-v2': 768,
-                    'sentence-transformers/all-distilroberta-v1': 768,
-                    'sentence-transformers/paraphrase-MiniLM-L6-v2': 384,
-                }
-                
-                if self.embedding_model in model_dimensions:
-                    expected_dim = model_dimensions[self.embedding_model]
-                    if self.embedding_dimension != expected_dim:
-                        # Check if strict validation is enabled
-                        strict_validation = getattr(self, '_strict_validation', False)
-                        if strict_validation:
-                            errors.append(
-                                f"Embedding dimension {self.embedding_dimension} doesn't match "
-                                f"model {self.embedding_model} expected dimension {expected_dim}"
-                            )
+            # Known models and their expected dimensions
+            model_dimensions = {
+                'sentence-transformers/all-MiniLM-L6-v2': 384,
+                'sentence-transformers/all-mpnet-base-v2': 768,
+                'sentence-transformers/all-distilroberta-v1': 768,
+                'sentence-transformers/paraphrase-MiniLM-L6-v2': 384,
+                'BAAI/bge-base-en-v1.5': 768,
+                'bge-base-en-v1.5': 768,
+            }
+            
+            if self.embedding_model in model_dimensions:
+                expected_dim = model_dimensions[self.embedding_model]
+                if self.embedding_dimension != expected_dim:
+                    # Check if strict validation is enabled
+                    strict_validation = getattr(self, '_strict_validation', False)
+                    if strict_validation:
+                        errors.append(
+                            f"Embedding dimension {self.embedding_dimension} doesn't match "
+                            f"model {self.embedding_model} expected dimension {expected_dim}"
+                        )
         
         if errors:
             raise ValueError(f"Configuration validation failed: {'; '.join(errors)}")

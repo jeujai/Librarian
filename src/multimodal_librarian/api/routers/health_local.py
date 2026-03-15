@@ -2759,8 +2759,8 @@ async def _collect_milvus_performance(factory: DatabaseClientFactory) -> Dict[st
                 if entity_count > 0:
                     try:
                         search_start = time.time()
-                        # Create a dummy vector for search (assuming 384 dimensions)
-                        dummy_vector = [0.1] * 384
+                        # Create a dummy vector for search (assuming 768 dimensions)
+                        dummy_vector = [0.1] * 768
                         await milvus_client.search(
                             collection_name=collection_name,
                             vectors=[dummy_vector],

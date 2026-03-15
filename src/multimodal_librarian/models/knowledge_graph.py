@@ -63,14 +63,22 @@ class Triple:
 
 @dataclass
 class ConceptNode:
-    """Node representing a concept in the knowledge graph."""
+    """Node representing a concept in the knowledge graph.
+
+    The ``source_chunks`` and ``source_document`` fields are retained for
+    **in-memory use only** during extraction pipelines (before Neo4j
+    persistence).  They are included in ``to_dict()`` for non-Neo4j consumers
+    but are **never written to Neo4j as node properties**.  At persistence time
+    they are translated into ``Chunk`` nodes and ``EXTRACTED_FROM``
+    relationships in the graph.
+    """
     concept_id: str
     concept_name: str
     concept_type: str = "ENTITY"  # ENTITY, PROCESS, PROPERTY, etc.
     aliases: List[str] = field(default_factory=list)
     confidence: float = 0.0
-    source_chunks: List[str] = field(default_factory=list)
-    source_document: Optional[str] = None  # Document ID for cross-document linking
+    source_chunks: List[str] = field(default_factory=list)  # In-memory only – not persisted to Neo4j
+    source_document: Optional[str] = None  # In-memory only – not persisted to Neo4j
     external_ids: Dict[str, str] = field(default_factory=dict)  # YAGO, ConceptNet IDs
     
     def to_dict(self) -> Dict[str, Any]:

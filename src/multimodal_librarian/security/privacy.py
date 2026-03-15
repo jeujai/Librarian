@@ -349,48 +349,66 @@ class PrivacyService:
             logger.error(f"Failed to delete from vector store: {e}")
             raise
     
+
     async def _delete_from_knowledge_graph(self, source_id: str):
-        """Delete concepts and relationships from knowledge graph."""
+        """Delete chunks, EXTRACTED_FROM relationships, and orphaned concepts from knowledge graph."""
         try:
             logger.info(f"Deleting knowledge graph data for source: {source_id}")
-            
-            # Import and use the knowledge graph service
+
             from ..services.knowledge_graph_service import KnowledgeGraphService
-            
+
             kg_service = KnowledgeGraphService()
-            
-            # Delete all nodes and relationships associated with this source
-            # First, find all concept nodes from this source
-            deleted_nodes = 0
-            
+
             try:
-                # Query for nodes with this source_document
-                nodes = kg_service.query_nodes(
-                    label='Concept',
-                    properties={'source_document': source_id}
+                # Step 1: Delete EXTRACTED_FROM relationships to this source's Chunk nodes
+                result_rels = kg_service.execute_cypher(
+                    """
+                    MATCH (ch:Chunk {source_id: $source_id})<-[r:EXTRACTED_FROM]-(c:Concept)
+                    DELETE r
+                    RETURN count(r) AS deleted_rels
+                    """,
+                    {"source_id": source_id}
                 )
-                
-                # Delete each node (this will also delete associated relationships)
-                for node in nodes:
-                    node_id = node.get('id')
-                    if node_id:
-                        kg_service.delete_node(node_id)
-                        deleted_nodes += 1
-                
+                deleted_rels = result_rels[0].get("deleted_rels", 0) if result_rels else 0
+
+                # Step 2: Delete Chunk nodes for this source_id
+                result_chunks = kg_service.execute_cypher(
+                    """
+                    MATCH (ch:Chunk {source_id: $source_id})
+                    DELETE ch
+                    RETURN count(ch) AS deleted_chunks
+                    """,
+                    {"source_id": source_id}
+                )
+                deleted_chunks = result_chunks[0].get("deleted_chunks", 0) if result_chunks else 0
+
+                # Step 3: Delete orphaned Concepts (no remaining EXTRACTED_FROM and no SAME_AS)
+                result_concepts = kg_service.execute_cypher(
+                    """
+                    MATCH (c:Concept)
+                    WHERE NOT EXISTS { MATCH (c)-[:EXTRACTED_FROM]->() }
+                      AND NOT EXISTS { MATCH (c)<-[:SAME_AS]-() }
+                    DETACH DELETE c
+                    RETURN count(c) AS deleted_concepts
+                    """,
+                    {}
+                )
+                deleted_concepts = result_concepts[0].get("deleted_concepts", 0) if result_concepts else 0
+
                 logger.info(
-                    f"Deleted {deleted_nodes} concept nodes from knowledge graph "
-                    f"for source: {source_id}"
+                    f"Knowledge graph cleanup for source {source_id}: "
+                    f"deleted {deleted_rels} EXTRACTED_FROM rels, "
+                    f"{deleted_chunks} Chunk nodes, "
+                    f"{deleted_concepts} orphaned Concepts"
                 )
-                
+
             except Exception as e:
-                # If the knowledge graph service doesn't support these operations,
-                # log and continue - this is a best-effort deletion
                 logger.warning(f"Knowledge graph deletion partially completed: {e}")
-            
+
         except Exception as e:
             logger.error(f"Failed to delete from knowledge graph: {e}")
             raise
-    
+
     def sanitize_conversation_content(
         self,
         content: str,

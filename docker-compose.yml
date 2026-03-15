@@ -10,7 +10,7 @@ services:
     ports:
       - "8001:8001"
     environment:
-      - EMBEDDING_MODEL=all-MiniLM-L6-v2
+      - EMBEDDING_MODEL=BAAI/bge-base-en-v1.5
       - NLP_MODEL=en_core_web_sm
       - LOG_LEVEL=INFO
       - PRELOAD_MODELS=true
@@ -107,7 +107,7 @@ services:
       # Processing settings
       - CHUNK_SIZE=512
       - CHUNK_OVERLAP=50
-      - EMBEDDING_MODEL=all-MiniLM-L6-v2
+      - EMBEDDING_MODEL=BAAI/bge-base-en-v1.5
 
       # External knowledge bases
       - YAGO_ENDPOINT=https://yago-knowledge.org/sparql/query
@@ -129,6 +129,9 @@ services:
       # SearXNG web search (optional, requires web-search profile)
       - SEARXNG_ENABLED=true
       - SEARXNG_HOST=searxng
+
+      # Matplotlib writable config directory
+      - MPLCONFIGDIR=/app/logs/matplotlib
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -316,9 +319,9 @@ services:
       - NEO4J_dbms_security_procedures_unrestricted=apoc.*,gds.*
       - NEO4J_dbms_security_procedures_allowlist=apoc.*,gds.*
       # Memory optimization — capped to prevent OOM under Docker Desktop
-      - NEO4J_dbms_memory_heap_initial__size=512m
-      - NEO4J_dbms_memory_heap_max__size=1G
-      - NEO4J_dbms_memory_pagecache_size=512m
+      - NEO4J_dbms_memory_heap_initial__size=1G
+      - NEO4J_dbms_memory_heap_max__size=3G
+      - NEO4J_dbms_memory_pagecache_size=1G
       # Query optimization
       - NEO4J_dbms_query__cache__size=1000
       - NEO4J_cypher_min__replan__interval=10s
@@ -328,7 +331,7 @@ services:
       - NEO4J_dbms_connector_bolt_thread__pool__max__size=200
       - NEO4J_dbms_connector_bolt_thread__pool__keep__alive=5m
       # Transaction optimization
-      - NEO4J_dbms_transaction_timeout=30s
+      - NEO4J_dbms_transaction_timeout=120s
       - NEO4J_dbms_lock_acquisition_timeout=10s
       # Suppress license agreement warnings (Community Edition doesn't have this procedure)
       - NEO4J_dbms_logs_query_enabled=OFF
@@ -446,7 +449,7 @@ services:
       # Processing settings
       - CHUNK_SIZE=512
       - CHUNK_OVERLAP=50
-      - EMBEDDING_MODEL=all-MiniLM-L6-v2
+      - EMBEDDING_MODEL=BAAI/bge-base-en-v1.5
 
       # Model Server configuration
       - MODEL_SERVER_URL=http://model-server:8001

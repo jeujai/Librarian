@@ -782,7 +782,7 @@ class RelationshipExtractor:
                     np.linalg.norm(embeddings[i]) * np.linalg.norm(embeddings[j])
                 )
                 
-                if similarity > 0.6:  # Similarity threshold
+                if similarity > 0.8:  # Similarity threshold (raised from 0.6 to reduce relationship explosion)
                     relationship = RelationshipEdge(
                         subject_concept=concept1.concept_id,
                         predicate="SIMILAR_TO",
@@ -824,7 +824,7 @@ class RelationshipExtractor:
                         np.linalg.norm(embeddings[i]) * np.linalg.norm(embeddings[j])
                     )
                     
-                    if similarity > 0.6:  # Similarity threshold
+                    if similarity > 0.8:  # Similarity threshold (raised from 0.6 to reduce relationship explosion)
                         relationship = RelationshipEdge(
                             subject_concept=concept1.concept_id,
                             predicate="SIMILAR_TO",

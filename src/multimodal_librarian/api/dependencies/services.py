@@ -112,6 +112,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from fastapi import Depends, HTTPException, WebSocket
+from fastapi.params import Depends as DependsParam
 
 if TYPE_CHECKING:
     from ...clients.conceptnet_client import ConceptNetClient
@@ -127,6 +128,8 @@ if TYPE_CHECKING:
     from ...components.conversation.conversation_manager import ConversationManager
     from ...components.export_engine.export_engine import ExportEngine
     from ...components.kg_retrieval.query_decomposer import QueryDecomposer
+    from ...components.kg_retrieval.relevance_detector import RelevanceDetector
+    from ...components.knowledge_graph.kg_query_engine import KnowledgeGraphQueryEngine
     from ...components.knowledge_graph.relation_type_registry import (
         RelationTypeRegistry,
     )
@@ -142,6 +145,7 @@ if TYPE_CHECKING:
     from ...logging.database_query_logger import DatabaseQueryLogger
     from ...services.ai_service import AIService
     from ...services.ai_service_cached import CachedAIService
+    from ...services.conversation_knowledge_service import ConversationKnowledgeService
     from ...services.enrichment_cache import EnrichmentCache
     from ...services.enrichment_service import EnrichmentService
     from ...services.kg_retrieval_service import KGRetrievalService
@@ -210,6 +214,11 @@ _kg_retrieval_service: Optional["KGRetrievalService"] = None
 _query_decomposer: Optional["QueryDecomposer"] = None
 
 # =============================================================================
+# RelevanceDetector cached instance
+# =============================================================================
+_relevance_detector: Optional["RelevanceDetector"] = None
+
+# =============================================================================
 # Source Prioritization Engine cached instance
 # =============================================================================
 _source_prioritization_engine: Optional["SourcePrioritizationEngine"] = None
@@ -228,6 +237,11 @@ _processing_status_service: Optional["ProcessingStatusService"] = None
 # Relation Type Registry cached instance
 # =============================================================================
 _relation_type_registry: Optional["RelationTypeRegistry"] = None
+
+# =============================================================================
+# Conversation Knowledge Service cached instance
+# =============================================================================
+_conversation_knowledge_service: Optional["ConversationKnowledgeService"] = None
 
 
 class ConnectionManager:
@@ -521,7 +535,8 @@ async def get_opensearch_client_factory_based() -> "VectorStoreClient":
         
     Validates: Requirements US-1, US-4, NFR-1
     """
-    return await get_vector_client()
+    factory = await get_database_factory()
+    return await factory.get_vector_client()
 
 
 async def get_opensearch_client_optional() -> Optional["OpenSearchClient"]:
@@ -1215,8 +1230,14 @@ async def get_vector_client_optional(
     Returns:
         VectorStoreClient instance or None if unavailable
     """
-    if factory is None:
-        return None
+    # When called outside FastAPI DI, factory will be a Depends object, not a real factory
+    if factory is None or isinstance(factory, DependsParam):
+        try:
+            factory = await get_database_factory_optional()
+        except Exception:
+            return None
+        if factory is None:
+            return None
     
     try:
         return await factory.get_vector_client()
@@ -1386,7 +1407,7 @@ async def get_umls_client_optional() -> Optional[Any]:
 async def get_kg_retrieval_service(
     graph_client: Optional["GraphStoreClient"] = Depends(get_graph_client_optional),
     vector_client: Optional["VectorStoreClient"] = Depends(get_vector_client_optional),
-    model_client: Optional["ModelServerClient"] = Depends(get_model_server_client_optional)
+    model_client: Optional["ModelServerClient"] = Depends(get_model_server_client_optional),
 ) -> "KGRetrievalService":
     """
     FastAPI dependency for KGRetrievalService.
@@ -1413,6 +1434,11 @@ async def get_kg_retrieval_service(
     """
     global _kg_retrieval_service
     
+    # Resolve relevance detector here (not in signature) to avoid
+    # forward-reference error — get_relevance_detector_optional is
+    # defined later in this file.
+    relevance_detector = await get_relevance_detector_optional()
+    
     if _kg_retrieval_service is None:
         # Import here to avoid import-time side effects
         from ...services.kg_retrieval_service import KGRetrievalService
@@ -1423,7 +1449,8 @@ async def get_kg_retrieval_service(
             _kg_retrieval_service = KGRetrievalService(
                 neo4j_client=graph_client,
                 vector_client=vector_client,
-                model_client=model_client
+                model_client=model_client,
+                relevance_detector=relevance_detector,
             )
             
             logger.info("KGRetrievalService initialized successfully via DI")
@@ -1449,7 +1476,7 @@ async def get_kg_retrieval_service(
 async def get_kg_retrieval_service_optional(
     graph_client: Optional["GraphStoreClient"] = Depends(get_graph_client_optional),
     vector_client: Optional["VectorStoreClient"] = Depends(get_vector_client_optional),
-    model_client: Optional["ModelServerClient"] = Depends(get_model_server_client_optional)
+    model_client: Optional["ModelServerClient"] = Depends(get_model_server_client_optional),
 ) -> Optional["KGRetrievalService"]:
     """
     Optional KG retrieval service dependency - returns None if unavailable.
@@ -1533,6 +1560,105 @@ async def get_query_decomposer_optional(
             _query_decomposer.set_model_server_client(model_client)
 
     return _query_decomposer
+
+
+# =============================================================================
+# RelevanceDetector Dependencies
+# =============================================================================
+
+async def get_relevance_detector() -> "RelevanceDetector":
+    """
+    FastAPI dependency for RelevanceDetector.
+
+    Lazily creates and caches the RelevanceDetector on first use.
+    Reads spread, variance, and specificity thresholds from application
+    settings (environment-overridable via Pydantic config).
+
+    Loads spaCy en_core_web_sm for NER-based proper-noun extraction
+    used by the query term coverage signal.
+
+    Returns:
+        RelevanceDetector instance
+
+    Raises:
+        HTTPException: If initialization fails (503 Service Unavailable)
+
+    Validates: Requirements 6.1, 6.2, 6.3
+    """
+    global _relevance_detector
+
+    if _relevance_detector is None:
+        from ...components.kg_retrieval.relevance_detector import RelevanceDetector
+        from ...config.config import get_settings
+
+        try:
+            settings = get_settings()
+
+            # Load spaCy model for NER (proper-noun extraction)
+            spacy_nlp = None
+            try:
+                import spacy
+                spacy_nlp = spacy.load("en_core_web_sm")
+                logger.info(
+                    "spaCy en_core_web_sm loaded for "
+                    "RelevanceDetector NER"
+                )
+            except Exception as spacy_err:
+                logger.warning(
+                    "spaCy model unavailable, query term "
+                    "coverage signal disabled: %s",
+                    spacy_err,
+                )
+
+            logger.info(
+                "Initializing RelevanceDetector via DI (lazy)"
+            )
+            _relevance_detector = RelevanceDetector(
+                spread_threshold=settings.relevance_spread_threshold,
+                variance_threshold=settings.relevance_variance_threshold,
+                specificity_threshold=settings.relevance_specificity_threshold,
+                spacy_nlp=spacy_nlp,
+            )
+            logger.info(
+                "RelevanceDetector initialized successfully via DI"
+            )
+        except Exception as e:
+            logger.error(
+                f"RelevanceDetector initialization failed: {e}"
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="Relevance detector unavailable",
+            )
+
+    return _relevance_detector
+
+
+async def get_relevance_detector_optional() -> Optional["RelevanceDetector"]:
+    """
+    Optional RelevanceDetector dependency — returns None if unavailable.
+
+    Use this for endpoints and services that can function without
+    relevance detection, enabling graceful degradation.
+
+    Returns:
+        RelevanceDetector instance or None if unavailable
+
+    Validates: Requirements 6.1, 6.2, 6.3
+    """
+    try:
+        return await get_relevance_detector()
+    except HTTPException:
+        logger.debug(
+            "RelevanceDetector unavailable, returning None "
+            "for graceful degradation"
+        )
+        return None
+    except Exception as e:
+        logger.warning(
+            f"RelevanceDetector error, returning None: {e}"
+        )
+        return None
 
 
 # =============================================================================
@@ -1706,7 +1832,8 @@ async def get_rag_service(
     kg_retrieval_service: Optional["KGRetrievalService"] = Depends(get_kg_retrieval_service_optional),
     source_prioritization_engine: Optional["SourcePrioritizationEngine"] = Depends(get_source_prioritization_engine_optional),
     query_decomposer: Optional["QueryDecomposer"] = Depends(get_query_decomposer_optional),
-    searxng_client: Optional["SearXNGClient"] = Depends(get_searxng_client_optional)
+    searxng_client: Optional["SearXNGClient"] = Depends(get_searxng_client_optional),
+    relevance_detector: Optional["RelevanceDetector"] = Depends(get_relevance_detector_optional)
 ) -> Optional["RAGService"]:
     """
     FastAPI dependency for RAGService using factory-based vector client.
@@ -1734,6 +1861,10 @@ async def get_rag_service(
     supplementary web search when Librarian results are below the configured
     threshold (Requirements 5.3, 5.4, 5.5).
     
+    When RelevanceDetector is available, it is injected into RAGService to enable
+    detection of irrelevant results via score distribution and concept specificity
+    analysis (Requirements 4.1, 4.2, 4.4).
+    
     Args:
         vector_client: Optional vector client from factory (injected)
         ai_service: AI service (injected)
@@ -1741,6 +1872,7 @@ async def get_rag_service(
         source_prioritization_engine: Optional source prioritization engine (injected)
         query_decomposer: Optional QueryDecomposer for concept extraction (injected)
         searxng_client: Optional SearXNG client for web search (injected)
+        relevance_detector: Optional RelevanceDetector for relevance analysis (injected)
     
     Returns:
         RAGService instance or None if vector client unavailable
@@ -1767,6 +1899,8 @@ async def get_rag_service(
                 features.append("QueryDecomposer")
             if searxng_client:
                 features.append("SearXNG web search")
+            if relevance_detector:
+                features.append("relevance detection")
             feature_status = f"with {', '.join(features)}" if features else "without optional features"
             
             logger.info(f"Initializing RAGService via DI (lazy) {feature_status}")
@@ -1778,7 +1912,8 @@ async def get_rag_service(
                 kg_retrieval_service=kg_retrieval_service,
                 source_prioritization_engine=source_prioritization_engine,
                 query_decomposer=query_decomposer,
-                searxng_client=searxng_client
+                searxng_client=searxng_client,
+                relevance_detector=relevance_detector
             )
             logger.info(f"RAGService initialized successfully via DI {feature_status}")
         except Exception as e:
@@ -1806,6 +1941,10 @@ async def get_rag_service(
             _rag_service.searxng_client = searxng_client
             _rag_service.searxng_enabled = True
             logger.info("RAGService updated with SearXNG web search client")
+        
+        if relevance_detector is not None and _rag_service.relevance_detector is None:
+            _rag_service.relevance_detector = relevance_detector
+            logger.info("RAGService updated with RelevanceDetector")
     
     return _rag_service
 
@@ -1861,7 +2000,8 @@ async def get_cached_rag_service(
     ai_service: "AIService" = Depends(get_ai_service),
     kg_retrieval_service: Optional["KGRetrievalService"] = Depends(get_kg_retrieval_service_optional),
     query_decomposer: Optional["QueryDecomposer"] = Depends(get_query_decomposer_optional),
-    searxng_client: Optional["SearXNGClient"] = Depends(get_searxng_client_optional)
+    searxng_client: Optional["SearXNGClient"] = Depends(get_searxng_client_optional),
+    relevance_detector: Optional["RelevanceDetector"] = Depends(get_relevance_detector_optional)
 ) -> Optional["CachedRAGService"]:
     """
     FastAPI dependency for CachedRAGService using factory-based vector client.
@@ -1886,6 +2026,7 @@ async def get_cached_rag_service(
         ai_service: AI service (injected)
         kg_retrieval_service: Optional KG retrieval service for KG-guided retrieval (injected)
         query_decomposer: Optional QueryDecomposer for concept extraction (injected)
+        relevance_detector: Optional RelevanceDetector for relevance detection (injected)
     
     Returns:
         CachedRAGService instance or None if vector client unavailable
@@ -1910,6 +2051,8 @@ async def get_cached_rag_service(
                 features.append("QueryDecomposer")
             if searxng_client:
                 features.append("SearXNG web search")
+            if relevance_detector:
+                features.append("relevance detection")
             feature_status = f"with {', '.join(features)}" if features else "without optional features"
             logger.info(f"Initializing CachedRAGService via DI (lazy) {feature_status}")
             
@@ -1919,7 +2062,8 @@ async def get_cached_rag_service(
                 ai_service=ai_service,
                 kg_retrieval_service=kg_retrieval_service,
                 query_decomposer=query_decomposer,
-                searxng_client=searxng_client
+                searxng_client=searxng_client,
+                relevance_detector=relevance_detector
             )
             logger.info(f"CachedRAGService initialized successfully via DI {feature_status}")
         except Exception as e:
@@ -1942,6 +2086,10 @@ async def get_cached_rag_service(
             _cached_rag_service.searxng_client = searxng_client
             _cached_rag_service.searxng_enabled = True
             logger.info("CachedRAGService updated with SearXNG web search client")
+        
+        if relevance_detector is not None and _cached_rag_service.relevance_detector is None:
+            _cached_rag_service.relevance_detector = relevance_detector
+            logger.info("CachedRAGService updated with RelevanceDetector")
     
     return _cached_rag_service
 
@@ -2156,16 +2304,19 @@ async def get_vector_store() -> "VectorStore":
         from ...components.vector_store.vector_store import VectorStore
         
         try:
-            logger.info("Initializing VectorStore via DI (lazy) with factory-based client")
+            logger.info("Initializing VectorStore via DI (lazy)")
             
-            # Get the factory-based vector client
-            vector_client = await get_vector_client()
+            # Get the factory-based vector client (Milvus for local, OpenSearch for AWS)
+            factory = await get_database_factory()
+            vector_client = await factory.get_vector_client()
             
-            # Create VectorStore with the factory-based client
-            _vector_store_cache = VectorStore(vector_client=vector_client)
-            _vector_store_cache.connect()
+            # Create VectorStore and inject the factory-resolved client
+            # This avoids VectorStore.connect() which hardcodes OpenSearchClient
+            _vector_store_cache = VectorStore()
+            _vector_store_cache.opensearch_client = vector_client
+            _vector_store_cache._connected = True
             
-            logger.info("VectorStore initialized successfully via DI with factory-based client")
+            logger.info("VectorStore initialized successfully via DI")
         except Exception as e:
             logger.error(f"Failed to initialize VectorStore: {e}")
             raise HTTPException(
@@ -3211,4 +3362,203 @@ async def get_relation_type_registry_optional(
         logger.warning(
             f"RelationTypeRegistry unavailable, returning None: {e}"
         )
+        return None
+
+
+# =============================================================================
+# Conversation Knowledge Service Dependencies
+# =============================================================================
+
+
+async def get_conversation_knowledge_service(
+    conversation_manager: "ConversationManager" = Depends(get_conversation_manager),
+    vector_store: "VectorStore" = Depends(get_vector_store),
+    model_client: "ModelServerClient" = Depends(get_model_server_client),
+    graph_client=Depends(get_graph_client),
+) -> "ConversationKnowledgeService":
+    """
+    FastAPI dependency for ConversationKnowledgeService.
+
+    Lazily creates and caches the service on first use.
+    Orchestrates the full conversation → knowledge pipeline
+    (chunking → embedding → vector storage → KG extraction).
+
+    Args:
+        conversation_manager: ConversationManager dependency (injected)
+        vector_store: VectorStore dependency (injected)
+        model_client: ModelServerClient dependency (injected)
+        graph_client: Graph database client dependency (injected)
+
+    Returns:
+        ConversationKnowledgeService instance
+
+    Raises:
+        HTTPException: If initialization fails (503 Service Unavailable)
+
+    Validates: Requirements 7.5, 6.3, 6.4
+    """
+    global _conversation_knowledge_service
+
+    if _conversation_knowledge_service is None:
+        from ...services.conversation_knowledge_service import (
+            ConversationKnowledgeService,
+        )
+
+        try:
+            logger.info("Initializing ConversationKnowledgeService via DI (lazy)")
+
+            # Construct ConceptNetValidator from graph_client (matching
+            # KnowledgeGraphBuilder._get_conceptnet_validator pattern).
+            # Wrapped in try/except — if construction fails, pass None.
+            conceptnet_validator = None
+            if graph_client is not None:
+                try:
+                    from ...components.knowledge_graph.conceptnet_validator import (
+                        ConceptNetValidator,
+                    )
+                    conceptnet_validator = ConceptNetValidator(graph_client)
+                except Exception as e:
+                    logger.warning(f"ConceptNetValidator init failed, proceeding without: {e}")
+
+            _conversation_knowledge_service = ConversationKnowledgeService(
+                conversation_manager=conversation_manager,
+                vector_store=vector_store,
+                model_server_client=model_client,
+                neo4j_client=graph_client,
+                conceptnet_validator=conceptnet_validator,
+            )
+            logger.info("ConversationKnowledgeService initialized successfully via DI")
+        except Exception as e:
+            logger.error(f"Failed to initialize ConversationKnowledgeService: {e}")
+            raise HTTPException(
+                status_code=503,
+                detail="Conversation knowledge service unavailable",
+            )
+
+    return _conversation_knowledge_service
+
+
+async def get_conversation_knowledge_service_optional(
+    conversation_manager: Optional["ConversationManager"] = Depends(
+        get_conversation_manager_optional
+    ),
+    vector_store: Optional["VectorStore"] = Depends(get_vector_store_optional),
+    model_client: Optional["ModelServerClient"] = Depends(
+        get_model_server_client_optional
+    ),
+    graph_client=Depends(get_graph_client_optional),
+) -> Optional["ConversationKnowledgeService"]:
+    """
+    Optional ConversationKnowledgeService dependency.
+
+    Returns None instead of raising HTTPException 503 when
+    initialization fails, enabling graceful degradation in
+    endpoints that can function without knowledge extraction.
+
+    Returns:
+        ConversationKnowledgeService instance or None
+    """
+    if conversation_manager is None or vector_store is None:
+        logger.warning(
+            "ConversationKnowledgeService unavailable "
+            "(missing conversation_manager or vector_store), "
+            "returning None"
+        )
+        return None
+
+    try:
+        return await get_conversation_knowledge_service(
+            conversation_manager=conversation_manager,
+            vector_store=vector_store,
+            model_client=model_client,
+            graph_client=graph_client,
+        )
+    except HTTPException:
+        logger.warning(
+            "ConversationKnowledgeService unavailable, "
+            "returning None for graceful degradation"
+        )
+        return None
+    except Exception as e:
+        logger.warning(
+            f"ConversationKnowledgeService error, "
+            f"returning None: {e}"
+        )
+        return None
+
+
+# =============================================================================
+# KG Query Engine Dependencies (KG Explorer)
+# =============================================================================
+_kg_query_engine: Optional["KnowledgeGraphQueryEngine"] = None
+
+
+async def get_kg_query_engine(
+    graph_client: "GraphStoreClient" = Depends(get_graph_client),
+) -> "KnowledgeGraphQueryEngine":
+    """
+    FastAPI dependency for KnowledgeGraphQueryEngine.
+
+    Lazily creates and caches the query engine on first use.
+    The engine provides neighborhood queries and concept search
+    for the KG Explorer frontend.
+
+    Args:
+        graph_client: Graph database client dependency (injected)
+
+    Returns:
+        KnowledgeGraphQueryEngine instance
+
+    Raises:
+        HTTPException: If initialization fails (503 Service Unavailable)
+
+    Validates: Requirements 15.1
+    """
+    global _kg_query_engine
+
+    if _kg_query_engine is None:
+        from ...components.knowledge_graph.kg_query_engine import (
+            KnowledgeGraphQueryEngine,
+        )
+
+        try:
+            logger.info("Initializing KnowledgeGraphQueryEngine via DI (lazy)")
+            _kg_query_engine = KnowledgeGraphQueryEngine()
+            # Inject the Neo4j client directly so the engine skips its own
+            # factory-based initialisation and reuses the DI-managed client.
+            _kg_query_engine._neo4j_client = graph_client
+            _kg_query_engine._neo4j_initialized = True
+            logger.info("KnowledgeGraphQueryEngine initialized successfully via DI")
+        except Exception as e:
+            logger.error(f"Failed to initialize KnowledgeGraphQueryEngine: {e}")
+            raise HTTPException(
+                status_code=503,
+                detail="Knowledge graph query engine unavailable",
+            )
+
+    return _kg_query_engine
+
+
+async def get_kg_query_engine_optional(
+    graph_client: Optional["GraphStoreClient"] = Depends(get_graph_client_optional),
+) -> Optional["KnowledgeGraphQueryEngine"]:
+    """
+    Optional KG query engine dependency — returns None if unavailable.
+
+    Use this for endpoints that can degrade gracefully when the graph
+    database is not reachable.
+
+    Returns:
+        KnowledgeGraphQueryEngine instance or None if unavailable
+    """
+    if graph_client is None:
+        return None
+
+    try:
+        return await get_kg_query_engine(graph_client)
+    except HTTPException:
+        logger.warning("KG query engine unavailable, returning None for graceful degradation")
+        return None
+    except Exception as e:
+        logger.warning(f"KG query engine error, returning None: {e}")
         return None

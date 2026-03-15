@@ -18,6 +18,7 @@ from ...components.conversation.conversation_manager import ConversationManager
 from ...components.export_engine.export_engine import ExportEngine
 from ...config import get_settings
 from ...models.core import ConversationThread, Message, MessageType, MultimediaElement
+from ..dependencies import get_conversation_knowledge_service_optional
 from ..middleware import get_request_id, get_user_id
 from ..models import (
     APIResponse,
@@ -49,15 +50,23 @@ _file_processing_status: Dict[str, Dict[str, Any]] = {}
 @router.post("/start", response_model=StartConversationResponse)
 async def start_conversation(
     request: StartConversationRequest,
-    user_id: Optional[str] = Depends(get_user_id)
+    background_tasks: BackgroundTasks,
+    user_id: Optional[str] = Depends(get_user_id),
+    knowledge_service=Depends(
+        get_conversation_knowledge_service_optional
+    ),
 ):
     """Start a new conversation thread."""
     try:
         # Use provided user_id or generate one
-        effective_user_id = user_id or request.user_id or str(uuid4())
+        effective_user_id = (
+            user_id or request.user_id or str(uuid4())
+        )
         
         # Create new conversation thread
-        thread = conversation_manager.start_conversation(user_id=effective_user_id)
+        thread = conversation_manager.start_conversation(
+            user_id=effective_user_id
+        )
         
         # Add initial message if provided
         if request.initial_message:
@@ -68,7 +77,38 @@ async def start_conversation(
             )
             thread.add_message(initial_msg)
         
-        logger.info(f"Started new conversation thread: {thread.thread_id}")
+        # Schedule background conversion for previous thread
+        if request.previous_thread_id:
+            if knowledge_service is not None:
+                prev_thread = (
+                    conversation_manager.get_conversation_thread(
+                        request.previous_thread_id
+                    )
+                )
+                if (
+                    prev_thread
+                    and prev_thread.get_message_count() > 0
+                ):
+                    background_tasks.add_task(
+                        knowledge_service.convert_conversation,
+                        request.previous_thread_id,
+                    )
+                    logger.info(
+                        "Scheduled background conversion for "
+                        f"previous thread: "
+                        f"{request.previous_thread_id}"
+                    )
+            else:
+                logger.warning(
+                    "Knowledge service unavailable, "
+                    "skipping conversion for previous "
+                    f"thread: {request.previous_thread_id}"
+                )
+        
+        logger.info(
+            f"Started new conversation thread: "
+            f"{thread.thread_id}"
+        )
         
         return StartConversationResponse(
             message="Conversation started successfully",
@@ -78,7 +118,10 @@ async def start_conversation(
         
     except Exception as e:
         logger.error(f"Error starting conversation: {e}")
-        raise HTTPException(status_code=500, detail="Failed to start conversation")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to start conversation"
+        )
 
 
 @router.get("/", response_model=ConversationListResponse)
@@ -595,6 +638,7 @@ async def process_uploaded_file(
         try:
             kg_builder = KnowledgeGraphBuilder()
             kg_service = KnowledgeGraphService()
+            await kg_service.client.connect()
             
             # Process each chunk through the knowledge graph builder
             # Collect all concepts first for batched embedding generation
@@ -651,7 +695,7 @@ async def process_uploaded_file(
                     if embedding is not None:
                         properties['embedding'] = embedding
                     
-                    kg_service.create_node(
+                    await kg_service.create_node(
                         label='Concept',
                         properties=properties,
                         merge_on=['concept_id']

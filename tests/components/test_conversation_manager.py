@@ -5,17 +5,26 @@ This module contains tests for conversation thread management,
 message processing, and conversation-to-knowledge conversion.
 """
 
-import pytest
+import uuid
 from datetime import datetime
 from unittest.mock import Mock, patch
-import uuid
+
+import pytest
 
 from src.multimodal_librarian.components.conversation import (
-    ConversationManager, ContextProcessor, MultimediaInput, ProcessedInput
+    ContextProcessor,
+    ConversationManager,
+    MultimediaInput,
+    ProcessedInput,
 )
 from src.multimodal_librarian.models.core import (
-    ConversationThread, Message, MessageType, MultimediaElement,
-    KnowledgeChunk, SourceType, ContentType
+    ContentType,
+    ConversationThread,
+    KnowledgeChunk,
+    Message,
+    MessageType,
+    MultimediaElement,
+    SourceType,
 )
 
 
@@ -189,7 +198,10 @@ class TestContextProcessor:
         mock_framework_class.return_value = mock_framework
         
         # Mock processed document
-        from src.multimodal_librarian.components.chunking_framework.framework import ProcessedDocument, ProcessedChunk
+        from src.multimodal_librarian.components.chunking_framework.framework import (
+            ProcessedChunk,
+            ProcessedDocument,
+        )
         from src.multimodal_librarian.models.chunking import ContentProfile
         
         mock_processed_doc = ProcessedDocument(
@@ -207,7 +219,7 @@ class TestContextProcessor:
             domain_config=Mock(),
             chunks=[
                 ProcessedChunk(
-                    id="chunk_0",
+                    id=str(uuid.uuid4()),
                     content="Test chunk content",
                     start_position=0,
                     end_position=100

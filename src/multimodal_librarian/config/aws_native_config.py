@@ -8,10 +8,11 @@ This configuration is designed for production use with AWS-managed services
 and provides the same interface as LocalDatabaseConfig for consistent usage.
 """
 
-import os
 import logging
-from typing import Dict, Any, Optional, Literal
-from pydantic import Field, field_validator, ConfigDict
+import os
+from typing import Any, Dict, Literal, Optional
+
+from pydantic import ConfigDict, Field, field_validator
 from pydantic_settings import BaseSettings
 
 logger = logging.getLogger(__name__)
@@ -134,8 +135,8 @@ class AWSNativeConfig(BaseSettings):
     enable_query_logging: bool = Field(default=False, description="Enable SQL/Cypher query logging")
     
     # Embedding Configuration
-    embedding_dimension: int = Field(default=384, description="Vector embedding dimension")
-    embedding_model: str = Field(default="sentence-transformers/all-MiniLM-L6-v2", description="Embedding model name")
+    embedding_dimension: int = Field(default=768, description="Vector embedding dimension")
+    embedding_model: str = Field(default="BAAI/bge-base-en-v1.5", description="Embedding model name")
     
     # CloudWatch Configuration
     cloudwatch_log_group: str = Field(

@@ -81,16 +81,12 @@ def sample_concept_matches():
             "name": "Chelsea AI Ventures",
             "type": "ENTITY",
             "confidence": 0.9,
-            "source_document": "doc-1",
-            "source_chunks": "chunk-1,chunk-2,chunk-3",
         },
         {
             "concept_id": "concept-2",
             "name": "AI Research",
             "type": "TOPIC",
             "confidence": 0.8,
-            "source_document": "doc-1",
-            "source_chunks": "chunk-4,chunk-5",
         },
     ]
 
@@ -225,8 +221,27 @@ class TestKGRetrievalServiceRetrieve:
         sample_chunk_data,
     ):
         """Test successful retrieval with concepts found."""
-        # Mock Neo4j to return concept matches
-        mock_neo4j_client.execute_query.return_value = sample_concept_matches
+        # Build chunk ID responses for EXTRACTED_FROM queries
+        chunk_id_results = {
+            "concept-1": [
+                {"chunk_id": "chunk-1"},
+                {"chunk_id": "chunk-2"},
+                {"chunk_id": "chunk-3"},
+            ],
+            "concept-2": [
+                {"chunk_id": "chunk-4"},
+                {"chunk_id": "chunk-5"},
+            ],
+        }
+
+        # Route execute_query: concept match queries return concepts,
+        # EXTRACTED_FROM queries return chunk IDs
+        async def route_neo4j_query(query, params=None):
+            if "EXTRACTED_FROM" in query and params and "concept_id" in params:
+                return chunk_id_results.get(params["concept_id"], [])
+            return sample_concept_matches
+
+        mock_neo4j_client.execute_query = AsyncMock(side_effect=route_neo4j_query)
         
         # Mock vector client to return chunk data
         async def get_chunk(chunk_id):
@@ -262,8 +277,26 @@ class TestKGRetrievalServiceRetrieve:
         sample_chunk_data,
     ):
         """Test that retrieval respects top_k parameter."""
-        # Setup mocks
-        mock_neo4j_client.execute_query.return_value = sample_concept_matches
+        # Build chunk ID responses for EXTRACTED_FROM queries
+        chunk_id_results = {
+            "concept-1": [
+                {"chunk_id": "chunk-1"},
+                {"chunk_id": "chunk-2"},
+                {"chunk_id": "chunk-3"},
+            ],
+            "concept-2": [
+                {"chunk_id": "chunk-4"},
+                {"chunk_id": "chunk-5"},
+            ],
+        }
+
+        # Route execute_query calls
+        async def route_neo4j_query(query, params=None):
+            if "EXTRACTED_FROM" in query and params and "concept_id" in params:
+                return chunk_id_results.get(params["concept_id"], [])
+            return sample_concept_matches
+
+        mock_neo4j_client.execute_query = AsyncMock(side_effect=route_neo4j_query)
         
         async def get_chunk(chunk_id):
             return sample_chunk_data.get(chunk_id)
@@ -482,34 +515,6 @@ class TestKGRetrievalServiceClientManagement:
 # Test: Source Chunks Parsing
 # =============================================================================
 
-class TestSourceChunksParsing:
-    """Tests for source_chunks string parsing."""
-
-    def test_parse_comma_separated(self, kg_service):
-        """Test parsing comma-separated chunk IDs."""
-        result = kg_service._parse_source_chunks("chunk-1,chunk-2,chunk-3")
-        assert result == ["chunk-1", "chunk-2", "chunk-3"]
-
-    def test_parse_with_whitespace(self, kg_service):
-        """Test parsing with whitespace around IDs."""
-        result = kg_service._parse_source_chunks("chunk-1, chunk-2 , chunk-3")
-        assert result == ["chunk-1", "chunk-2", "chunk-3"]
-
-    def test_parse_empty_string(self, kg_service):
-        """Test parsing empty string."""
-        result = kg_service._parse_source_chunks("")
-        assert result == []
-
-    def test_parse_json_array(self, kg_service):
-        """Test parsing JSON array format."""
-        result = kg_service._parse_source_chunks('["chunk-1", "chunk-2"]')
-        assert result == ["chunk-1", "chunk-2"]
-
-    def test_parse_single_chunk(self, kg_service):
-        """Test parsing single chunk ID."""
-        result = kg_service._parse_source_chunks("chunk-1")
-        assert result == ["chunk-1"]
-
 
 # =============================================================================
 # Test: Result Size Invariant (Requirement 3.4)
@@ -534,16 +539,31 @@ class TestResultSizeInvariant:
             max_results=5,
         )
         
-        # Mock many concept matches with many chunks
+        # Mock many concept matches (no source_chunks — chunk IDs come from EXTRACTED_FROM traversal)
         many_concepts = [
             {
                 "concept_id": f"concept-{i}",
                 "name": f"Concept {i}",
-                "source_chunks": ",".join([f"chunk-{i}-{j}" for j in range(10)]),
             }
             for i in range(5)
         ]
-        mock_neo4j_client.execute_query.return_value = many_concepts
+
+        # Build chunk ID responses for EXTRACTED_FROM queries
+        chunk_id_results = {
+            f"concept-{i}": [{"chunk_id": f"chunk-{i}-{j}"} for j in range(10)]
+            for i in range(5)
+        }
+
+        # Route execute_query calls: concept match queries return concepts,
+        # EXTRACTED_FROM queries return chunk IDs based on the concept_id param
+        original_call_count = [0]
+        async def route_neo4j_query(query, params=None):
+            if "EXTRACTED_FROM" in query and params and "concept_id" in params:
+                return chunk_id_results.get(params["concept_id"], [])
+            # First call returns concept matches (from QueryDecomposer)
+            return many_concepts
+
+        mock_neo4j_client.execute_query = AsyncMock(side_effect=route_neo4j_query)
         
         # Mock chunk resolution
         async def get_chunk(chunk_id):
@@ -587,14 +607,22 @@ class TestAugmentationThreshold:
             augmentation_threshold=5,
         )
         
-        # Mock only 2 concept matches (below threshold of 5)
-        mock_neo4j_client.execute_query.return_value = [
+        # Mock concept matches (no source_chunks — chunk IDs come from EXTRACTED_FROM traversal)
+        concepts = [
             {
                 "concept_id": "concept-1",
                 "name": "Test Concept",
-                "source_chunks": "chunk-1,chunk-2",
             }
         ]
+
+        # Route execute_query: concept match queries return concepts,
+        # EXTRACTED_FROM queries return chunk IDs
+        async def route_neo4j_query(query, params=None):
+            if "EXTRACTED_FROM" in query and params and "concept_id" in params:
+                return [{"chunk_id": "chunk-1"}, {"chunk_id": "chunk-2"}]
+            return concepts
+
+        mock_neo4j_client.execute_query = AsyncMock(side_effect=route_neo4j_query)
         
         # Mock chunk resolution
         async def get_chunk(chunk_id):
@@ -650,14 +678,22 @@ class TestRetrievalSourceMetadata:
             model_client=mock_model_client,
         )
         
-        # Mock concept matches
-        mock_neo4j_client.execute_query.return_value = [
+        # Mock concept matches (no source_chunks — chunk IDs come from EXTRACTED_FROM traversal)
+        concepts = [
             {
                 "concept_id": "concept-1",
                 "name": "Test Concept",
-                "source_chunks": "chunk-1,chunk-2",
             }
         ]
+
+        # Route execute_query: concept match queries return concepts,
+        # EXTRACTED_FROM queries return chunk IDs
+        async def route_neo4j_query(query, params=None):
+            if "EXTRACTED_FROM" in query and params and "concept_id" in params:
+                return [{"chunk_id": "chunk-1"}, {"chunk_id": "chunk-2"}]
+            return concepts
+
+        mock_neo4j_client.execute_query = AsyncMock(side_effect=route_neo4j_query)
         
         # Mock chunk resolution
         async def get_chunk(chunk_id):

@@ -22,13 +22,13 @@ Example Usage:
     await client.connect()
     
     # Create collection
-    await client.create_collection("documents", dimension=384)
+    await client.create_collection("documents", dimension=768)
     
     # Insert vectors
     vectors = [
         {
             "id": "doc1_chunk1",
-            "vector": [0.1, 0.2, 0.3, ...],  # 384-dim embedding
+            "vector": [0.1, 0.2, 0.3, ...],  # 768-dim embedding
             "metadata": {
                 "content": "Sample text content",
                 "source_id": "doc1",
@@ -39,7 +39,7 @@ Example Usage:
     await client.insert_vectors("documents", vectors)
     
     # Search similar vectors
-    query_vector = [0.1, 0.2, 0.3, ...]  # 384-dim query
+    query_vector = [0.1, 0.2, 0.3, ...]  # 768-dim query
     results = await client.search_vectors("documents", query_vector, k=5)
     
     # High-level semantic search
@@ -976,11 +976,14 @@ class MilvusClient:
             # Get collection
             collection = await self._get_collection(collection_name)
             
+            # Ensure collection is loaded (required for delete operations)
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, collection.load)
+            
             # Build delete expression for source_id
             delete_expr = f'metadata["source_id"] == "{source_id}"'
             
             # Delete vectors
-            loop = asyncio.get_event_loop()
             delete_result = await loop.run_in_executor(
                 None,
                 collection.delete,
@@ -1208,7 +1211,7 @@ class MilvusClient:
                 
                 if client and client.enabled:
                     self._model_server_client = client
-                    self._embedding_dimension = 384  # Default for all-MiniLM-L6-v2
+                    self._embedding_dimension = 768  # Default for bge-base-en-v1.5
                     logger.info("Using model server for embeddings (non-blocking)")
                     return
                     
@@ -1247,7 +1250,7 @@ class MilvusClient:
                 
                 if client and client.enabled:
                     self._model_server_client = client
-                    self._embedding_dimension = 384  # Default for all-MiniLM-L6-v2
+                    self._embedding_dimension = 768  # Default for bge-base-en-v1.5
                     logger.info("Using model server for embeddings (non-blocking)")
                     return
             except Exception as e:
@@ -1374,7 +1377,7 @@ class MilvusClient:
         
         Args:
             collection_name: Name of the collection (must be unique)
-            dimension: Vector dimension (e.g., 384 for sentence-transformers,
+            dimension: Vector dimension (e.g., 768 for sentence-transformers,
                       1536 for OpenAI embeddings)
             metric_type: Distance metric for similarity search:
                         - "L2": Euclidean distance (default)

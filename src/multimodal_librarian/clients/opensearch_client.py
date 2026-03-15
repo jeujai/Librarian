@@ -74,7 +74,7 @@ class OpenSearchClient:
         self._health_check_interval = 30  # seconds
         self._is_healthy = False
         self.index_name = "knowledge_chunks"
-        self.embedding_dimension = 384  # Default for all-MiniLM-L6-v2
+        self.embedding_dimension = 768  # Default for bge-base-en-v1.5
         
         # Support backward compatibility with auto_connect
         if auto_connect:
@@ -513,8 +513,10 @@ class OpenSearchClient:
                     "content_type": chunk.get('content_type'),
                     "location_reference": chunk.get('location_reference'),
                     "section": chunk.get('section'),
+                    "document_title": chunk.get('document_title'),
                     "content": chunk.get('content', '')[:65535],  # Truncate if too long
-                    "created_at": chunk['created_at']
+                    "created_at": chunk['created_at'],
+                    "metadata": chunk.get('metadata', {}),
                 }
                 
                 # Add to bulk body

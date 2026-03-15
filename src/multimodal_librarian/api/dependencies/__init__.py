@@ -67,6 +67,8 @@ from .services import (  # =====================================================
     get_conceptnet_client_optional,
     get_connection_manager,
     get_connection_manager_with_services,
+    get_conversation_knowledge_service,
+    get_conversation_knowledge_service_optional,
     get_conversation_manager,
     get_conversation_manager_optional,
     get_enrichment_cache,
@@ -74,8 +76,12 @@ from .services import (  # =====================================================
     get_enrichment_service,
     get_enrichment_service_optional,
     get_export_engine,
+    get_kg_query_engine,
+    get_kg_query_engine_optional,
     get_kg_retrieval_service,
     get_kg_retrieval_service_optional,
+    get_model_server_client,
+    get_model_server_client_optional,
     get_model_status_service,
     get_model_status_service_optional,
     get_multimedia_generator,
@@ -90,6 +96,8 @@ from .services import (  # =====================================================
     get_rag_service,
     get_relation_type_registry,
     get_relation_type_registry_optional,
+    get_relevance_detector,
+    get_relevance_detector_optional,
     get_search_service,
     get_search_service_optional,
     get_searxng_client,
@@ -124,6 +132,9 @@ __all__ = [
     # Model Status Service Dependencies
     "get_model_status_service",
     "get_model_status_service_optional",
+    # Model Server Client Dependencies
+    "get_model_server_client",
+    "get_model_server_client_optional",
     # Processing Status Service Dependencies
     "get_processing_status_service",
     "get_processing_status_service_optional",
@@ -142,6 +153,12 @@ __all__ = [
     # KG Retrieval Service Dependencies
     "get_kg_retrieval_service",
     "get_kg_retrieval_service_optional",
+    # KG Query Engine Dependencies (KG Explorer)
+    "get_kg_query_engine",
+    "get_kg_query_engine_optional",
+    # Conversation Knowledge Service Dependencies
+    "get_conversation_knowledge_service",
+    "get_conversation_knowledge_service_optional",
     # Conversation/Query Dependencies
     "get_conversation_manager",
     "get_conversation_manager_optional",
@@ -149,6 +166,9 @@ __all__ = [
     "get_query_processor_optional",
     # QueryDecomposer Dependencies
     "get_query_decomposer_optional",
+    # RelevanceDetector Dependencies
+    "get_relevance_detector",
+    "get_relevance_detector_optional",
     # Relation Type Registry Dependencies
     "get_relation_type_registry",
     "get_relation_type_registry_optional",

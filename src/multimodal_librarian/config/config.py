@@ -110,7 +110,7 @@ class Settings(BaseSettings):
     # Processing settings
     chunk_size: int = Field(default=512, description="Default chunk size for text processing")
     chunk_overlap: int = Field(default=50, description="Default chunk overlap")
-    embedding_model: str = Field(default="all-MiniLM-L6-v2", description="Sentence transformer model")
+    embedding_model: str = Field(default="BAAI/bge-base-en-v1.5", description="Sentence transformer model")
     
     # Model server settings
     model_server_url: str = Field(default="http://model-server:8001", description="Model server base URL")
@@ -124,10 +124,9 @@ class Settings(BaseSettings):
     target_embedding_tokens: int = Field(
         default=256,
         description=(
-            "Optimal token count for the embedding model. Sentence-transformer models "
-            "(e.g. all-MiniLM-L6-v2) are trained on sequences up to 256 tokens; embeddings "
-            "degrade when input length diverges from training distribution "
-            "(Reimers & Gurevych, 2019). Tune per model — bge-large-en-v1.5 handles 512."
+            "Optimal token count for the embedding model. bge-base-en-v1.5 supports up "
+            "to 512 tokens; embeddings degrade when input length diverges from training "
+            "distribution. Tune per model — bge-base-en-v1.5 handles 512."
         ),
     )
     max_embedding_tokens: int = Field(
@@ -247,6 +246,20 @@ class Settings(BaseSettings):
             "web results without capping everything to 1.0. A value of 1.15 "
             "turns a 0.82 into 0.943, preserving score differentiation."
         ),
+    )
+
+    # Relevance detection thresholds
+    relevance_spread_threshold: float = Field(
+        default=0.05,
+        description="Minimum final_score spread to avoid semantic floor detection",
+    )
+    relevance_variance_threshold: float = Field(
+        default=0.001,
+        description="Minimum final_score variance to avoid semantic floor detection",
+    )
+    relevance_specificity_threshold: float = Field(
+        default=0.3,
+        description="Minimum concept specificity score to be considered domain-specific",
     )
 
     # Knowledge graph settings

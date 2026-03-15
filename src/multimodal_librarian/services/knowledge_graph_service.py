@@ -749,93 +749,68 @@ class KnowledgeGraphService:
     ) -> List[Dict[str, Any]]:
         """
         Query for related concepts by traversing SAME_AS relationships.
-        
+
         This method finds concepts from other documents that are linked
-        via SAME_AS relationships (shared YAGO Q-numbers).
-        
+        via SAME_AS relationships (shared YAGO Q-numbers). Document IDs
+        are derived from EXTRACTED_FROM traversal to Chunk nodes instead
+        of reading source_document properties.
+
         Args:
             concept_id: Starting concept ID
             max_hops: Maximum number of SAME_AS hops to traverse (default 2)
-            
+
         Returns:
             List of related concepts from other documents
-            
-        Requirements: 5.2
+
+        Requirements: 10.1
         """
         try:
-            # Find concepts connected via SAME_AS relationships
-            query = """
-            MATCH (start:Concept {concept_id: $concept_id})
-            MATCH path = (start)-[:SAME_AS*1..$max_hops]-(related:Concept)
-            WHERE related.source_document <> start.source_document
-            RETURN DISTINCT 
+            # Build the SAME_AS path pattern based on max_hops
+            if max_hops == 1:
+                same_as_pattern = "(start)-[:SAME_AS]-(related:Concept)"
+            elif max_hops == 2:
+                same_as_pattern = "(start)-[:SAME_AS*1..2]-(related:Concept)"
+            else:
+                same_as_pattern = "(start)-[:SAME_AS*1..3]-(related:Concept)"
+
+            # Use Chunk-based document derivation instead of source_document property
+            query = f"""
+            MATCH (start:Concept {{concept_id: $concept_id}})
+            MATCH {same_as_pattern}
+            WITH start, related
+            MATCH (start)-[:EXTRACTED_FROM]->(sch:Chunk)
+            WITH start, related, collect(DISTINCT sch.source_id) AS start_source_ids
+            MATCH (related)-[:EXTRACTED_FROM]->(rch:Chunk)
+            WITH related, start_source_ids, collect(DISTINCT rch.source_id) AS related_source_ids
+            WHERE NONE(sid IN related_source_ids WHERE sid IN start_source_ids)
+            RETURN DISTINCT
                 related.concept_id as concept_id,
                 related.name as name,
-                related.source_document as document_id,
-                related.yago_qid as q_number,
-                length(path) as hops
-            ORDER BY hops ASC
+                related_source_ids as document_ids,
+                related.yago_qid as q_number
             """
-            
-            # Note: Cypher doesn't support parameterized path lengths directly
-            # We use a workaround with CASE or multiple queries
-            # For simplicity, we'll use a fixed max_hops approach
-            if max_hops == 1:
-                query = """
-                MATCH (start:Concept {concept_id: $concept_id})
-                MATCH (start)-[:SAME_AS]-(related:Concept)
-                WHERE related.source_document <> start.source_document
-                RETURN DISTINCT 
-                    related.concept_id as concept_id,
-                    related.name as name,
-                    related.source_document as document_id,
-                    related.yago_qid as q_number,
-                    1 as hops
-                """
-            elif max_hops == 2:
-                query = """
-                MATCH (start:Concept {concept_id: $concept_id})
-                MATCH (start)-[:SAME_AS*1..2]-(related:Concept)
-                WHERE related.source_document <> start.source_document
-                RETURN DISTINCT 
-                    related.concept_id as concept_id,
-                    related.name as name,
-                    related.source_document as document_id,
-                    related.yago_qid as q_number
-                """
-            else:
-                query = """
-                MATCH (start:Concept {concept_id: $concept_id})
-                MATCH (start)-[:SAME_AS*1..3]-(related:Concept)
-                WHERE related.source_document <> start.source_document
-                RETURN DISTINCT 
-                    related.concept_id as concept_id,
-                    related.name as name,
-                    related.source_document as document_id,
-                    related.yago_qid as q_number
-                """
-            
+
             result = await self.client.execute_query(
                 query, 
                 {"concept_id": concept_id}
             )
-            
+
             related_concepts = []
             for record in result:
                 related_concepts.append({
                     "concept_id": record["concept_id"],
                     "name": record["name"],
-                    "document_id": record["document_id"],
+                    "document_ids": record.get("document_ids", []),
                     "q_number": record.get("q_number"),
                     "hops": record.get("hops", 1)
                 })
-            
+
             logger.info(
                 f"Found {len(related_concepts)} cross-document concepts "
                 f"for {concept_id}"
             )
             return related_concepts
-            
+
         except Exception as e:
             logger.error(
                 f"Error querying with SAME_AS traversal for {concept_id}: {e}"

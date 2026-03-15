@@ -35,10 +35,22 @@ def _get_progress_redis():
     return _progress_redis
 
 def _set_parallel_progress(document_id: str, task_name: str, fraction: float):
-    """Write this task's fraction (0.0–1.0) and return averaged overall %."""
+    """Write this task's fraction (0.0–1.0) and return averaged overall %.
+
+    Monotonic: the stored fraction never decreases.  This prevents the
+    progress bar from jumping backwards when a duplicate task delivery
+    (acks_late + broker hiccup) restarts from zero.
+    """
     r = _get_progress_redis()
     key = f"docprog:{document_id}:{task_name}"
-    r.set(key, str(min(fraction, 1.0)), ex=7200)  # 2h TTL
+    new_val = min(fraction, 1.0)
+    # Only increase — never decrease
+    old_raw = r.get(key)
+    if old_raw is not None:
+        old_val = float(old_raw)
+        if new_val < old_val:
+            new_val = old_val
+    r.set(key, str(new_val), ex=7200)  # 2h TTL
     # Read both fractions
     bridge_val = r.get(f"docprog:{document_id}:bridges")
     kg_val = r.get(f"docprog:{document_id}:kg")
@@ -51,6 +63,45 @@ def _cleanup_parallel_progress(document_id: str):
     """Remove Redis keys after finalization."""
     r = _get_progress_redis()
     r.delete(f"docprog:{document_id}:bridges", f"docprog:{document_id}:kg")
+
+
+class DocumentDeletedError(Exception):
+    """Raised when a pipeline task detects the document has been deleted."""
+    pass
+
+
+async def _is_document_deleted(document_id: str) -> bool:
+    """Check if a document has been deleted from PostgreSQL.
+
+    Returns True if the knowledge_sources row no longer exists, meaning
+    the user deleted the document while processing was in progress.
+    """
+    try:
+        from ..database.connection import get_async_connection
+
+        conn = await get_async_connection()
+        try:
+            row = await conn.fetchrow(
+                "SELECT 1 FROM multimodal_librarian.knowledge_sources WHERE id = $1",
+                document_id,
+            )
+            return row is None
+        finally:
+            await conn.close()
+    except Exception as e:
+        logger.warning(f"Could not check document existence for {document_id}: {e}")
+        return False  # Assume not deleted on error to avoid false aborts
+
+
+def _check_document_deleted(document_id: str, stage: str = ""):
+    """Synchronous wrapper for Celery tasks — raises DocumentDeletedError."""
+    deleted = asyncio.run(_is_document_deleted(document_id))
+    if deleted:
+        msg = f"Document {document_id} was deleted during processing"
+        if stage:
+            msg += f" (detected at {stage})"
+        logger.warning(msg)
+        raise DocumentDeletedError(msg)
 
 # Create Celery app
 celery_app = Celery(
@@ -792,8 +843,15 @@ def finalize_processing_task(parallel_results, document_id: str):
     try:
         logger.info(f"Finalizing document processing for {document_id}")
         
-        # Update job and document status
+        # If the document was deleted during processing, skip finalization
         _cleanup_parallel_progress(document_id)
+        try:
+            _check_document_deleted(document_id, "finalize_processing")
+        except DocumentDeletedError:
+            logger.info(f"Skipping finalization for deleted document {document_id}")
+            return {'status': 'aborted', 'document_id': document_id}
+        
+        # Update job and document status
         asyncio.run(_update_job_status_sync(
             UUID(document_id), 'running', 95.0, 'Finalizing'
         ))
@@ -892,6 +950,7 @@ def extract_pdf_content_task(document_id: str):
         Serialized DocumentContent
     """
     try:
+        _check_document_deleted(document_id, "extract_pdf_content start")
         logger.info(f"Extracting PDF content for document {document_id}")
         return asyncio.run(_extract_pdf_content_async(document_id))
     except Exception as e:
@@ -1057,6 +1116,8 @@ def generate_chunks_task(pdf_content: Dict[str, Any], document_id: str):
         
         logger.info(f"Generating chunks for document {document_id}")
         
+        _check_document_deleted(document_id, "generate_chunks start")
+        
         # Initialize database if needed
         if not db_manager.AsyncSessionLocal:
             db_manager.initialize()
@@ -1092,9 +1153,15 @@ def generate_chunks_task(pdf_content: Dict[str, Any], document_id: str):
         document_title = pdf_content['metadata']['title']
         
         serialized_chunks = []
+        last_seen_page = None
         for chunk in processed_document.chunks:
             # Extract page number from [Page N] markers in chunk content
             page_number = _extract_page_number_from_content(chunk.content)
+            if page_number is not None:
+                last_seen_page = page_number
+            elif last_seen_page is not None:
+                # Propagate last-seen page to chunks without a marker
+                page_number = last_seen_page
             
             serialized_chunk = {
                 'id': chunk.id,
@@ -1206,6 +1273,8 @@ def generate_bridges_task(processed_document: Dict[str, Any], document_id: str):
         
         logger.info(f"Generating bridges for document {document_id}")
         
+        _check_document_deleted(document_id, "generate_bridges start")
+        
         if not db_manager.AsyncSessionLocal:
             db_manager.initialize()
         
@@ -1292,6 +1361,13 @@ def generate_bridges_task(processed_document: Dict[str, Any], document_id: str):
             'bridges_generated': len(bridges)
         }
         
+    except DocumentDeletedError:
+        logger.info(f"Bridge generation aborted — document {document_id} was deleted")
+        return {
+            'status': 'aborted',
+            'document_id': document_id,
+            'bridges_generated': 0,
+        }
     except Exception as e:
         logger.error(f"Bridge generation failed for document {document_id}: {e}")
         # Don't fail the entire pipeline for bridge errors
@@ -1401,7 +1477,7 @@ async def _store_embeddings_in_vector_db(document_id: str, chunks: List[Dict[str
         model_client = await initialize_model_client()
         if model_client and model_client.enabled:
             vector_client._model_server_client = model_client
-            vector_client._embedding_dimension = 384  # Default for all-MiniLM-L6-v2
+            vector_client._embedding_dimension = 768  # Default for bge-base-en-v1.5
             logger.info("Model server client initialized for Celery worker")
         
         # Prepare all chunks for vector storage
@@ -1511,7 +1587,7 @@ async def _store_bridge_embeddings_in_vector_db(document_id: str, bridges: List[
         model_client = await initialize_model_client()
         if model_client and model_client.enabled:
             vector_client._model_server_client = model_client
-            vector_client._embedding_dimension = 384  # Default for all-MiniLM-L6-v2
+            vector_client._embedding_dimension = 768  # Default for bge-base-en-v1.5
             logger.info("Model server client initialized for bridge embeddings in Celery worker")
         
         # Prepare bridge chunks for vector storage
@@ -1558,7 +1634,7 @@ async def _store_bridge_embeddings_in_vector_db(document_id: str, bridges: List[
         raise
 
 
-@celery_app.task(name='update_knowledge_graph_task', time_limit=3 * 60 * 60, soft_time_limit=170 * 60)
+@celery_app.task(name='update_knowledge_graph_task', time_limit=3 * 60 * 60, soft_time_limit=170 * 60, acks_late=False)
 def update_knowledge_graph_task(processed_document: Dict[str, Any], document_id: str):
     """
     Update knowledge graph with document concepts.
@@ -1573,6 +1649,8 @@ def update_knowledge_graph_task(processed_document: Dict[str, Any], document_id:
         from ..database.connection import db_manager
         
         logger.info(f"Updating knowledge graph for document {document_id}")
+        
+        _check_document_deleted(document_id, "update_knowledge_graph start")
         
         # Initialize database if needed
         if not db_manager.AsyncSessionLocal:
@@ -1592,6 +1670,9 @@ def update_knowledge_graph_task(processed_document: Dict[str, Any], document_id:
         # Return processed_document for next task in chain
         return processed_document
         
+    except DocumentDeletedError:
+        logger.info(f"KG update aborted — document {document_id} was deleted")
+        return {'status': 'aborted', 'document_id': document_id}
     except Exception as e:
         logger.error(f"Knowledge graph update failed for document {document_id}: {e}")
         # KG failure is fatal — re-raise to fail the entire processing pipeline
@@ -1722,6 +1803,14 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
             batch = knowledge_chunks[batch_start:batch_end]
             batch_num = batch_start // BATCH_SIZE + 1
 
+            # Check if document was deleted mid-processing
+            if await _is_document_deleted(document_id):
+                logger.warning(
+                    f"Document {document_id} deleted during KG processing "
+                    f"(detected at batch {batch_num}/{total_batches}). Aborting."
+                )
+                return
+
             # --- Extract concepts & relationships concurrently (NO per-chunk ConceptNet) ---
             semaphore = asyncio.Semaphore(MAX_CONCURRENT)
 
@@ -1796,25 +1885,46 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
             # --- Persist concepts incrementally (batched UNWIND) ---
             now_ts = datetime.utcnow().isoformat()
 
-            # Split into new concepts vs existing (need source_chunks append)
+            # --- Step 1: MERGE Chunk nodes for this batch ---
+            # Collect unique (chunk_id, source_id) pairs from the batch's KnowledgeChunk objects
+            chunk_rows = []
+            seen_chunk_ids = set()
+            for kc in batch:
+                if kc.id not in seen_chunk_ids:
+                    seen_chunk_ids.add(kc.id)
+                    chunk_rows.append({
+                        'chunk_id': kc.id,
+                        'source_id': kc.source_id,
+                        'created_at': now_ts,
+                    })
+
+            if chunk_rows:
+                for sub_start in range(0, len(chunk_rows), _CONCEPT_REL_SUB_BATCH):
+                    sub_batch = chunk_rows[sub_start:sub_start + _CONCEPT_REL_SUB_BATCH]
+                    try:
+                        await kg_service.client.execute_query(
+                            """
+                            UNWIND $rows AS row
+                            MERGE (ch:Chunk {chunk_id: row.chunk_id})
+                            ON CREATE SET ch.source_id = row.source_id,
+                                          ch.created_at = row.created_at
+                            RETURN ch.chunk_id AS chunk_id
+                            """,
+                            {'rows': sub_batch}
+                        )
+                    except Exception as e:
+                        logger.warning(f"Batch Chunk MERGE failed: {e}")
+
+            # --- Step 2: MERGE Concept nodes (no source_chunks/source_document) ---
             new_concept_rows = []
-            append_rows = []
             for concept in batch_concepts:
                 if concept.concept_id in concept_id_map:
-                    new_chunks = [c for c in (concept.source_chunks or []) if c]
-                    if new_chunks:
-                        append_rows.append({
-                            'concept_id': concept.concept_id,
-                            'new_chunks': ','.join(new_chunks),
-                        })
                     continue
                 row = {
                     'concept_id': concept.concept_id,
                     'name': concept.concept_name,
                     'type': concept.concept_type,
                     'confidence': concept.confidence,
-                    'source_document': document_id,
-                    'source_chunks': ','.join(concept.source_chunks) if concept.source_chunks else '',
                     'created_at': now_ts,
                     'updated_at': now_ts,
                 }
@@ -1822,23 +1932,6 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
                 if embedding is not None:
                     row['embedding'] = embedding
                 new_concept_rows.append(row)
-
-            # Batch append source_chunks for existing concepts
-            if append_rows:
-                try:
-                    await kg_service.client.execute_query(
-                        """
-                        UNWIND $rows AS row
-                        MATCH (c:Concept {concept_id: row.concept_id})
-                        SET c.source_chunks = CASE
-                            WHEN c.source_chunks IS NULL OR c.source_chunks = '' THEN row.new_chunks
-                            ELSE c.source_chunks + ',' + row.new_chunks
-                        END
-                        """,
-                        {'rows': append_rows}
-                    )
-                except Exception as e:
-                    logger.warning(f"Batch append source_chunks failed: {e}")
 
             # Batch MERGE new concepts (dynamically scaled sub-batches)
             CONCEPT_BATCH_SIZE = _CONCEPT_REL_SUB_BATCH
@@ -1856,8 +1949,6 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
                             MERGE (c:Concept {concept_id: row.concept_id})
                             ON CREATE SET c.name = row.name, c.type = row.type,
                                           c.confidence = row.confidence,
-                                          c.source_document = row.source_document,
-                                          c.source_chunks = row.source_chunks,
                                           c.created_at = row.created_at,
                                           c.updated_at = row.updated_at
                             ON MATCH SET c.updated_at = row.updated_at
@@ -1881,8 +1972,6 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
                             MERGE (c:Concept {concept_id: row.concept_id})
                             ON CREATE SET c.name = row.name, c.type = row.type,
                                           c.confidence = row.confidence,
-                                          c.source_document = row.source_document,
-                                          c.source_chunks = row.source_chunks,
                                           c.embedding = row.embedding,
                                           c.created_at = row.created_at,
                                           c.updated_at = row.updated_at
@@ -1904,6 +1993,37 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
                 if concept.concept_id in concept_id_map and concept.concept_id not in all_concept_ids:
                     concept_name_to_id[concept.concept_name.lower()] = concept.concept_id
                     all_concept_ids.append(concept.concept_id)
+
+            # --- Step 3: MERGE EXTRACTED_FROM relationships (Concept -> Chunk) ---
+            ef_rows = []
+            for concept in batch_concepts:
+                if concept.concept_id not in concept_id_map:
+                    continue
+                for chunk_id in (concept.source_chunks or []):
+                    if chunk_id:
+                        ef_rows.append({
+                            'concept_id': concept.concept_id,
+                            'chunk_id': chunk_id,
+                            'created_at': now_ts,
+                        })
+
+            EF_BATCH_SIZE = _CONCEPT_REL_SUB_BATCH
+            for sub_start in range(0, len(ef_rows), EF_BATCH_SIZE):
+                sub_batch = ef_rows[sub_start:sub_start + EF_BATCH_SIZE]
+                try:
+                    await kg_service.client.execute_query(
+                        """
+                        UNWIND $rows AS row
+                        MATCH (c:Concept {concept_id: row.concept_id})
+                        MATCH (ch:Chunk {chunk_id: row.chunk_id})
+                        MERGE (c)-[r:EXTRACTED_FROM]->(ch)
+                        ON CREATE SET r.created_at = row.created_at
+                        RETURN count(r) AS cnt
+                        """,
+                        {'rows': sub_batch}
+                    )
+                except Exception as e:
+                    logger.warning(f"Batch EXTRACTED_FROM MERGE failed: {e}")
 
             # --- Persist relationships incrementally (batched UNWIND) ---
             # Group relationships by type (Neo4j requires static rel types in queries)

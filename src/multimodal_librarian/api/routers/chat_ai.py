@@ -145,7 +145,10 @@ async def send_chat_message(
                             "document_id": source.document_id,
                             "title": source.document_title,
                             "relevance_score": source.relevance_score,
-                            "location": f"Page {source.page_number}" if source.page_number else source.section_title
+                            "location": f"Page {source.page_number}" if source.page_number else source.section_title,
+                            "knowledge_source_type": getattr(source, 'knowledge_source_type', None),
+                            "source_type": getattr(source, 'source_type', None),
+                            "url": getattr(source, 'url', None),
                         }
                         for source in rag_response.sources
                     ]

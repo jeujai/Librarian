@@ -6,8 +6,8 @@ Wire conversation-derived `KnowledgeChunk` objects through the existing embeddin
 
 ## Tasks
 
-- [ ] 1. Enhance ConversationManager location_reference format
-  - [ ] 1.1 Update `convert_to_knowledge_chunks()` in `src/multimodal_librarian/components/conversation/conversation_manager.py`
+- [x] 1. Enhance ConversationManager location_reference format
+  - [x] 1.1 Update `convert_to_knowledge_chunks()` in `src/multimodal_librarian/components/conversation/conversation_manager.py`
     - Change `location_reference` from `group[0].timestamp.isoformat()` to `"{thread_title} | {start_timestamp} – {end_timestamp}"` format
     - Derive thread title from the conversation's `knowledge_summary` field or first user message content (truncated to 80 chars)
     - Set `section` field to the thread title instead of message ID range
@@ -21,34 +21,34 @@ Wire conversation-derived `KnowledgeChunk` objects through the existing embeddin
     - Test fallback when no title is available (uses first message content truncated)
     - _Requirements: 6.2_
 
-- [ ] 2. Implement ConversationKnowledgeService core
-  - [ ] 2.1 Create `src/multimodal_librarian/services/conversation_knowledge_service.py` with dataclasses and service skeleton
+- [x] 2. Implement ConversationKnowledgeService core
+  - [x] 2.1 Create `src/multimodal_librarian/services/conversation_knowledge_service.py` with dataclasses and service skeleton
     - Define `ConversionResult` and `CleanupResult` dataclasses
     - Implement `ConversationKnowledgeService.__init__()` accepting `ConversationManager`, `VectorStore`, `ModelServerClient`, and Neo4j client
     - Implement `_cleanup_existing(thread_id)` — delete vectors via `VectorStore.delete_chunks_by_source()` and KG concepts via Cypher `MATCH (c:Concept {source_document: $thread_id}) DETACH DELETE c`
     - Implement `_remove_kg_data(thread_id)` as the Neo4j cleanup helper
     - _Requirements: 8.1, 8.2_
 
-  - [ ] 2.2 Implement embedding generation in `ConversationKnowledgeService`
+  - [x] 2.2 Implement embedding generation in `ConversationKnowledgeService`
     - Implement `_generate_embeddings(chunks)` — call `ModelServerClient.generate_embeddings()` with `[chunk.content for chunk in chunks]` (text only, no multimedia metadata)
     - Assign returned embedding vectors to each chunk's `embedding` field
     - Raise on failure (fail-fast)
     - _Requirements: 1.2, 2.1, 2.2, 2.3_
 
-  - [ ] 2.3 Implement vector storage in `ConversationKnowledgeService`
+  - [x] 2.3 Implement vector storage in `ConversationKnowledgeService`
     - Implement `_store_vectors(chunks)` — call `VectorStore.store_embeddings(chunks)`
     - Chunks already have `source_type=SourceType.CONVERSATION` and `source_id=thread_id` set by `ConversationManager`
     - Raise on failure (fail-fast)
     - _Requirements: 1.3, 3.1, 3.2, 3.3, 3.4_
 
-  - [ ] 2.4 Implement KG concept extraction in `ConversationKnowledgeService`
+  - [x] 2.4 Implement KG concept extraction in `ConversationKnowledgeService`
     - Implement `_extract_and_store_concepts(chunks, thread_id)` — use `ConceptExtractor.extract_all_concepts_async()` for each chunk
     - Set `source_document=thread_id` on all Concept nodes
     - Persist concepts and relationships to Neo4j
     - Raise on failure (fail-fast, KG failure is FATAL)
     - _Requirements: 1.4, 4.1, 4.2, 4.3_
 
-  - [ ] 2.5 Implement the main `convert_conversation(thread_id)` orchestrator method
+  - [x] 2.5 Implement the main `convert_conversation(thread_id)` orchestrator method
     - Retrieve conversation via `ConversationManager.get_conversation(thread_id)`
     - Raise if thread not found or has no messages
     - Execute pipeline: cleanup → chunk → embed → store → KG extract
@@ -80,23 +80,23 @@ Wire conversation-derived `KnowledgeChunk` objects through the existing embeddin
     - Run pipeline twice on same thread, verify cleanup was called before second ingestion and final state has no duplicates
     - **Validates: Requirements 3.4, 8.1, 8.2**
 
-- [ ] 3. Checkpoint - Ensure all tests pass
+- [x] 3. Checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 4. Create API endpoint and DI wiring
-  - [ ] 4.1 Add `get_conversation_knowledge_service` DI provider in `src/multimodal_librarian/api/dependencies/services.py`
+- [x] 4. Create API endpoint and DI wiring
+  - [x] 4.1 Add `get_conversation_knowledge_service` DI provider in `src/multimodal_librarian/api/dependencies/services.py`
     - Follow existing pattern: lazy init, singleton caching
     - Depend on `get_conversation_manager`, `get_vector_store`, `get_model_server_client`, `get_graph_client`
     - _Requirements: 7.5_
 
-  - [ ] 4.2 Create API router at `src/multimodal_librarian/api/routers/conversation_knowledge.py`
+  - [x] 4.2 Create API router at `src/multimodal_librarian/api/routers/conversation_knowledge.py`
     - Define `ConvertToKnowledgeResponse` Pydantic model with `thread_id`, `chunks_created`, `concepts_extracted`, `status`
     - Implement `POST /api/conversations/{thread_id}/convert-to-knowledge` endpoint
     - Use `Depends(get_conversation_knowledge_service)` for DI
     - Return 404 for nonexistent thread, 400 for empty conversation, 500 for pipeline failures with stage info
     - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5_
 
-  - [ ] 4.3 Register router in `src/multimodal_librarian/main.py`
+  - [x] 4.3 Register router in `src/multimodal_librarian/main.py`
     - Add try/except import block for `conversation_knowledge` router following existing pattern
     - Set `FEATURES["conversation_knowledge"] = True` on success
     - _Requirements: 7.1_
@@ -114,8 +114,8 @@ Wire conversation-derived `KnowledgeChunk` objects through the existing embeddin
     - Test 500 for pipeline failure with stage info in response
     - _Requirements: 7.3, 7.4_
 
-- [ ] 5. Verify unified search and citation behavior
-  - [ ] 5.1 Verify existing RAG pipeline handles conversation chunks without modification
+- [x] 5. Verify unified search and citation behavior
+  - [x] 5.1 Verify existing RAG pipeline handles conversation chunks without modification
     - Confirm `RAGService._retrieval_phase` does not filter by `source_type` in Milvus queries
     - Confirm `KnowledgeGraphQueryEngine._find_related_concepts_neo4j` returns concepts regardless of `source_document` value
     - Add inline code comments documenting this behavior if not already present
@@ -139,7 +139,7 @@ Wire conversation-derived `KnowledgeChunk` objects through the existing embeddin
     - Generate mixed `BOOK` and `CONVERSATION` citations, verify `get_citations_by_source()` partitions correctly
     - **Validates: Requirements 6.1, 6.3**
 
-- [ ] 6. Final checkpoint - Ensure all tests pass
+- [x] 6. Final checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 ## Notes

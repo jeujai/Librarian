@@ -262,6 +262,8 @@ class Neo4jClient:
         - concept_type_index: Index on Concept.type for filtering
         - document_id_index: Index on Document.document_id for document lookups
         - concept_id_unique: Unique constraint on Concept.concept_id
+        - chunk_id_unique: Unique constraint on Chunk.chunk_id for graph-native chunk relationships
+        - chunk_source_id: Index on Chunk.source_id for per-document lookups
         
         Raises:
             SchemaError: If index creation fails
@@ -281,12 +283,15 @@ class Neo4jClient:
             "CREATE INDEX document_id_index IF NOT EXISTS FOR (d:Document) ON (d.document_id)",
             # Unique constraint for data integrity
             "CREATE CONSTRAINT concept_id_unique IF NOT EXISTS FOR (c:Concept) REQUIRE c.concept_id IS UNIQUE",
+            # Chunk node constraint and index for graph-native chunk relationships
+            "CREATE CONSTRAINT chunk_id_unique IF NOT EXISTS FOR (ch:Chunk) REQUIRE ch.chunk_id IS UNIQUE",
+            "CREATE INDEX chunk_source_id IF NOT EXISTS FOR (ch:Chunk) ON (ch.source_id)",
         ]
         
         # Vector index uses a separate procedure call (idempotent - Neo4j ignores if exists)
         vector_index_statement = (
             "CALL db.index.vector.createNodeIndex("
-            "'concept_embedding_index', 'Concept', 'embedding', 384, 'cosine')"
+            "'concept_embedding_index', 'Concept', 'embedding', 768, 'cosine')"
         )
         
         try:

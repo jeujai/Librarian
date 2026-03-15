@@ -190,6 +190,11 @@ class KnowledgeGraphQueryEngine:
             # Build relationship type filter
             rel_filter = "|".join(relationship_types) if relationship_types else "RELATED_TO"
             
+            # NOTE: This Cypher query intentionally does NOT filter by
+            # source_document. Concepts from both document sources and
+            # conversation sources (source_document=thread_id) are traversed
+            # uniformly, enabling cross-source concept discovery.
+            # See: Conversation Knowledge Integration spec, Requirements 5.2.
             query = f"""
             MATCH (start:Concept)
             WHERE toLower(start.name) CONTAINS toLower($concept_name)
@@ -544,7 +549,7 @@ class KnowledgeGraphQueryEngine:
                 chunk = KnowledgeChunk(
                     id=chunk_id,
                     content=f"Content for chunk {chunk_id}",
-                    embedding=np.zeros(384),
+                    embedding=np.zeros(768),
                     source_type="BOOK",
                     source_id="unknown",
                     location_reference="unknown",
@@ -678,7 +683,7 @@ class KnowledgeGraphQueryEngine:
                     chunk = KnowledgeChunk(
                         id=chunk_id,
                         content=f"Related content from concept {concept.concept_name}",
-                        embedding=np.zeros(384),
+                        embedding=np.zeros(768),
                         source_type="BOOK",
                         source_id="unknown",
                         location_reference="unknown",
@@ -713,4 +718,266 @@ class KnowledgeGraphQueryEngine:
             scores['related_concepts'] = sum(relevance_scores) / len(relevance_scores)
         
         return scores
+
+    # =========================================================================
+    # KG Explorer Methods (Neighborhood & Search)
+    # =========================================================================
+
+    async def get_neighborhood(
+        self,
+        source_id: str,
+        focus_concept: str | None = None,
+        max_nodes: int = 50,
+    ) -> dict[str, Any]:
+        """
+        Return a bounded neighborhood from the knowledge graph.
+
+        If *focus_concept* is None, return the **landing view**: top 10 concepts
+        by degree for the given *source_id*.
+
+        If *focus_concept* is provided, return the **ego graph** around that
+        concept (nodes + edges), capped at *max_nodes*.  Cross-source nodes
+        connected by relationships are included.
+
+        Returns a dict with keys ``nodes`` (list of dicts with name,
+        source_document, degree) and ``edges`` (list of dicts with source,
+        target, relationship_type).  When returning the landing view the
+        ``is_landing`` flag is ``True`` and ``edges`` is empty.
+        """
+        client = await self._get_neo4j_client()
+        if not client:
+            return {"nodes": [], "edges": [], "focus_concept": focus_concept, "is_landing": focus_concept is None}
+
+        try:
+            if focus_concept is None:
+                return await self._get_landing_view(client, source_id)
+            return await self._get_ego_graph(client, source_id, focus_concept, max_nodes)
+        except Exception as e:
+            logger.error(f"Error fetching neighborhood for source_id={source_id}, focus={focus_concept}: {e}")
+            return {"nodes": [], "edges": [], "focus_concept": focus_concept, "is_landing": focus_concept is None}
+
+    # Common English stop words to exclude from the KG landing view.
+    _STOP_WORDS: set = {
+        "a", "an", "the", "and", "or", "but", "in", "on", "at",
+        "to", "for", "of", "with", "by", "from", "as", "is", "was",
+        "are", "were", "be", "been", "being", "have", "has", "had",
+        "do", "does", "did", "will", "would", "shall", "should",
+        "may", "might", "must", "can", "could", "not", "no", "nor",
+        "so", "if", "then", "than", "that", "this", "these", "those",
+        "it", "its", "we", "our", "you", "your", "they", "their",
+        "he", "she", "his", "her", "him", "them", "us", "me", "my",
+        "who", "whom", "which", "what", "where", "when", "how",
+        "all", "each", "every", "both", "few", "more", "most",
+        "other", "some", "such", "only", "own", "same", "also",
+        "just", "about", "above", "after", "before", "between",
+        "into", "through", "during", "out", "over", "under",
+        "again", "further", "here", "there", "once", "very",
+        "too", "any", "up", "down", "off", "because", "until",
+        "while", "chapter",
+    }
+
+    async def _get_landing_view(
+        self, client, source_id: str,
+    ) -> dict[str, Any]:
+        """Return top 10 concepts by semantic degree for a source.
+
+        Excludes EXTRACTED_FROM edges from the degree count (they are
+        structural, not semantic) and filters out common stop words.
+
+        Optimized: deduplicates concepts first (a concept linked to N
+        chunks was counted N times), then uses pattern comprehension
+        for degree instead of OPTIONAL MATCH + count.
+        """
+        query = """
+        MATCH (ch:Chunk {source_id: $source_id})
+              <-[:EXTRACTED_FROM]-(c:Concept)
+        WHERE size(c.name) > 2
+        WITH DISTINCT c
+        WITH c, size([(c)-[]->(:Concept) | 1]) AS degree
+        ORDER BY degree DESC
+        LIMIT 50
+        OPTIONAL MATCH (c)-[:EXTRACTED_FROM]->(ch2:Chunk)
+        WITH c, degree,
+             collect(DISTINCT ch2.source_id) AS source_ids
+        RETURN c.name AS name, source_ids,
+               c.type AS concept_type, degree
+        """
+        results = await client.execute_query(
+            query, {"source_id": source_id},
+        )
+        stop = self._STOP_WORDS
+        nodes = []
+        for r in (results or []):
+            name = r.get("name", "")
+            if name.lower() in stop:
+                continue
+            nodes.append({
+                "name": name,
+                "source_document": (
+                    r["source_ids"][0]
+                    if r.get("source_ids") else None
+                ),
+                "concept_type": r.get("concept_type"),
+                "degree": r["degree"],
+            })
+            if len(nodes) >= 10:
+                break
+        return {
+            "nodes": nodes,
+            "edges": [],
+            "focus_concept": None,
+            "is_landing": True,
+        }
+
+    async def _get_ego_graph(
+        self, client, source_id: str, focus_concept: str, max_nodes: int
+    ) -> dict[str, Any]:
+        """Return the ego graph around *focus_concept*, capped at *max_nodes*.
+
+        The focus concept may belong to the current *source_id* or may be a
+        cross-source node that was visible in a previous neighborhood.  We
+        first try to match within the source, then fall back to any source.
+
+        Optimized: uses directed traversal (->), pattern comprehension for
+        degree instead of OPTIONAL MATCH + count.
+        """
+
+        # Step 1: Get the focus node and its neighbors (capped).
+        # Prefer a node from the current source, but fall back to any source
+        # so that clicking a cross-source node works (Requirement 14.4).
+        nodes_query = """
+        OPTIONAL MATCH (local:Concept)
+        WHERE toLower(local.name) = toLower($focus_concept)
+          AND EXISTS { MATCH (local)-[:EXTRACTED_FROM]->(lch:Chunk {source_id: $source_id}) }
+        WITH local LIMIT 1
+        OPTIONAL MATCH (any:Concept)
+        WHERE toLower(any.name) = toLower($focus_concept)
+          AND local IS NULL
+        WITH coalesce(local, any) AS focus
+        WHERE focus IS NOT NULL
+        WITH focus LIMIT 1
+        OPTIONAL MATCH (focus)-[]->(neighbor:Concept)
+        WITH focus, neighbor
+        ORDER BY neighbor.name
+        LIMIT $max_nodes
+        WITH focus, collect(DISTINCT neighbor) AS neighbors
+        WITH [focus] + neighbors AS all_nodes
+        UNWIND all_nodes AS n
+        WITH DISTINCT n
+        WHERE n IS NOT NULL
+        WITH n, size([(n)-[]->(:Concept) | 1]) AS degree
+        OPTIONAL MATCH (n)-[:EXTRACTED_FROM]->(nch:Chunk)
+        WITH n, degree, collect(DISTINCT nch.source_id) AS source_ids
+        RETURN n.name AS name,
+               source_ids,
+               n.type AS concept_type,
+               degree
+        """
+        node_results = await client.execute_query(
+            nodes_query,
+            {"source_id": source_id, "focus_concept": focus_concept, "max_nodes": max_nodes},
+        )
+
+        if not node_results:
+            return {"nodes": [], "edges": [], "focus_concept": focus_concept, "is_landing": False}
+
+        node_names = {r["name"] for r in node_results}
+        nodes = [
+            {
+                "name": r["name"],
+                "source_document": r["source_ids"][0] if r.get("source_ids") else None,
+                "concept_type": r.get("concept_type"),
+                "degree": int(r["degree"]),
+            }
+            for r in node_results
+        ]
+
+        # Step 2: Get edges between the collected nodes.
+        edges_query = """
+        MATCH (a:Concept)-[r]->(b:Concept)
+        WHERE a.name IN $node_names AND b.name IN $node_names
+        RETURN DISTINCT a.name AS source,
+                        b.name AS target,
+                        type(r) AS relationship_type
+        """
+        edge_results = await client.execute_query(
+            edges_query, {"node_names": list(node_names)}
+        )
+
+        edges = [
+            {
+                "source": r["source"],
+                "target": r["target"],
+                "relationship_type": r["relationship_type"],
+            }
+            for r in (edge_results or [])
+        ]
+
+        return {
+            "nodes": nodes,
+            "edges": edges,
+            "focus_concept": focus_concept,
+            "is_landing": False,
+        }
+
+    async def search_concepts_by_embedding(
+        self,
+        query_embedding: list[float],
+        source_id: str | None = None,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        """
+        Find concepts whose name embeddings are most similar to
+        *query_embedding*.
+
+        Optionally filter by *source_id*.  Returns a ranked list of dicts
+        with keys: name, source_document, similarity_score, degree.
+
+        Requires that concept nodes in Neo4j have an ``embedding`` property
+        (populated during enrichment).
+        """
+        client = await self._get_neo4j_client()
+        if not client:
+            return []
+
+        try:
+            # Build the Cypher query — cosine similarity computed in-query.
+            # Filter by source_id when provided.
+            where_clause = "WHERE c.embedding IS NOT NULL"
+            params: dict[str, Any] = {"query_embedding": query_embedding, "limit": limit}
+            if source_id is not None:
+                where_clause += "\n  AND EXISTS { MATCH (c)-[:EXTRACTED_FROM]->(ch:Chunk {source_id: $source_id}) }"
+                params["source_id"] = source_id
+
+            query = f"""
+            MATCH (c:Concept)
+            {where_clause}
+            WITH c,
+                 gds.similarity.cosine(c.embedding, $query_embedding) AS similarity
+            ORDER BY similarity DESC
+            LIMIT $limit
+            OPTIONAL MATCH (c)-[r]-()
+            WITH c, similarity, count(r) AS degree
+            OPTIONAL MATCH (c)-[:EXTRACTED_FROM]->(sch:Chunk)
+            WITH c, similarity, degree, collect(DISTINCT sch.source_id) AS source_ids
+            RETURN c.name AS name,
+                   source_ids,
+                   similarity AS similarity_score,
+                   degree
+            ORDER BY similarity_score DESC
+            """
+            results = await client.execute_query(query, params)
+            return [
+                {
+                    "name": r["name"],
+                    "source_document": r["source_ids"][0] if r.get("source_ids") else None,
+                    "similarity_score": float(r["similarity_score"]),
+                    "degree": int(r["degree"]),
+                }
+                for r in (results or [])
+            ]
+        except Exception as e:
+            logger.error(f"Error searching concepts by embedding: {e}")
+            return []
+
     

@@ -5,7 +5,7 @@ Reset all document-related data while preserving ConceptNet and YAGO.
 This script clears:
   1. PostgreSQL: Truncates all document/chunk/conversation tables
   2. Milvus: Drops and recreates the knowledge_chunks collection
-  3. Neo4j: Deletes all Concept nodes (preserves ConceptNetConcept + YagoEntity)
+  3. Neo4j: Deletes all Concept and Chunk nodes (preserves ConceptNetConcept + YagoEntity)
   4. MinIO: Empties the 'documents' bucket
   5. Redis: Flushes all keys
 
@@ -89,7 +89,7 @@ def reset_milvus():
     # Recreate with the same schema the app uses
     fields = [
         FieldSchema(name="id", dtype=DataType.VARCHAR, is_primary=True, max_length=512),
-        FieldSchema(name="vector", dtype=DataType.FLOAT_VECTOR, dim=384),
+        FieldSchema(name="vector", dtype=DataType.FLOAT_VECTOR, dim=768),
         FieldSchema(name="metadata", dtype=DataType.JSON),
     ]
     schema = CollectionSchema(fields=fields, description="Knowledge chunks with embeddings")
@@ -111,25 +111,36 @@ def reset_milvus():
 
 
 def reset_neo4j():
-    """Delete all Concept nodes, preserving ConceptNetConcept and YagoEntity."""
+    """Delete all Concept and Chunk nodes, preserving ConceptNetConcept and YagoEntity."""
     from neo4j import GraphDatabase
 
-    print("\n[3/5] Neo4j — deleting Concept nodes...")
+    print("\n[3/5] Neo4j — deleting Concept and Chunk nodes...")
     driver = GraphDatabase.driver("bolt://neo4j:7687", auth=("neo4j", "password"))
 
     try:
         with driver.session() as session:
+            # Drop the vector index so ensure_indexes can recreate it at 768 dims
+            try:
+                session.run("DROP INDEX concept_embedding_index IF EXISTS")
+                print("  Dropped concept_embedding_index")
+            except Exception as e:
+                print(f"  Could not drop concept_embedding_index: {e}")
+
             # Count before
             result = session.run("MATCH (c:Concept) RETURN count(c) AS cnt")
-            before = result.single()["cnt"]
-            print(f"  Concept nodes before: {before}")
+            concept_before = result.single()["cnt"]
+            result = session.run("MATCH (ch:Chunk) RETURN count(ch) AS cnt")
+            chunk_before = result.single()["cnt"]
+            print(f"  Concept nodes before: {concept_before}")
+            print(f"  Chunk nodes before: {chunk_before}")
 
-            # Delete in batches to avoid memory issues
+            # Delete Concept nodes in batches (DETACH DELETE removes EXTRACTED_FROM edges)
+            # Use small batches (1000) to avoid Neo4j memory pool limits
             total_deleted = 0
             while True:
                 result = session.run(
                     "MATCH (c:Concept) "
-                    "WITH c LIMIT 5000 "
+                    "WITH c LIMIT 1000 "
                     "DETACH DELETE c "
                     "RETURN count(*) AS deleted"
                 )
@@ -137,9 +148,28 @@ def reset_neo4j():
                 if deleted == 0:
                     break
                 total_deleted += deleted
-                print(f"  Deleted {total_deleted} so far...")
+                if total_deleted % 10000 == 0:
+                    print(f"  Deleted {total_deleted} Concept nodes so far...")
 
             print(f"  Total Concept nodes deleted: {total_deleted}")
+
+            # Delete Chunk nodes in batches
+            total_chunks_deleted = 0
+            while True:
+                result = session.run(
+                    "MATCH (ch:Chunk) "
+                    "WITH ch LIMIT 1000 "
+                    "DETACH DELETE ch "
+                    "RETURN count(*) AS deleted"
+                )
+                deleted = result.single()["deleted"]
+                if deleted == 0:
+                    break
+                total_chunks_deleted += deleted
+                if total_chunks_deleted % 10000 == 0:
+                    print(f"  Deleted {total_chunks_deleted} Chunk nodes so far...")
+
+            print(f"  Total Chunk nodes deleted: {total_chunks_deleted}")
 
             # Verify preserved namespaces
             result = session.run(

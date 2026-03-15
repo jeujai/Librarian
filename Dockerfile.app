@@ -39,9 +39,14 @@ RUN pip install --upgrade pip setuptools wheel && \
 # Download NLTK data (lightweight)
 RUN python -c "import nltk; nltk.download('punkt'); nltk.download('stopwords'); nltk.download('averaged_perceptron_tagger')"
 
+# Download spaCy sm model for NER-based relevance detection
+RUN python -m spacy download en_core_web_sm
+
 # Create necessary directories
 RUN mkdir -p uploads media exports logs audit_logs \
-    && chmod 755 uploads media exports logs audit_logs
+    .cache/matplotlib \
+    && chmod 755 uploads media exports logs audit_logs \
+    && chmod 755 .cache/matplotlib
 
 # =============================================================================
 # DEVELOPMENT STAGE
@@ -67,6 +72,7 @@ RUN groupadd -r appuser && useradd -r -g appuser -s /bin/bash appuser \
 USER appuser
 
 ENV PYTHONPATH=/app/src:/app \
+    MPLCONFIGDIR=/app/.cache/matplotlib \
     ML_ENVIRONMENT=local \
     DATABASE_TYPE=local \
     DEBUG=true \

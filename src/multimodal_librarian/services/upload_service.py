@@ -363,15 +363,20 @@ class UploadService:
                         row.processing_status, DocumentStatus.UPLOADED
                     )
                     
+                    # Conversation sources may have no file_size or s3_key
+                    file_size = row.file_size or 1
+                    s3_key = metadata.get('s3_key') or f"conversation://{row.id}"
+                    filename = row.file_path or row.title or "conversation"
+                    
                     document = Document(
                         id=str(row.id),
                         user_id=str(row.user_id),
                         title=row.title,
                         description=metadata.get('description'),
-                        filename=row.file_path,
-                        file_size=row.file_size,
+                        filename=filename,
+                        file_size=file_size,
                         mime_type=metadata.get('mime_type', 'application/pdf'),
-                        s3_key=metadata.get('s3_key'),
+                        s3_key=s3_key,
                         status=doc_status,
                         processing_error=metadata.get('processing_error'),
                         upload_timestamp=row.created_at,
@@ -406,7 +411,9 @@ class UploadService:
         Delete document and associated files from unified schema.
         
         Deletes from multimodal_librarian.knowledge_sources which cascades
-        to delete associated knowledge_chunks.
+        to delete associated knowledge_chunks.  Works for both PDF and
+        conversation documents (conversation rows may fail Pydantic
+        validation, so we query the raw row instead of using get_document).
         
         Args:
             document_id: Document identifier
@@ -418,23 +425,71 @@ class UploadService:
             UploadError: If deletion fails
         """
         try:
-            document = await self.get_document(document_id)
-            if not document:
+            # Query the raw row — avoids Pydantic validation issues for
+            # conversation documents (file_size=0, no s3_key, etc.)
+            async with db_manager.get_async_session() as session:
+                result = await session.execute(
+                    text(
+                        "SELECT id, source_type, file_path, metadata "
+                        "FROM multimodal_librarian.knowledge_sources "
+                        "WHERE id = :document_id"
+                    ),
+                    {"document_id": str(document_id)},
+                )
+                row = result.fetchone()
+
+            if not row:
                 return False
-            
-            # Delete from storage
-            if document.s3_key:
-                try:
-                    self.storage_service.delete_file(document.s3_key)
-                except StorageError as e:
-                    logger.warning(f"Failed to delete storage file {document.s3_key}: {e}")
-                    # Continue with database deletion even if storage deletion fails
-            
+
+            # Try to delete from storage (only for non-conversation docs)
+            source_type = row.source_type if row.source_type else ""
+            if source_type != "CONVERSATION":
+                s3_key = None
+                if row.metadata and isinstance(row.metadata, dict):
+                    s3_key = row.metadata.get("s3_key")
+                if s3_key:
+                    try:
+                        self.storage_service.delete_file(s3_key)
+                    except StorageError as e:
+                        logger.warning(
+                            f"Failed to delete storage file {s3_key}: {e}"
+                        )
+
+            # For conversation docs, also archive the conversation thread
+            if source_type == "CONVERSATION":
+                thread_id = None
+                if row.metadata and isinstance(row.metadata, dict):
+                    thread_id = row.metadata.get("source_thread_id")
+                if not thread_id and row.file_path:
+                    # file_path is 'conversation://{thread_id}'
+                    thread_id = str(row.file_path).replace(
+                        "conversation://", ""
+                    )
+                if thread_id:
+                    try:
+                        async with db_manager.get_async_session() as session:
+                            await session.execute(
+                                text(
+                                    "UPDATE multimodal_librarian.conversation_threads "
+                                    "SET is_archived = true, updated_at = NOW() "
+                                    "WHERE id = :tid"
+                                ),
+                                {"tid": thread_id},
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to archive conversation thread "
+                            f"{thread_id}: {e}"
+                        )
+
             # Delete from unified schema (cascades to knowledge_chunks)
             async with db_manager.get_async_session() as session:
                 await session.execute(
-                    text("DELETE FROM multimodal_librarian.knowledge_sources WHERE id = :document_id"),
-                    {"document_id": str(document_id)}
+                    text(
+                        "DELETE FROM multimodal_librarian.knowledge_sources "
+                        "WHERE id = :document_id"
+                    ),
+                    {"document_id": str(document_id)},
                 )
             
             logger.info(f"Document deleted successfully: {document_id}")

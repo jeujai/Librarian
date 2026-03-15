@@ -101,6 +101,9 @@ class ChunkResolver:
         """
         Resolve chunks using batch fetch (more efficient).
 
+        Automatically splits into sub-batches to stay within Milvus's
+        16,384 query window limit.
+
         Args:
             chunk_ids: List of chunk IDs to resolve
             source_info: Mapping of chunk_id to ChunkSourceMapping
@@ -109,6 +112,36 @@ class ChunkResolver:
         Returns:
             List of RetrievedChunk with content populated
         """
+        BATCH_SIZE = 8000  # Stay well under Milvus's 16,384 limit
+
+        # If small enough, fetch in one go
+        if len(chunk_ids) <= BATCH_SIZE:
+            return await self._resolve_single_batch(
+                chunk_ids, source_info, timeout_seconds
+            )
+
+        # Split into sub-batches
+        resolved_chunks: List[RetrievedChunk] = []
+        for i in range(0, len(chunk_ids), BATCH_SIZE):
+            batch = chunk_ids[i:i + BATCH_SIZE]
+            batch_result = await self._resolve_single_batch(
+                batch, source_info, timeout_seconds
+            )
+            resolved_chunks.extend(batch_result)
+
+        logger.info(
+            f"Batch resolved {len(resolved_chunks)}/{len(chunk_ids)} chunks "
+            f"in {(len(chunk_ids) + BATCH_SIZE - 1) // BATCH_SIZE} sub-batches"
+        )
+        return resolved_chunks
+
+    async def _resolve_single_batch(
+        self,
+        chunk_ids: List[str],
+        source_info: Dict[str, ChunkSourceMapping],
+        timeout_seconds: float = 10.0,
+    ) -> List[RetrievedChunk]:
+        """Resolve a single batch of chunk IDs from the vector store."""
         method = self._vector_client.get_chunks_by_ids
         if asyncio.iscoroutinefunction(method):
             coro = method(chunk_ids)
@@ -247,6 +280,16 @@ class ChunkResolver:
             elif key in chunk_metadata:
                 metadata[key] = chunk_metadata[key]
 
+        # Fallback: extract page number from [Page N] markers in content
+        if not metadata.get('page_number') and content:
+            import re
+            m = re.search(r'\[Page\s+(\d+)', content)
+            if m:
+                try:
+                    metadata['page_number'] = int(m.group(1))
+                except ValueError:
+                    pass
+
         # OPTIMIZATION: Extract embedding from chunk data to avoid regeneration
         embedding = chunk_data.get('embedding')
         if embedding is None:
@@ -342,6 +385,16 @@ class ChunkResolver:
                     metadata[key] = chunk_data[key]
                 elif key in chunk_metadata:
                     metadata[key] = chunk_metadata[key]
+
+            # Fallback: extract page number from [Page N] markers in content
+            if not metadata.get('page_number') and content:
+                import re
+                m = re.search(r'\[Page\s+(\d+)', content)
+                if m:
+                    try:
+                        metadata['page_number'] = int(m.group(1))
+                    except ValueError:
+                        pass
 
             # OPTIMIZATION: Extract embedding to avoid regeneration
             embedding = chunk_data.get('embedding')

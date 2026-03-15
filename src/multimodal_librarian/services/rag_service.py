@@ -42,7 +42,12 @@ from .source_prioritization_engine import SearchSourceType
 # Type checking imports for KG retrieval integration
 if TYPE_CHECKING:
     from ..clients.searxng_client import SearXNGClient, SearXNGResult
-    from ..models.kg_retrieval import KGRetrievalResult, RetrievedChunk
+    from ..components.kg_retrieval.relevance_detector import RelevanceDetector
+    from ..models.kg_retrieval import (
+        KGRetrievalResult,
+        QueryDecomposition,
+        RetrievedChunk,
+    )
     from .kg_retrieval_service import KGRetrievalService
     from .source_prioritization_engine import (
         PrioritizedSearchResults,
@@ -108,6 +113,7 @@ class CitationSource:
     excerpt_error: Optional[str] = None
     source_type: Optional[str] = None  # "librarian", "web_search", or "llm_fallback"
     url: Optional[str] = None  # URL for web search sources
+    knowledge_source_type: Optional[str] = None  # "conversation" or "book"
 
 @dataclass
 class RAGResponse:
@@ -282,7 +288,7 @@ Return only the enhanced query, no explanation. Keep it concise and focused on k
 class ContextPreparer:
     """Prepare and rank document context for AI generation."""
     
-    def __init__(self, max_context_length: int = 8000):
+    def __init__(self, max_context_length: int = 32000):
         self.max_context_length = max_context_length
     
     def prepare_context(
@@ -310,6 +316,33 @@ class ContextPreparer:
         
         # Select chunks within context length limit
         selected_chunks = self._select_chunks_by_length(ranked_chunks[:max_chunks])
+        
+        # Deduplicate: conversation sources often produce duplicate chunks with
+        # the same document_id (from KG + semantic paths). Collapse those.
+        # Book/document sources from different pages are NOT deduplicated —
+        # multiple pages from the same book are valuable context.
+        # Web search sources share a synthetic document_id ("web_brave")
+        # so deduplicate those by URL instead.
+        seen_conv_doc_ids = set()
+        seen_urls = set()
+        deduped_chunks = []
+        for chunk in selected_chunks:
+            url = chunk.metadata.get('url') if chunk.metadata else None
+            is_web = chunk.source_type and 'web' in str(chunk.source_type).lower()
+            source_type = chunk.metadata.get('source_type', '') if chunk.metadata else ''
+            is_conversation = source_type == 'conversation'
+            if is_web and url:
+                if url not in seen_urls:
+                    seen_urls.add(url)
+                    deduped_chunks.append(chunk)
+            elif is_conversation:
+                if chunk.document_id not in seen_conv_doc_ids:
+                    seen_conv_doc_ids.add(chunk.document_id)
+                    deduped_chunks.append(chunk)
+            else:
+                # Book/document chunks: keep all (different pages are valuable)
+                deduped_chunks.append(chunk)
+        selected_chunks = deduped_chunks
         
         # Format context
         context_parts = []
@@ -340,6 +373,7 @@ class ContextPreparer:
                 excerpt_error=excerpt_error,
                 source_type=chunk.source_type,  # Include source type (Requirement 5.5)
                 url=chunk.metadata.get('url') if chunk.metadata else None,
+                knowledge_source_type=chunk.metadata.get('source_type') if chunk.metadata else None,
             )
             citations.append(citation)
             
@@ -434,6 +468,7 @@ class RAGService:
         source_prioritization_engine: Optional["SourcePrioritizationEngine"] = None,
         query_decomposer: Optional["QueryDecomposer"] = None,
         searxng_client: Optional["SearXNGClient"] = None,
+        relevance_detector: Optional["RelevanceDetector"] = None,
         # Legacy parameter for backward compatibility
         opensearch_client: Any = None
     ):
@@ -457,6 +492,9 @@ class RAGService:
             searxng_client: Optional SearXNGClient for supplementary web search.
                             When provided and enabled, web results supplement thin
                             Librarian results. Requirements: 5.3, 6.1, 6.2, 6.3
+            relevance_detector: Optional RelevanceDetector for identifying irrelevant
+                                results via score distribution and concept specificity
+                                analysis. Requirements: 4.1, 4.2, 4.4
             opensearch_client: DEPRECATED - use vector_client instead. Kept for backward compatibility.
             
         Raises:
@@ -517,6 +555,10 @@ class RAGService:
         self.web_search_result_count_threshold: int = self.settings.web_search_result_count_threshold
         self.searxng_max_results: int = self.settings.searxng_max_results
         
+        # Relevance detection (Requirements 4.1, 4.2, 4.4)
+        self.relevance_detector = relevance_detector
+        self._last_relevance_verdict = None
+        
         if self.use_source_prioritization:
             logger.info("RAG Service initialized with source prioritization support")
         elif self.use_kg_retrieval:
@@ -546,6 +588,9 @@ class RAGService:
             RAG response with citations and metadata
         """
         start_time = time.time()
+        
+        # Reset cached relevance verdict for this request (Req 4.6)
+        self._last_relevance_verdict = None
         
         try:
             # Step 1: Process and enhance query with knowledge graph
@@ -616,6 +661,37 @@ class RAGService:
                 **kg_metadata,
                 **kg_retrieval_metadata,
             }
+            
+            # Include relevance detection diagnostic data (Req 4.6)
+            if self._last_relevance_verdict is not None:
+                v = self._last_relevance_verdict
+                response_metadata["relevance_detection"] = {
+                    "is_relevant": v.is_relevant,
+                    "confidence_adjustment_factor": v.confidence_adjustment_factor,
+                    "reasoning": v.reasoning,
+                    "score_distribution": {
+                        "variance": v.score_distribution.variance,
+                        "spread": v.score_distribution.spread,
+                        "is_semantic_floor": v.score_distribution.is_semantic_floor,
+                        "chunk_count": v.score_distribution.chunk_count,
+                        "is_indeterminate": v.score_distribution.is_indeterminate,
+                    },
+                    "concept_specificity": {
+                        "average_specificity": v.concept_specificity.average_specificity,
+                        "is_low_specificity": v.concept_specificity.is_low_specificity,
+                        "high_specificity_count": v.concept_specificity.high_specificity_count,
+                        "low_specificity_count": v.concept_specificity.low_specificity_count,
+                    },
+                    "query_term_coverage": {
+                        "proper_nouns": v.query_term_coverage.proper_nouns,
+                        "covered_nouns": v.query_term_coverage.covered_nouns,
+                        "uncovered_nouns": v.query_term_coverage.uncovered_nouns,
+                        "coverage_ratio": v.query_term_coverage.coverage_ratio,
+                        "has_proper_noun_gap": v.query_term_coverage.has_proper_noun_gap,
+                        "has_cooccurrence_gap": v.query_term_coverage.has_cooccurrence_gap,
+                        "key_nouns": v.query_term_coverage.key_nouns,
+                    },
+                }
             
             return RAGResponse(
                 response=ai_response.content,
@@ -947,8 +1023,13 @@ Instructions:
             query, user_id, document_filter, related_concepts, kg_metadata,
         )
 
+        # Extract precomputed decomposition for relevance detection (Req 4.1)
+        query_decomposition = (kg_metadata or {}).get('_decomposition')
+
         # Phase 2: Post-Processing (tag, supplement, boost, rank)
-        chunks = await self._post_processing_phase(query, chunks)
+        chunks = await self._post_processing_phase(
+            query, chunks, query_decomposition=query_decomposition,
+        )
 
         return chunks
 
@@ -1023,15 +1104,17 @@ Instructions:
         self,
         query: str,
         librarian_chunks: List[DocumentChunk],
+        query_decomposition: Optional["QueryDecomposition"] = None,
     ) -> List[DocumentChunk]:
         """Phase 2: Tag, optionally supplement with web results, boost, and rank.
 
         1. Tag all retrieval-phase chunks as LIBRARIAN (Req 2.2).
-        2. If result count < threshold and SearXNG is available, fetch web results (Req 3.1, 3.2).
-        3. Apply librarian_boost_factor to LIBRARIAN chunks, capped at 1.0 (Req 2.3).
-        4. Merge and sort by boosted score descending; LIBRARIAN wins ties (Req 2.4, 2.5).
+        2. Invoke RelevanceDetector if available (Req 4.1, 4.2, 4.7).
+        3. If result count < threshold and SearXNG is available, fetch web results (Req 3.1, 3.2).
+        4. Apply librarian_boost_factor to LIBRARIAN chunks, capped at 1.0 (Req 2.3).
+        5. Merge and sort by boosted score descending; LIBRARIAN wins ties (Req 2.4, 2.5).
 
-        Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 3.1, 3.2, 3.5, 3.6
+        Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 3.1, 3.2, 3.5, 3.6, 4.1, 4.2, 4.3, 4.7
         """
         # Tag all retrieval-phase results as LIBRARIAN
         for chunk in librarian_chunks:
@@ -1052,8 +1135,56 @@ Instructions:
         librarian_results_irrelevant = (
             best_librarian_score < self.relevance_confidence_threshold
         )
+
+        # Relevance detection trigger (Requirements 4.1, 4.2, 4.7)
+        relevance_detected_irrelevant = False
+        if self.relevance_detector is not None and query_decomposition is not None:
+            try:
+                # Build lightweight RetrievedChunk wrappers so the detector
+                # can read final_score (it operates on RetrievedChunk, not
+                # DocumentChunk).
+                from ..models.kg_retrieval import RetrievalSource
+                from ..models.kg_retrieval import RetrievedChunk as _RC
+                rc_chunks = [
+                    _RC(
+                        chunk_id=c.chunk_id or "",
+                        content=c.content or "",
+                        source=RetrievalSource.SEMANTIC_FALLBACK,
+                        final_score=c.similarity_score,
+                    )
+                    for c in librarian_chunks
+                ]
+                verdict = self.relevance_detector.evaluate(
+                    rc_chunks, query_decomposition,
+                )
+                self._last_relevance_verdict = verdict
+                relevance_detected_irrelevant = not verdict.is_relevant
+                tc = verdict.query_term_coverage
+                logger.info(
+                    f"Relevance detection: is_relevant={verdict.is_relevant}, "
+                    f"factor={verdict.confidence_adjustment_factor}, "
+                    f"semantic_floor={verdict.score_distribution.is_semantic_floor}, "
+                    f"low_specificity={verdict.concept_specificity.is_low_specificity}, "
+                    f"proper_noun_gap={tc.has_proper_noun_gap}, "
+                    f"cooccurrence_gap={tc.has_cooccurrence_gap}, "
+                    f"proper_nouns={tc.proper_nouns}, "
+                    f"key_nouns={tc.key_nouns}, "
+                    f"uncovered={tc.uncovered_nouns}, "
+                    f"scores=[{', '.join(f'{c.final_score:.4f}' for c in rc_chunks[:5])}], "
+                    f"concepts={len(query_decomposition.concept_matches)}"
+                )
+            except Exception as e:
+                logger.warning(f"Relevance detection failed, using original logic: {e}")
+                self._last_relevance_verdict = None
+        else:
+            logger.info(
+                f"Relevance detection skipped: "
+                f"detector={'present' if self.relevance_detector else 'None'}, "
+                f"decomposition={'present' if query_decomposition else 'None'}"
+            )
+
         if (
-            (librarian_results_thin or librarian_results_irrelevant)
+            (librarian_results_thin or librarian_results_irrelevant or relevance_detected_irrelevant)
             and self.searxng_client is not None
             and self.searxng_enabled
         ):
@@ -1074,14 +1205,78 @@ Instructions:
 
         # When web results were fetched and librarian results are irrelevant,
         # drop the librarian chunks so they don't pollute the response.
-        # A query about Venezuelan politics shouldn't return LangChain book pages.
-        if web_chunks and librarian_results_irrelevant:
-            logger.info(
-                f"Dropping {len(librarian_chunks)} irrelevant librarian chunks "
-                f"(best score {best_librarian_score:.3f} < "
-                f"threshold {self.relevance_confidence_threshold})"
+        # However, when the relevance detector fired (proper-noun gap),
+        # keep any librarian chunks whose content actually contains the
+        # query's proper nouns — those are genuinely relevant (e.g. a
+        # conversation chunk that previously answered the same question).
+        #
+        # Co-occurrence gap: when the detector fired because no chunk
+        # contains ALL key PROPN tokens together (e.g. "President" +
+        # "Venezuela"), only keep chunks that contain ALL key nouns —
+        # not just one of them.
+        if web_chunks and (librarian_results_irrelevant or relevance_detected_irrelevant):
+            tc = (
+                self._last_relevance_verdict.query_term_coverage
+                if self._last_relevance_verdict is not None
+                else None
             )
-            librarian_chunks = []
+            if (
+                relevance_detected_irrelevant
+                and tc is not None
+                and tc.has_cooccurrence_gap
+                and tc.key_nouns
+            ):
+                # Co-occurrence drop: only keep chunks containing
+                # ALL key PROPN tokens (not just one).
+                key_nouns_lower = [
+                    kn.lower() for kn in tc.key_nouns
+                ]
+                kept = [
+                    c for c in librarian_chunks
+                    if all(
+                        kn in (c.content or "").lower()
+                        for kn in key_nouns_lower
+                    )
+                ]
+                dropped = len(librarian_chunks) - len(kept)
+                logger.info(
+                    f"Co-occurrence drop: kept {len(kept)}, "
+                    f"dropped {dropped} librarian chunks "
+                    f"(key_nouns: {key_nouns_lower})"
+                )
+                librarian_chunks = kept
+            elif (
+                relevance_detected_irrelevant
+                and tc is not None
+                and tc.proper_nouns
+            ):
+                # Selective drop: keep chunks containing proper nouns
+                proper_nouns_lower = [
+                    pn.lower() for pn in tc.proper_nouns
+                ]
+                kept = [
+                    c for c in librarian_chunks
+                    if any(
+                        pn in (c.content or "").lower()
+                        for pn in proper_nouns_lower
+                    )
+                ]
+                dropped = len(librarian_chunks) - len(kept)
+                logger.info(
+                    f"Selective drop: kept {len(kept)}, "
+                    f"dropped {dropped} irrelevant librarian "
+                    f"chunks (proper nouns: {proper_nouns_lower})"
+                )
+                librarian_chunks = kept
+            else:
+                # Full drop: no proper noun info or score-based
+                logger.info(
+                    f"Dropping {len(librarian_chunks)} irrelevant "
+                    f"librarian chunks (best score "
+                    f"{best_librarian_score:.3f} < threshold "
+                    f"{self.relevance_confidence_threshold})"
+                )
+                librarian_chunks = []
 
         # Merge and sort — LIBRARIAN wins ties via stable sort key (Req 2.4, 2.5)
         all_chunks = librarian_chunks + web_chunks
@@ -1177,6 +1372,15 @@ Instructions:
                     }
                 }
             )
+            # Fallback: extract page number from [Page N] markers in content
+            if chunk.page_number is None and chunk.content:
+                import re
+                m = re.search(r'\[Page\s+(\d+)', chunk.content)
+                if m:
+                    try:
+                        chunk.page_number = int(m.group(1))
+                    except ValueError:
+                        pass
             chunks.append(chunk)
         
         return chunks
@@ -1261,12 +1465,17 @@ Instructions:
             # Perform semantic search with enhanced query
             # Use the standard semantic_search method from VectorStoreClient protocol
             # This works with both Milvus and OpenSearch
+            # NOTE: source_type is intentionally None so results include both
+            # document-derived and conversation-derived chunks (SourceType.BOOK
+            # and SourceType.CONVERSATION). The RAG pipeline treats all knowledge
+            # sources uniformly — ranking and boosting are source-type-agnostic.
+            # See: Conversation Knowledge Integration spec, Requirements 5.1, 5.3.
             if hasattr(self.vector_client, 'semantic_search_async'):
                 # OpenSearch has async version
                 search_results = await self.vector_client.semantic_search_async(
                     query=enhanced_query,
                     top_k=self.max_search_results,
-                    source_type="document",
+                    source_type=None,
                     source_id=None
                 )
             else:
@@ -1301,6 +1510,16 @@ Instructions:
                     similarity_score=similarity_score,
                     metadata=metadata
                 )
+                
+                # Fallback: extract page number from [Page N] markers in content
+                if chunk.page_number is None and chunk.content:
+                    import re
+                    m = re.search(r'\[Page\s+(\d+)', chunk.content)
+                    if m:
+                        try:
+                            chunk.page_number = int(m.group(1))
+                        except ValueError:
+                            pass
                 
                 # Apply document filter if specified
                 if document_filter and chunk.document_id not in document_filter:
@@ -1491,6 +1710,14 @@ Instructions:
         if hasattr(ai_response, 'confidence_score') and ai_response.confidence_score:
             confidence = (confidence + ai_response.confidence_score) / 2
         
+        # Apply relevance detection adjustment (Requirements 4.4, 4.5)
+        verdict = self._last_relevance_verdict
+        if verdict is not None:
+            if not verdict.is_relevant:
+                confidence = min(confidence, 0.3)
+            else:
+                confidence *= verdict.confidence_adjustment_factor
+        
         return max(0.1, min(1.0, confidence))
     
     async def search_documents(
@@ -1655,7 +1882,7 @@ Instructions:
                 knowledge_chunk = KnowledgeChunk(
                     id=chunk_id,
                     content=chunk_content,
-                    embedding=np.zeros(384),  # Placeholder embedding
+                    embedding=np.zeros(768),  # Placeholder embedding
                     source_type="DOCUMENT",
                     source_id=document_id,
                     location_reference=f"chunk_{i}",

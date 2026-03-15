@@ -22,7 +22,7 @@ RUN pip install --no-cache-dir -r requirements-model-server.txt
 
 # Pre-download models at build time for faster startup
 # This caches the models in the Docker image
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')" \
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-base-en-v1.5')" \
     && python -c "import spacy; spacy.cli.download('en_core_web_sm')"
 
 # Copy application code

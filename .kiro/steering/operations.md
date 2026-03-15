@@ -57,6 +57,11 @@ docker compose exec redis redis-cli FLUSHALL
 venv/bin/python scripts/reset-all-databases.py --databases milvus --force
 ```
 
+## Container Networking Gotchas
+
+- The Milvus client defaults to `localhost` but inside the Docker container it needs to connect to `milvus` (the Docker service name). When running ad-hoc Python scripts inside the app container (e.g. `docker exec librarian-app-1 python3 -c "..."`), you must override the host to `milvus` instead of relying on the default.
+- Similarly, other services use their Docker service names: `postgres`, `neo4j`, `redis`, `model-server`, `minio`, `etcd`.
+
 ## Document Upload
 
 - Upload endpoint: `POST /api/documents/upload` (multipart form with `file` field)

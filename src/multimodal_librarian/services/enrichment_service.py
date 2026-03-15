@@ -274,6 +274,17 @@ class EnrichmentService:
                     f"Batch ConceptNet persistence failed: {e}"
                 )
 
+        # --- Step 6: Compute composite cross-document scores ---
+        if self.kg_service and self.kg_service.client:
+            from .composite_score_engine import CompositeScoreEngine
+            engine = CompositeScoreEngine(self.kg_service.client)
+            composite_result = await engine.compute_composite_scores(document_id)
+            logger.info(
+                f"Composite scoring: {composite_result.edges_discovered} edges, "
+                f"{composite_result.document_pairs} doc pairs, "
+                f"{composite_result.duration_ms:.0f}ms"
+            )
+
         result.api_calls = api_calls_made
         cache_stats = self.cache.get_stats()
         result.cache_hits = (
@@ -470,67 +481,91 @@ class EnrichmentService:
     ) -> List[str]:
         """
         Create SAME_AS relationships for concepts sharing a Q-number.
-        
+
         This method finds all other concepts in the knowledge graph that
         share the same YAGO Q-number and creates bidirectional SAME_AS
         relationships between them, enabling cross-document entity linking.
-        
+
+        Uses Chunk-based EXTRACTED_FROM traversal to derive document IDs
+        instead of reading source_document properties.
+
         Args:
             concept: The concept being enriched
             q_number: YAGO Q-number
-            
+
         Returns:
             List of concept IDs that were linked
-            
-        Requirements: 5.1
+
+        Requirements: 10.2
         """
         if not self.kg_service:
             return []
-        
+
         linked_concepts = []
-        
+
         try:
-            # Find other concepts with the same Q-number
+            # Find other concepts with the same Q-number, deriving document IDs from Chunk traversal
             query = """
             MATCH (c:Concept)
             WHERE c.yago_qid = $q_number AND c.concept_id <> $concept_id
-            RETURN c.concept_id as concept_id, c.source_document as document_id
+            OPTIONAL MATCH (c)-[:EXTRACTED_FROM]->(ch:Chunk)
+            RETURN c.concept_id as concept_id, collect(DISTINCT ch.source_id) as document_ids
             """
-            
+
             results = await self.kg_service.client.execute_query(query, {
                 "q_number": q_number,
                 "concept_id": concept.concept_id
             })
-            
-            # Create SAME_AS relationships with each matching concept
+
+            # Derive the current concept's source_ids from its Chunk nodes
+            current_source_ids = set()
+            if concept.source_document:
+                current_source_ids.add(concept.source_document)
+            # Also check Chunk nodes for the current concept
+            try:
+                current_query = """
+                MATCH (c:Concept {concept_id: $concept_id})-[:EXTRACTED_FROM]->(ch:Chunk)
+                RETURN collect(DISTINCT ch.source_id) as source_ids
+                """
+                current_results = await self.kg_service.client.execute_query(
+                    current_query, {"concept_id": concept.concept_id}
+                )
+                for rec in current_results:
+                    current_source_ids.update(sid for sid in rec.get("source_ids", []) if sid)
+            except Exception:
+                pass  # Fall back to in-memory source_document
+
+            # Create SAME_AS relationships with each matching concept from different documents
             for result in results:
                 other_concept_id = result["concept_id"]
-                other_document_id = result.get("document_id")
-                
-                # Only link concepts from different documents
-                if other_document_id and other_document_id != concept.source_document:
+                other_document_ids = set(
+                    sid for sid in result.get("document_ids", []) if sid
+                )
+
+                # Only link concepts from different documents (no overlapping source_ids)
+                if other_document_ids and not other_document_ids.intersection(current_source_ids):
                     success = await self.kg_service.create_same_as_relationship(
                         concept_id_1=concept.concept_id,
                         concept_id_2=other_concept_id,
                         q_number=q_number
                     )
-                    
+
                     if success:
                         linked_concepts.append(other_concept_id)
                         logger.debug(
                             f"Created SAME_AS link: {concept.concept_id} <-> "
                             f"{other_concept_id} (Q: {q_number})"
                         )
-            
+
             if linked_concepts:
                 logger.info(
                     f"Created {len(linked_concepts)} cross-document links "
                     f"for Q-number {q_number}"
                 )
-                
+
         except Exception as e:
             logger.warning(f"Error creating cross-document links: {e}")
-        
+
         return linked_concepts
     
     async def find_documents_by_entity(self, q_number: str) -> List[str]:
@@ -991,8 +1026,6 @@ class EnrichmentService:
                         'name': name,
                         'type': 'EXTERNAL',
                         'confidence': name_weights.get(name, 0.0),
-                        'source_document': 'conceptnet',
-                        'source_chunks': '',
                         'created_at': now_ts,
                         'updated_at': now_ts,
                     }
@@ -1027,10 +1060,6 @@ class EnrichmentService:
                                         c.name = row.name,
                                         c.type = row.type,
                                         c.confidence = row.confidence,
-                                        c.source_document =
-                                            row.source_document,
-                                        c.source_chunks =
-                                            row.source_chunks,
                                         c.created_at = row.created_at,
                                         c.updated_at =
                                             row.updated_at{emb_set}
@@ -1231,8 +1260,6 @@ class EnrichmentService:
                         'name': name,
                         'type': 'EXTERNAL',
                         'confidence': name_weights.get(name, 0.0),
-                        'source_document': 'conceptnet',
-                        'source_chunks': '',
                         'created_at': now_ts,
                         'updated_at': now_ts,
                     }
@@ -1254,8 +1281,6 @@ class EnrichmentService:
                             MERGE (c:Concept {{concept_id: row.concept_id}})
                             ON CREATE SET c.name = row.name, c.type = row.type,
                                           c.confidence = row.confidence,
-                                          c.source_document = row.source_document,
-                                          c.source_chunks = row.source_chunks,
                                           c.created_at = row.created_at,
                                           c.updated_at = row.updated_at{emb_set}
                             ON MATCH SET c.updated_at = row.updated_at
@@ -1379,8 +1404,6 @@ class EnrichmentService:
                     "name": relation.object,
                     "type": "EXTERNAL",
                     "confidence": relation.weight,
-                    "source_document": "conceptnet",
-                    "source_chunks": ""
                 }
 
                 # Generate embedding for the new concept so it's

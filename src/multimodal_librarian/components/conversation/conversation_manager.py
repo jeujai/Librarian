@@ -8,16 +8,23 @@ conversion functionality.
 
 import logging
 import uuid
-from datetime import datetime
-from typing import List, Dict, Any, Optional, Union
 from dataclasses import dataclass
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Union
 
+from sqlalchemy import text
+
+from ...database.connection import db_manager
 from ...models.core import (
-    ConversationThread, Message, MessageType, MultimediaElement,
-    KnowledgeChunk, SourceType, ContentType, KnowledgeMetadata
+    ContentType,
+    ConversationThread,
+    KnowledgeChunk,
+    KnowledgeMetadata,
+    Message,
+    MessageType,
+    MultimediaElement,
+    SourceType,
 )
-from ...database.models import ConversationDB, MessageDB, KnowledgeSource
-from ...database.connection import get_database_session
 
 logger = logging.getLogger(__name__)
 
@@ -158,70 +165,57 @@ class ConversationManager:
             List of ConversationThread objects
         """
         conversations = []
-        
+
         try:
-            with get_database_session() as session:
-                # Query conversations for user
-                db_conversations = session.query(ConversationDB).filter(
-                    ConversationDB.user_id == user_id,
-                    ConversationDB.is_active == True
-                ).order_by(ConversationDB.last_updated.desc()).limit(limit).all()
-                
-                for db_conv in db_conversations:
-                    # Load messages
-                    messages = []
-                    for db_msg in db_conv.messages:
-                        multimedia_content = []
-                        if db_msg.multimedia_content:
-                            multimedia_content = [
-                                MultimediaElement.from_dict(elem) 
-                                for elem in db_msg.multimedia_content
-                            ]
-                        
-                        message = Message(
-                            message_id=db_msg.message_id,
-                            content=db_msg.content,
-                            multimedia_content=multimedia_content,
-                            timestamp=db_msg.timestamp,
-                            message_type=MessageType(db_msg.message_type),
-                            knowledge_references=db_msg.knowledge_references or []
-                        )
-                        messages.append(message)
-                    
-                    conversation = ConversationThread(
-                        thread_id=db_conv.thread_id,
-                        user_id=db_conv.user_id,
-                        messages=messages,
-                        created_at=db_conv.created_at,
-                        last_updated=db_conv.last_updated,
-                        knowledge_summary=db_conv.knowledge_summary or ""
+            with db_manager.get_session() as session:
+                rows = session.execute(
+                    text(
+                        "SELECT id, user_id::text, title, created_at, updated_at "
+                        "FROM multimodal_librarian.conversation_threads "
+                        "WHERE (is_archived IS NULL OR is_archived = false) "
+                        "ORDER BY COALESCE(last_message_at, updated_at) DESC "
+                        "LIMIT :lim"
+                    ),
+                    {"lim": limit},
+                ).fetchall()
+
+                for r in rows:
+                    conv = ConversationThread(
+                        thread_id=str(r[0]),
+                        user_id=r[1] or "",
+                        messages=[],
+                        created_at=r[3],
+                        last_updated=r[4],
+                        knowledge_summary="",
                     )
-                    conversations.append(conversation)
-        
+                    conversations.append(conv)
+
         except Exception as e:
             logger.error(f"Failed to list conversations for user {user_id}: {e}")
-        
+
         return conversations
     
     def process_message(self, thread_id: str, message_content: str,
                        multimedia_content: Optional[List[MultimediaElement]] = None,
-                       message_type: MessageType = MessageType.USER) -> ConversationContext:
+                       message_type: MessageType = MessageType.USER,
+                       knowledge_references: Optional[List] = None) -> ConversationContext:
         """
         Process user message with conversation context.
-        
+
         Args:
             thread_id: Conversation thread identifier
             message_content: Text content of the message
             multimedia_content: Optional multimedia elements
             message_type: Type of message (user, system, upload)
-            
+            knowledge_references: Optional list of knowledge references (citations)
+
         Returns:
             ConversationContext with updated conversation state
         """
         conversation = self.get_conversation(thread_id)
         if not conversation:
             raise ValueError(f"Conversation {thread_id} not found")
-        
+
         # Create new message
         message = Message(
             message_id=str(uuid.uuid4()),
@@ -229,26 +223,26 @@ class ConversationManager:
             multimedia_content=multimedia_content or [],
             timestamp=datetime.now(),
             message_type=message_type,
-            knowledge_references=[]
+            knowledge_references=knowledge_references or []
         )
-        
+
         # Add message to conversation
         conversation.add_message(message)
-        
+
         # Update conversation in active cache
         self.active_conversations[thread_id] = conversation
-        
+
         # Persist message to database
         self._persist_message(conversation, message)
-        
+
         # Update statistics
         self.conversation_stats['total_messages'] += 1
         if message.has_multimedia():
             self.conversation_stats['multimedia_messages'] += 1
-        
+
         # Create conversation context
         context = self._create_conversation_context(conversation)
-        
+
         logger.info(f"Processed message in conversation {thread_id}")
         return context
     
@@ -339,26 +333,42 @@ class ConversationManager:
             processing_notes=processing_notes
         )
     
-    def convert_to_knowledge_chunks(self, conversation: ConversationThread) -> List[KnowledgeChunk]:
+    def convert_to_knowledge_chunks(
+        self, conversation: ConversationThread, thread_title: Optional[str] = None
+    ) -> List[KnowledgeChunk]:
         """
         Convert conversation to searchable knowledge chunks.
-        
+
         Args:
             conversation: Conversation thread to convert
-            
+            thread_title: Optional title for the thread. If not provided,
+                derived from knowledge_summary or first user message content.
+
         Returns:
             List of KnowledgeChunk objects
         """
         chunks = []
-        
+
         try:
+            # Derive thread title: explicit param > knowledge_summary > first user message
+            title = thread_title
+            if not title:
+                title = conversation.knowledge_summary.strip() if conversation.knowledge_summary else ""
+            if not title:
+                for msg in conversation.messages:
+                    if msg.message_type == MessageType.USER and msg.content.strip():
+                        title = msg.content.strip()[:80]
+                        break
+            if not title:
+                title = "Untitled Conversation"
+
             # Group messages into meaningful chunks
             message_groups = self._group_messages_for_chunking(conversation.messages)
-            
+
             for i, group in enumerate(message_groups):
                 # Combine messages in group
-                combined_content = self._combine_message_group(group)
-                
+                combined_content, segments = self._combine_message_group(group)
+
                 # Extract multimedia elements
                 multimedia_elements = []
                 for message in group:
@@ -373,7 +383,7 @@ class ConversationManager:
                             metadata=elem.metadata
                         )
                         multimedia_elements.append(media_elem)
-                
+
                 # Create knowledge metadata
                 knowledge_metadata = KnowledgeMetadata(
                     complexity_score=self._calculate_conversation_complexity(group),
@@ -381,30 +391,41 @@ class ConversationManager:
                     extraction_confidence=0.9,  # High confidence for conversation content
                     processing_timestamp=datetime.now(),
                     chunk_index=i,
-                    total_chunks=len(message_groups)
+                    total_chunks=len(message_groups),
+                    segments=segments
                 )
-                
+
+                # Build location_reference: "{title} | {start} – {end}"
+                start_ts = group[0].timestamp.isoformat()
+                end_ts = group[-1].timestamp.isoformat()
+                location_reference = f"{title} | {start_ts} – {end_ts}"
+
                 # Create knowledge chunk
+                # Deterministic UUID so KG and Milvus share the same ID
+                chunk_id = str(uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    f"conv_{conversation.thread_id}_chunk_{i}",
+                ))
                 chunk = KnowledgeChunk(
-                    id=f"conv_{conversation.thread_id}_chunk_{i}",
+                    id=chunk_id,
                     content=combined_content,
                     source_type=SourceType.CONVERSATION,
                     source_id=conversation.thread_id,
-                    location_reference=group[0].timestamp.isoformat(),  # Use first message timestamp
-                    section=f"Messages {group[0].message_id} to {group[-1].message_id}",
+                    location_reference=location_reference,
+                    section=title,
                     content_type=self._determine_content_type(combined_content),
                     associated_media=multimedia_elements,
                     knowledge_metadata=knowledge_metadata
                 )
-                
+
                 chunks.append(chunk)
-        
+
         except Exception as e:
             logger.error(f"Failed to convert conversation to knowledge chunks: {e}")
-        
+
         # Update statistics
         self.conversation_stats['knowledge_chunks_created'] += len(chunks)
-        
+
         logger.info(f"Created {len(chunks)} knowledge chunks from conversation {conversation.thread_id}")
         return chunks
     
@@ -420,27 +441,38 @@ class ConversationManager:
             bool: True if successfully deleted
         """
         try:
-            conversation = self.get_conversation(thread_id)
-            if not conversation or conversation.user_id != user_id:
-                return False
-            
             # Remove from active conversations
             if thread_id in self.active_conversations:
                 del self.active_conversations[thread_id]
-            
-            # Mark as inactive in database
-            with get_database_session() as session:
-                db_conversation = session.query(ConversationDB).filter(
-                    ConversationDB.thread_id == thread_id
-                ).first()
-                
-                if db_conversation:
-                    db_conversation.is_active = False
-                    session.commit()
-            
+
+            with db_manager.get_session() as session:
+                thread_uuid = uuid.UUID(thread_id)
+
+                # Archive the conversation (soft delete)
+                session.execute(
+                    text(
+                        "UPDATE multimodal_librarian.conversation_threads "
+                        "SET is_archived = true, updated_at = NOW() "
+                        "WHERE id = :tid"
+                    ),
+                    {"tid": thread_uuid},
+                )
+
+                # Also remove the knowledge_sources row (UUID5 mapping)
+                source_id = uuid.uuid5(uuid.NAMESPACE_URL, thread_id)
+                session.execute(
+                    text(
+                        "DELETE FROM multimodal_librarian.knowledge_sources "
+                        "WHERE id = :sid"
+                    ),
+                    {"sid": source_id},
+                )
+
+                session.commit()
+
             logger.info(f"Deleted conversation {thread_id}")
             return True
-        
+
         except Exception as e:
             logger.error(f"Failed to delete conversation {thread_id}: {e}")
             return False
@@ -451,10 +483,19 @@ class ConversationManager:
         # Get recent messages (last 10)
         recent_messages = conversation.messages[-10:] if len(conversation.messages) > 10 else conversation.messages
         
-        # Extract knowledge references
+        # Extract knowledge references (may be str or dict from citations)
         knowledge_references = []
+        seen = set()
         for message in recent_messages:
-            knowledge_references.extend(message.knowledge_references)
+            for ref in message.knowledge_references:
+                # Deduplicate: use document_id for dicts, raw value for strings
+                if isinstance(ref, dict):
+                    key = ref.get('document_id', '') or ref.get('chunk_id', '')
+                else:
+                    key = ref
+                if key and key not in seen:
+                    seen.add(key)
+                    knowledge_references.append(ref if isinstance(ref, str) else str(ref))
         
         # Extract multimedia elements
         multimedia_elements = []
@@ -467,7 +508,7 @@ class ConversationManager:
         return ConversationContext(
             thread=conversation,
             recent_messages=recent_messages,
-            knowledge_references=list(set(knowledge_references)),  # Remove duplicates
+            knowledge_references=knowledge_references,
             context_summary=context_summary,
             multimedia_elements=multimedia_elements
         )
@@ -529,21 +570,33 @@ class ConversationManager:
         time_diff = abs((msg2.timestamp - msg1.timestamp).total_seconds())
         return time_diff > 3600  # 1 hour gap
     
-    def _combine_message_group(self, messages: List[Message]) -> str:
-        """Combine messages in a group into coherent content."""
+    def _combine_message_group(self, messages: List[Message]) -> tuple:
+        """Combine messages in a group into coherent content.
+
+        Returns:
+            A tuple of (combined_text, segments) where combined_text is the
+            backward-compatible string and segments is a list of
+            {"role": "user"|"assistant", "content": "..."} dicts preserving
+            conversation structure.
+        """
         content_parts = []
-        
+        segments = []
+
         for message in messages:
             timestamp_str = message.timestamp.strftime("%Y-%m-%d %H:%M")
             message_type_str = message.message_type.value.upper()
-            
+
             content_parts.append(f"[{timestamp_str}] {message_type_str}: {message.content}")
-            
+
             # Add multimedia descriptions
             for elem in message.multimedia_content:
                 content_parts.append(f"[MULTIMEDIA: {elem.element_type} - {elem.filename or 'unnamed'}]")
-        
-        return "\n".join(content_parts)
+
+            # Map message type to segment role
+            role = "user" if message.message_type == MessageType.USER else "assistant"
+            segments.append({"role": role, "content": message.content})
+
+        return "\n".join(content_parts), segments
     
     def _calculate_conversation_complexity(self, messages: List[Message]) -> float:
         """Calculate complexity score for conversation chunk."""
@@ -602,111 +655,206 @@ class ConversationManager:
             return ContentType.GENERAL
     
     def _persist_conversation(self, conversation: ConversationThread):
-        """Persist conversation to database."""
+        """Persist conversation to the real conversation_threads table."""
         try:
-            with get_database_session() as session:
-                # Create knowledge source entry
-                knowledge_source = KnowledgeSource(
-                    source_type='conversation',
-                    title=f"Conversation {conversation.thread_id[:8]}",
-                    author=conversation.user_id,
-                    created_at=conversation.created_at,
-                    updated_at=conversation.last_updated
+            with db_manager.get_session() as session:
+                # Resolve a valid user_id UUID for the FK constraint
+                row = session.execute(
+                    text("SELECT id FROM multimodal_librarian.users LIMIT 1")
+                ).fetchone()
+                if row:
+                    user_uuid = row[0]
+                else:
+                    user_uuid = uuid.uuid4()
+                    session.execute(
+                        text(
+                            "INSERT INTO multimodal_librarian.users "
+                            "(id, username, email, password_hash) "
+                            "VALUES (:uid, 'chat_user', "
+                            "'chat@multimodal-librarian.local', 'not_for_login') "
+                            "ON CONFLICT (username) DO NOTHING"
+                        ),
+                        {"uid": user_uuid},
+                    )
+                    fetched = session.execute(
+                        text(
+                            "SELECT id FROM multimodal_librarian.users "
+                            "WHERE username = 'chat_user'"
+                        )
+                    ).fetchone()
+                    if fetched:
+                        user_uuid = fetched[0]
+
+                thread_uuid = uuid.UUID(conversation.thread_id)
+                now = conversation.created_at or datetime.utcnow()
+
+                session.execute(
+                    text(
+                        "INSERT INTO multimodal_librarian.conversation_threads "
+                        "(id, user_id, title, created_at, updated_at, last_message_at) "
+                        "VALUES (:tid, :uid, :title, :created, :updated, :lm) "
+                        "ON CONFLICT (id) DO NOTHING"
+                    ),
+                    {
+                        "tid": thread_uuid,
+                        "uid": user_uuid,
+                        "title": f"Conversation {conversation.thread_id[:8]}",
+                        "created": now,
+                        "updated": now,
+                        "lm": now,
+                    },
                 )
-                session.add(knowledge_source)
-                session.flush()  # Get the ID
-                
-                # Create conversation entry
-                db_conversation = ConversationDB(
-                    thread_id=conversation.thread_id,
-                    user_id=conversation.user_id,
-                    source_id=knowledge_source.id,
-                    knowledge_summary=conversation.knowledge_summary,
-                    created_at=conversation.created_at,
-                    last_updated=conversation.last_updated
-                )
-                session.add(db_conversation)
                 session.commit()
-        
+
         except Exception as e:
             logger.error(f"Failed to persist conversation {conversation.thread_id}: {e}")
     
     def _persist_message(self, conversation: ConversationThread, message: Message):
-        """Persist message to database."""
+        """Persist message to the real messages table."""
         try:
-            with get_database_session() as session:
-                # Get conversation from database
-                db_conversation = session.query(ConversationDB).filter(
-                    ConversationDB.thread_id == conversation.thread_id
-                ).first()
-                
-                if db_conversation:
-                    # Convert multimedia content to JSON
-                    multimedia_json = None
-                    if message.multimedia_content:
-                        multimedia_json = [elem.to_dict() for elem in message.multimedia_content]
-                    
-                    # Create message entry
-                    db_message = MessageDB(
-                        message_id=message.message_id,
-                        conversation_id=db_conversation.id,
-                        content=message.content,
-                        message_type=message.message_type.value,
-                        multimedia_content=multimedia_json,
-                        knowledge_references=message.knowledge_references,
-                        timestamp=message.timestamp
+            import json as _json
+
+            with db_manager.get_session() as session:
+                thread_uuid = uuid.UUID(conversation.thread_id)
+
+                # Resolve user_id from the conversation_threads row
+                row = session.execute(
+                    text(
+                        "SELECT user_id FROM multimodal_librarian.conversation_threads "
+                        "WHERE id = :tid"
+                    ),
+                    {"tid": thread_uuid},
+                ).fetchone()
+                if not row:
+                    logger.warning(
+                        f"conversation_threads row not found for {conversation.thread_id}, "
+                        "skipping message persist"
                     )
-                    session.add(db_message)
-                    
-                    # Update conversation last_updated
-                    db_conversation.last_updated = message.timestamp
-                    
-                    session.commit()
-        
+                    return
+                user_uuid = row[0]
+
+                # Map MessageType to the DB enum value (uppercase)
+                msg_type_str = message.message_type.value.upper()
+
+                # Serialize multimedia_content
+                multimedia_json = None
+                if message.multimedia_content:
+                    multimedia_json = _json.dumps(
+                        [elem.to_dict() for elem in message.multimedia_content]
+                    )
+
+                # Serialize knowledge_references
+                kr_json = _json.dumps(message.knowledge_references or [])
+
+                msg_uuid = uuid.uuid4()
+
+                session.execute(
+                    text(
+                        "INSERT INTO multimodal_librarian.messages "
+                        "(id, thread_id, user_id, content, message_type, "
+                        " multimedia_content, knowledge_references, created_at) "
+                        "VALUES (:mid, :tid, :uid, :content, "
+                        " CAST(:mtype AS multimodal_librarian.message_type), "
+                        " CAST(:mm AS jsonb), CAST(:kr AS jsonb), :ts) "
+                    ),
+                    {
+                        "mid": msg_uuid,
+                        "tid": thread_uuid,
+                        "uid": user_uuid,
+                        "content": message.content,
+                        "mtype": msg_type_str,
+                        "mm": multimedia_json or "[]",
+                        "kr": kr_json,
+                        "ts": message.timestamp or datetime.utcnow(),
+                    },
+                )
+
+                # Update last_message_at on the thread
+                session.execute(
+                    text(
+                        "UPDATE multimodal_librarian.conversation_threads "
+                        "SET last_message_at = :ts, updated_at = :ts "
+                        "WHERE id = :tid"
+                    ),
+                    {"ts": message.timestamp or datetime.utcnow(), "tid": thread_uuid},
+                )
+
+                session.commit()
+
         except Exception as e:
             logger.error(f"Failed to persist message {message.message_id}: {e}")
     
     def _load_conversation(self, thread_id: str) -> Optional[ConversationThread]:
-        """Load conversation from database."""
+        """Load conversation from the real conversation_threads + messages tables."""
         try:
-            with get_database_session() as session:
-                db_conversation = session.query(ConversationDB).filter(
-                    ConversationDB.thread_id == thread_id,
-                    ConversationDB.is_active == True
-                ).first()
-                
-                if not db_conversation:
+            with db_manager.get_session() as session:
+                thread_uuid = uuid.UUID(thread_id)
+
+                # Load thread row
+                t_row = session.execute(
+                    text(
+                        "SELECT id, user_id::text, title, created_at, updated_at, is_archived "
+                        "FROM multimodal_librarian.conversation_threads "
+                        "WHERE id = :tid AND (is_archived IS NULL OR is_archived = false)"
+                    ),
+                    {"tid": thread_uuid},
+                ).fetchone()
+
+                if not t_row:
                     return None
-                
-                # Load messages
+
+                # Load messages ordered by created_at
+                msg_rows = session.execute(
+                    text(
+                        "SELECT id, content, message_type::text, "
+                        "       multimedia_content, knowledge_references, created_at "
+                        "FROM multimodal_librarian.messages "
+                        "WHERE thread_id = :tid "
+                        "ORDER BY created_at ASC"
+                    ),
+                    {"tid": thread_uuid},
+                ).fetchall()
+
                 messages = []
-                for db_msg in db_conversation.messages:
+                for mr in msg_rows:
+                    # Map DB enum to MessageType
+                    mt_str = (mr[2] or "USER").upper()
+                    try:
+                        mt = MessageType(mt_str.lower())
+                    except (ValueError, KeyError):
+                        mt = MessageType.USER
+
                     multimedia_content = []
-                    if db_msg.multimedia_content:
+                    if mr[3]:
+                        raw_mm = mr[3] if isinstance(mr[3], list) else []
                         multimedia_content = [
-                            MultimediaElement.from_dict(elem) 
-                            for elem in db_msg.multimedia_content
+                            MultimediaElement.from_dict(elem)
+                            for elem in raw_mm
                         ]
-                    
+
+                    kr = mr[4] if mr[4] else []
+                    if isinstance(kr, dict):
+                        kr = []
+
                     message = Message(
-                        message_id=db_msg.message_id,
-                        content=db_msg.content,
+                        message_id=str(mr[0]),
+                        content=mr[1],
                         multimedia_content=multimedia_content,
-                        timestamp=db_msg.timestamp,
-                        message_type=MessageType(db_msg.message_type),
-                        knowledge_references=db_msg.knowledge_references or []
+                        timestamp=mr[5],
+                        message_type=mt,
+                        knowledge_references=kr if isinstance(kr, list) else [],
                     )
                     messages.append(message)
-                
+
                 return ConversationThread(
-                    thread_id=db_conversation.thread_id,
-                    user_id=db_conversation.user_id,
+                    thread_id=thread_id,
+                    user_id=t_row[1] or "",
                     messages=messages,
-                    created_at=db_conversation.created_at,
-                    last_updated=db_conversation.last_updated,
-                    knowledge_summary=db_conversation.knowledge_summary or ""
+                    created_at=t_row[3],
+                    last_updated=t_row[4],
+                    knowledge_summary="",
                 )
-        
+
         except Exception as e:
             logger.error(f"Failed to load conversation {thread_id}: {e}")
             return None
@@ -743,6 +891,100 @@ class ConversationManager:
             ConversationThread or None if not found
         """
         return self.get_conversation(thread_id)
+
+    def update_conversation_title(self, thread_id: str, title: str) -> bool:
+        """
+        Update the title of a conversation's knowledge source.
+
+        Updates both the conversation_threads row and the knowledge_sources
+        row (looked up via UUID5 of thread_id).
+
+        Args:
+            thread_id: Conversation thread identifier
+            title: New title string
+
+        Returns:
+            True if the title was updated successfully, False otherwise.
+        """
+        try:
+            with db_manager.get_session() as session:
+                thread_uuid = uuid.UUID(thread_id)
+
+                # Update conversation_threads title
+                session.execute(
+                    text(
+                        "UPDATE multimodal_librarian.conversation_threads "
+                        "SET title = :title, updated_at = NOW() "
+                        "WHERE id = :tid"
+                    ),
+                    {"title": title, "tid": thread_uuid},
+                )
+
+                # Update knowledge_sources title (UUID5 mapping)
+                source_id = uuid.uuid5(
+                    uuid.NAMESPACE_URL, thread_id
+                )
+                session.execute(
+                    text(
+                        "UPDATE multimodal_librarian.knowledge_sources "
+                        "SET title = :title, updated_at = NOW() "
+                        "WHERE id = :sid"
+                    ),
+                    {"title": title, "sid": source_id},
+                )
+
+                session.commit()
+                logger.info(f"Updated title for conversation {thread_id}")
+                return True
+
+        except Exception as e:
+            logger.error(f"Failed to update title for conversation {thread_id}: {e}")
+            return False
+
+    def get_conversation_title(self, thread_id: str) -> Optional[str]:
+        """
+        Get the title of a conversation's knowledge source.
+
+        Checks knowledge_sources (via UUID5 mapping) first, then
+        falls back to conversation_threads.title.
+
+        Args:
+            thread_id: Conversation thread identifier
+
+        Returns:
+            The title string, or None if not found.
+        """
+        try:
+            with db_manager.get_session() as session:
+                # Try knowledge_sources first (has the user-facing title)
+                source_id = uuid.uuid5(
+                    uuid.NAMESPACE_URL, thread_id
+                )
+                row = session.execute(
+                    text(
+                        "SELECT title FROM multimodal_librarian.knowledge_sources "
+                        "WHERE id = :sid"
+                    ),
+                    {"sid": source_id},
+                ).fetchone()
+                if row and row[0]:
+                    return row[0]
+
+                # Fallback to conversation_threads.title
+                thread_uuid = uuid.UUID(thread_id)
+                row = session.execute(
+                    text(
+                        "SELECT title FROM multimodal_librarian.conversation_threads "
+                        "WHERE id = :tid"
+                    ),
+                    {"tid": thread_uuid},
+                ).fetchone()
+                return row[0] if row else None
+
+        except Exception as e:
+            logger.error(f"Failed to get title for conversation {thread_id}: {e}")
+            return None
+
     
     def list_conversations(self, user_id: str, limit: int = 50, offset: int = 0) -> List[ConversationThread]:
         """
@@ -757,47 +999,32 @@ class ConversationManager:
             List of ConversationThread objects
         """
         try:
-            with get_database_session() as session:
-                # Query conversations for user with pagination
-                db_conversations = session.query(ConversationDB).filter(
-                    ConversationDB.user_id == user_id,
-                    ConversationDB.is_active == True
-                ).order_by(ConversationDB.last_updated.desc()).offset(offset).limit(limit).all()
-                
+            with db_manager.get_session() as session:
+                rows = session.execute(
+                    text(
+                        "SELECT id, user_id::text, title, created_at, updated_at "
+                        "FROM multimodal_librarian.conversation_threads "
+                        "WHERE (is_archived IS NULL OR is_archived = false) "
+                        "ORDER BY COALESCE(last_message_at, updated_at) DESC "
+                        "OFFSET :off LIMIT :lim"
+                    ),
+                    {"off": offset, "lim": limit},
+                ).fetchall()
+
                 conversations = []
-                for db_conv in db_conversations:
-                    # Load messages
-                    messages = []
-                    for db_msg in db_conv.messages:
-                        multimedia_content = []
-                        if db_msg.multimedia_content:
-                            multimedia_content = [
-                                MultimediaElement.from_dict(elem) 
-                                for elem in db_msg.multimedia_content
-                            ]
-                        
-                        message = Message(
-                            message_id=db_msg.message_id,
-                            content=db_msg.content,
-                            multimedia_content=multimedia_content,
-                            timestamp=db_msg.timestamp,
-                            message_type=MessageType(db_msg.message_type),
-                            knowledge_references=db_msg.knowledge_references or []
-                        )
-                        messages.append(message)
-                    
-                    conversation = ConversationThread(
-                        thread_id=db_conv.thread_id,
-                        user_id=db_conv.user_id,
-                        messages=messages,
-                        created_at=db_conv.created_at,
-                        last_updated=db_conv.last_updated,
-                        knowledge_summary=db_conv.knowledge_summary or ""
+                for r in rows:
+                    conv = ConversationThread(
+                        thread_id=str(r[0]),
+                        user_id=r[1] or "",
+                        messages=[],
+                        created_at=r[3],
+                        last_updated=r[4],
+                        knowledge_summary="",
                     )
-                    conversations.append(conversation)
-                
+                    conversations.append(conv)
+
                 return conversations
-        
+
         except Exception as e:
             logger.error(f"Failed to list conversations for user {user_id}: {e}")
             return []
@@ -813,13 +1040,15 @@ class ConversationManager:
             Total number of conversations
         """
         try:
-            with get_database_session() as session:
-                count = session.query(ConversationDB).filter(
-                    ConversationDB.user_id == user_id,
-                    ConversationDB.is_active == True
-                ).count()
-                return count
-        
+            with db_manager.get_session() as session:
+                row = session.execute(
+                    text(
+                        "SELECT COUNT(*) FROM multimodal_librarian.conversation_threads "
+                        "WHERE (is_archived IS NULL OR is_archived = false)"
+                    )
+                ).fetchone()
+                return row[0] if row else 0
+
         except Exception as e:
             logger.error(f"Failed to count conversations for user {user_id}: {e}")
             return 0

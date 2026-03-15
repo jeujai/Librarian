@@ -6,11 +6,18 @@ request validation and response serialization.
 """
 
 from datetime import datetime
-from typing import List, Dict, Optional, Any, Union
-from pydantic import BaseModel, Field, validator
 from enum import Enum
+from typing import Any, Dict, List, Optional, Union
 
-from ..models.core import SourceType, ContentType, MessageType, SequenceType, InteractionType
+from pydantic import BaseModel, Field, validator
+
+from ..models.core import (
+    ContentType,
+    InteractionType,
+    MessageType,
+    SequenceType,
+    SourceType,
+)
 
 
 class APIResponse(BaseModel):
@@ -53,6 +60,7 @@ class StartConversationRequest(BaseModel):
     """Request model for starting a conversation."""
     user_id: Optional[str] = None
     initial_message: Optional[str] = None
+    previous_thread_id: Optional[str] = None
 
 
 class StartConversationResponse(APIResponse):

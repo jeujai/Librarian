@@ -5,8 +5,8 @@ This service orchestrates the two-stage retrieval pipeline that uses Neo4j
 knowledge graph for precise chunk retrieval and semantic re-ranking for
 relevance ordering.
 
-Stage 1 (KG-Based): Extract concepts from query, retrieve direct chunk pointers
-from Neo4j source_chunks fields, and traverse relationships to find related chunks.
+Stage 1 (KG-Based): Extract concepts from query, retrieve chunk IDs via
+EXTRACTED_FROM graph traversal, and traverse relationships to find related chunks.
 
 Stage 2 (Semantic Re-ranking): Re-rank candidate chunks using semantic similarity
 for relevance ordering.
@@ -15,11 +15,17 @@ Requirements: 1.1, 1.3, 1.5, 2.1, 2.2, 2.3, 2.4, 2.5, 3.1, 3.3, 3.4, 6.1, 6.2, 6
 """
 
 import asyncio
+import heapq
 import logging
+import math
+import re
 import sys
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
+
+if TYPE_CHECKING:
+    from ..components.kg_retrieval.relevance_detector import RelevanceDetector
 
 from ..components.kg_retrieval import (
     ChunkResolver,
@@ -159,6 +165,7 @@ class KGRetrievalService:
         query_timeout_seconds: float = DEFAULT_QUERY_TIMEOUT_SECONDS,
         hop_distance_decay: float = 0.5,
         max_related_chunks: int = 50,
+        relevance_detector: Optional["RelevanceDetector"] = None,
     ):
         """
         Initialize KG Retrieval Service.
@@ -174,10 +181,12 @@ class KGRetrievalService:
             query_timeout_seconds: Timeout for Neo4j queries (default 5s)
             hop_distance_decay: Decay factor per hop for KG relevance score (default 0.5)
             max_related_chunks: Maximum related chunks passed to reranker (default 50)
+            relevance_detector: Optional RelevanceDetector for proper-noun chunk filtering
         """
         self._neo4j_client = neo4j_client
         self._vector_client = vector_client
         self._model_client = model_client
+        self._relevance_detector = relevance_detector
         self._cache_ttl = cache_ttl_seconds
         self._max_results = max_results
         self._max_hops = max_hops
@@ -299,9 +308,23 @@ class KGRetrievalService:
                     query, stage1_chunks, source_mappings
                 )
 
+            # Step 3.5: Pre-reranking proper-noun filter (Requirement 7)
+            chunks_for_reranking = stage1_chunks
+            if self._relevance_detector is not None:
+                try:
+                    filtered = self._relevance_detector.filter_chunks_by_proper_nouns(
+                        stage1_chunks, query
+                    )
+                    if filtered is not None:
+                        chunks_for_reranking = filtered
+                except Exception as e:
+                    logger.warning(f"Proper-noun chunk filter failed: {e}")
+                    # Fall back to unfiltered candidates
+
             # Step 4: Stage 2 - Semantic re-ranking
             ranked_chunks = await self._semantic_reranker.rerank(
-                stage1_chunks, query, effective_top_k
+                chunks_for_reranking, query, effective_top_k,
+                decomposition=decomposition,
             )
             stage2_count = len(ranked_chunks)
 
@@ -397,7 +420,7 @@ class KGRetrievalService:
         relationships if direct chunks are insufficient (below max_results).
 
         Retrieves chunks via:
-        1. Direct source_chunks from matched concepts
+        1. Direct chunk IDs from matched concepts via EXTRACTED_FROM traversal
         2. Relationship traversal (only if direct chunks < max_results)
 
         Args:
@@ -412,8 +435,8 @@ class KGRetrievalService:
         source_mappings: Dict[str, ChunkSourceMapping] = {}
 
         # Step 1: Retrieve direct chunks from matched concepts
-        direct_chunk_ids, direct_mappings = await self._retrieve_direct_chunks(
-            decomposition.concept_matches
+        direct_chunk_ids, direct_mappings, chunk_concept_hits = (
+            await self._retrieve_direct_chunks(decomposition.concept_matches)
         )
         all_chunk_ids.update(direct_chunk_ids)
         source_mappings.update(direct_mappings)
@@ -428,16 +451,29 @@ class KGRetrievalService:
             decomposition.concept_matches
         )
 
-        # Add related chunks (avoiding duplicates)
+        # Add related chunks, capped to _max_related_chunks and prioritized
+        # by the parent concept's similarity score. Without this cap, generic
+        # concepts like "we saw" fan out to tens of thousands of related
+        # chunks via relationship traversal, wasting Milvus resolution time.
+        # Uses heapq.nlargest for O(n log k) instead of full sort O(n log n).
+        new_related: list = []
         for chunk_id in related_chunk_ids:
             if chunk_id not in all_chunk_ids:
-                all_chunk_ids.add(chunk_id)
-                if chunk_id in related_mappings:
-                    source_mappings[chunk_id] = related_mappings[chunk_id]
+                mapping = related_mappings.get(chunk_id)
+                score = mapping.match_score if mapping else 0.0
+                new_related.append((score, chunk_id, mapping))
+        top_related = heapq.nlargest(
+            self._max_related_chunks, new_related, key=lambda x: x[0]
+        )
+        for _score, chunk_id, mapping in top_related:
+            all_chunk_ids.add(chunk_id)
+            if mapping:
+                source_mappings[chunk_id] = mapping
 
         logger.debug(
             f"Stage 1 collected {len(all_chunk_ids)} unique chunk IDs "
-            f"({len(direct_chunk_ids)} direct, {len(related_chunk_ids)} related)"
+            f"({len(direct_chunk_ids)} direct, {len(top_related)} related "
+            f"[capped from {len(new_related)}])"
         )
 
         # Step 3: Resolve chunk IDs to actual content
@@ -454,29 +490,38 @@ class KGRetrievalService:
             else:
                 related_chunks.append(chunk)
 
-        # Aggregate with hop-distance-aware scoring and related chunk capping
+        # Aggregate with concept-coverage scoring and related chunk capping
         chunks = self._aggregate_and_deduplicate(
-            direct_chunks, related_chunks, source_mappings
+            direct_chunks, related_chunks, source_mappings, chunk_concept_hits
         )
 
         return chunks, source_mappings
 
     async def _retrieve_direct_chunks(
         self, concept_matches: List[Dict[str, Any]]
-    ) -> Tuple[Set[str], Dict[str, ChunkSourceMapping]]:
+    ) -> Tuple[Set[str], Dict[str, ChunkSourceMapping], Dict[str, List[Dict[str, Any]]]]:
         """
-        Retrieve direct chunks from matched concept source_chunks.
+        Retrieve direct chunks from matched concepts via EXTRACTED_FROM traversal.
+
+        Queries Neo4j for chunk IDs linked to each concept via
+        (Concept)-[:EXTRACTED_FROM]->(Chunk) relationships.
+
+        Tracks ALL concept matches per chunk for concept-coverage scoring.
 
         Args:
             concept_matches: List of matched concepts from query decomposition
 
         Returns:
-            Tuple of (chunk_ids, source_mappings)
+            Tuple of (chunk_ids, source_mappings, chunk_concept_hits)
+            chunk_concept_hits maps chunk_id -> list of concept match dicts
+            with keys: concept_id, concept_name, match_score
 
-        Requirements: 1.1, 1.3, 8.2
+        Requirements: 1.1, 1.3, 8.2, 6.1
         """
         chunk_ids: Set[str] = set()
         source_mappings: Dict[str, ChunkSourceMapping] = {}
+        # Track ALL concept matches per chunk for coverage scoring
+        chunk_concept_hits: Dict[str, List[Dict[str, Any]]] = {}
 
         for concept in concept_matches:
             concept_id = concept.get("concept_id", "")
@@ -507,17 +552,26 @@ class KGRetrievalService:
                 logger.debug(f"Cache hit for concept {concept_name}: {len(concept_chunk_ids)} chunks")
             else:
                 self._cache_misses += 1
-                # Get source_chunks from concept data or query Neo4j
-                source_chunks_str = concept.get("source_chunks", "")
-                concept_chunk_ids = self._parse_source_chunks(source_chunks_str)
+                # Query Neo4j for chunk IDs via EXTRACTED_FROM traversal (Requirement 6.1)
+                concept_chunk_ids = await self._query_chunk_ids_for_concept(concept_id)
 
-                # Cache the result
+                # Cache the result (stores chunk ID lists directly from graph traversal)
                 self._cache_source_chunks(concept_id, concept_name, concept_chunk_ids)
-                logger.debug(f"Cached source_chunks for concept {concept_name}: {len(concept_chunk_ids)} chunks")
+                logger.debug(f"Cached chunk IDs for concept {concept_name}: {len(concept_chunk_ids)} chunks")
 
-            # Add chunks with source mapping
+            # Add chunks with source mapping and track concept hits
+            hit_info = {
+                "concept_id": concept_id,
+                "concept_name": concept_name,
+                "match_score": concept_match_score,
+            }
             for chunk_id in concept_chunk_ids:
-                if chunk_id and chunk_id not in chunk_ids:
+                if not chunk_id:
+                    continue
+                # Track every concept that links to this chunk
+                chunk_concept_hits.setdefault(chunk_id, []).append(hit_info)
+                # Source mapping stores the first (highest-scoring) concept
+                if chunk_id not in chunk_ids:
                     chunk_ids.add(chunk_id)
                     source_mappings[chunk_id] = ChunkSourceMapping(
                         chunk_id=chunk_id,
@@ -528,7 +582,45 @@ class KGRetrievalService:
                         match_score=concept_match_score,
                     )
 
-        return chunk_ids, source_mappings
+        return chunk_ids, source_mappings, chunk_concept_hits
+
+    async def _query_chunk_ids_for_concept(self, concept_id: str) -> List[str]:
+        """
+        Query Neo4j for chunk IDs linked to a concept via EXTRACTED_FROM traversal.
+
+        Args:
+            concept_id: The concept ID to look up
+
+        Returns:
+            List of chunk IDs
+
+        Requirements: 6.1
+        """
+        if not self._neo4j_client:
+            return []
+
+        try:
+            cypher_query = """
+            MATCH (c:Concept {concept_id: $concept_id})-[:EXTRACTED_FROM]->(ch:Chunk)
+            RETURN ch.chunk_id AS chunk_id
+            """
+            results = await with_timeout(
+                self._neo4j_client.execute_query(
+                    cypher_query, {"concept_id": concept_id}
+                ),
+                self._query_timeout,
+            )
+            return [
+                r["chunk_id"]
+                for r in (results or [])
+                if r.get("chunk_id")
+            ]
+        except asyncio.TimeoutError:
+            logger.warning(f"Timeout querying chunk IDs for concept {concept_id}")
+            return []
+        except Exception as e:
+            logger.warning(f"Error querying chunk IDs for concept {concept_id}: {e}")
+            return []
 
     async def _retrieve_related_chunks(
         self, concept_matches: List[Dict[str, Any]]
@@ -537,7 +629,7 @@ class KGRetrievalService:
         Retrieve chunks from related concepts via relationship traversal.
 
         Traverses relationships up to max_hops to find related concepts
-        and collects their source_chunks.
+        and collects their chunk IDs via EXTRACTED_FROM traversal.
 
         Args:
             concept_matches: List of matched concepts from query decomposition
@@ -545,7 +637,7 @@ class KGRetrievalService:
         Returns:
             Tuple of (chunk_ids, source_mappings)
 
-        Requirements: 2.1, 2.2, 2.3, 2.4, 2.5
+        Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 6.2
         """
         chunk_ids: Set[str] = set()
         source_mappings: Dict[str, ChunkSourceMapping] = {}
@@ -557,6 +649,12 @@ class KGRetrievalService:
         for concept in concept_matches:
             concept_id = concept.get("concept_id", "")
             concept_name = concept.get("name", "")
+            # Carry the parent concept's similarity score so we can
+            # prioritize related chunks from higher-scoring concepts
+            if concept.get("match_type") == "semantic":
+                parent_score = float(concept.get("similarity_score", 0.0))
+            else:
+                parent_score = float(concept.get("match_score", 0.0))
 
             if not concept_id:
                 continue
@@ -572,9 +670,8 @@ class KGRetrievalService:
                     related_name = related.get("name", "")
                     hop_distance = related.get("hop_distance", 1)
                     relationship_path = related.get("relationship_path", [])
-                    source_chunks_str = related.get("source_chunks", "")
-
-                    related_chunk_ids = self._parse_source_chunks(source_chunks_str)
+                    # chunk_ids come directly as a list from EXTRACTED_FROM traversal
+                    related_chunk_ids = related.get("chunk_ids", [])
 
                     for chunk_id in related_chunk_ids:
                         if chunk_id and chunk_id not in chunk_ids:
@@ -586,6 +683,7 @@ class KGRetrievalService:
                                 retrieval_source=RetrievalSource.RELATED_CONCEPT,
                                 relationship_path=relationship_path,
                                 hop_distance=hop_distance,
+                                match_score=parent_score,
                             )
 
             except Exception as e:
@@ -631,14 +729,16 @@ class KGRetrievalService:
 
             # Single-hop query — avoids combinatorial explosion of variable-length paths.
             # With 215K+ relationships, *1..2 patterns are too expensive.
+            # Collects chunk IDs via EXTRACTED_FROM traversal (Requirement 6.2).
             cypher_query = f"""
             MATCH (start:Concept {{concept_id: $concept_id}})
                   -[r:{rel_types}]-(related:Concept)
             WHERE related.concept_id <> start.concept_id
+            OPTIONAL MATCH (related)-[:EXTRACTED_FROM]->(ch:Chunk)
             RETURN DISTINCT
                 related.concept_id as concept_id,
                 related.name as name,
-                related.source_chunks as source_chunks,
+                collect(DISTINCT ch.chunk_id) as chunk_ids,
                 1 as hop_distance,
                 [type(r)] as relationship_path,
                 [start.name, related.name] as path_names
@@ -654,10 +754,14 @@ class KGRetrievalService:
 
             related_concepts = []
             for r in results or []:
+                # chunk_ids comes as a list directly from collect()
+                raw_chunk_ids = r.get("chunk_ids", [])
+                # Filter out None values that may come from OPTIONAL MATCH
+                chunk_ids = [cid for cid in raw_chunk_ids if cid]
                 related_concepts.append({
                     "concept_id": r.get("concept_id", ""),
                     "name": r.get("name", ""),
-                    "source_chunks": r.get("source_chunks", ""),
+                    "chunk_ids": chunk_ids,
                     "hop_distance": r.get("hop_distance", 1),
                     "relationship_path": r.get("relationship_path", []),
                 })
@@ -681,40 +785,75 @@ class KGRetrievalService:
         direct_chunks: List[RetrievedChunk],
         related_chunks: List[RetrievedChunk],
         source_mappings: Dict[str, ChunkSourceMapping],
+        chunk_concept_hits: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     ) -> List[RetrievedChunk]:
         """
         Aggregate and deduplicate chunks from multiple sources.
 
-        Direct chunks take precedence over related chunks when there are duplicates.
-        Direct chunks get kg_relevance_score=1.0. Related chunks get a decayed score
-        based on hop distance and are capped at max_related_chunks.
+        Uses concept-coverage scoring: chunks that match MORE query concepts
+        get higher kg_relevance_scores. This rewards chunks that sit at the
+        intersection of multiple query concepts over chunks that only match
+        a single generic concept.
+
+        Scoring formula for direct chunks:
+            base_score = max(normalized concept match scores)
+            coverage_bonus = log2(num_matched_concepts) * 0.1
+            kg_relevance_score = min(1.0, base_score + coverage_bonus)
+
+        Related chunks get hop-distance-decayed scores and are capped.
 
         Args:
             direct_chunks: Chunks from direct concept retrieval
             related_chunks: Chunks from relationship traversal
             source_mappings: Mapping of chunk IDs to their source provenance
+            chunk_concept_hits: Mapping of chunk_id -> list of all concept
+                matches for that chunk (from _retrieve_direct_chunks)
 
         Returns:
-            Deduplicated list of chunks with hop-distance-aware scores
+            Deduplicated list of chunks with concept-coverage-aware scores
 
         Requirements: 1.5, 2.1, 2.2, 3.1, 3.2, 3.3
         """
+
         seen_ids: Set[str] = set()
         aggregated: List[RetrievedChunk] = []
+        concept_hits = chunk_concept_hits or {}
 
-        # Direct chunks: score based on concept match_score, always included
+        # Direct chunks: concept-coverage-aware scoring
         for chunk in direct_chunks:
             if chunk.chunk_id not in seen_ids:
-                mapping = source_mappings.get(chunk.chunk_id)
-                # Use the concept's fulltext match_score to
-                # differentiate strong vs weak concept matches.
-                # Normalize: scores typically range 0-15 from Lucene;
-                # we clamp to [0.1, 1.0] so direct chunks always
-                # outrank related chunks (which get decay^hop).
-                raw_score = mapping.match_score if mapping else 1.0
-                # Normalize to [0.1, 1.0] range
-                normalized = min(1.0, max(0.1, raw_score / 10.0))
-                chunk.kg_relevance_score = normalized
+                hits = concept_hits.get(chunk.chunk_id, [])
+                if hits:
+                    # Normalize each concept's match_score to [0.1, 1.0]
+                    normalized_scores = [
+                        min(1.0, max(0.1, h["match_score"] / 10.0))
+                        for h in hits
+                    ]
+                    # Base score: best single concept match
+                    base_score = max(normalized_scores)
+                    # Coverage bonus: reward chunks matching DISTINCT concepts.
+                    # Deduplicate by normalized name (lowercase, stripped of
+                    # punctuation) so that e.g. "Chelsea" and "chelsea()" count
+                    # as one concept rather than inflating the bonus.
+                    distinct_names = {
+                        re.sub(r'[^a-z0-9\s]', '', h["concept_name"].lower()).strip()
+                        for h in hits
+                    }
+                    num_concepts = len(distinct_names)
+                    # log2(1)=0, log2(2)=1, log2(3)=1.58, log2(4)=2
+                    coverage_bonus = math.log2(max(1, num_concepts)) * 0.1
+                    chunk.kg_relevance_score = min(1.0, base_score + coverage_bonus)
+                    # Store matched concepts on the chunk for downstream use
+                    chunk.matched_concepts = hits
+                    # Update concept_name to reflect the best-matching concept
+                    best_hit = max(hits, key=lambda h: h["match_score"])
+                    chunk.concept_name = best_hit["concept_name"]
+                else:
+                    # Fallback: use source_mapping score
+                    mapping = source_mappings.get(chunk.chunk_id)
+                    raw_score = mapping.match_score if mapping else 1.0
+                    chunk.kg_relevance_score = min(1.0, max(0.1, raw_score / 10.0))
+
                 seen_ids.add(chunk.chunk_id)
                 aggregated.append(chunk)
 
@@ -974,38 +1113,6 @@ class KGRetrievalService:
             chunk_ids=chunk_ids,
             ttl_seconds=self._cache_ttl,
         )
-
-    def _parse_source_chunks(self, source_chunks_str: str) -> List[str]:
-        """
-        Parse source_chunks string into list of chunk IDs.
-
-        The source_chunks field in Neo4j is stored as a comma-separated string.
-
-        Args:
-            source_chunks_str: Comma-separated chunk IDs
-
-        Returns:
-            List of chunk IDs
-        """
-        if not source_chunks_str:
-            return []
-
-        # Handle both comma-separated and JSON array formats
-        if source_chunks_str.startswith("["):
-            try:
-                import json
-                return json.loads(source_chunks_str)
-            except (json.JSONDecodeError, ValueError):
-                pass
-
-        # Parse comma-separated format
-        chunk_ids = [
-            chunk_id.strip()
-            for chunk_id in source_chunks_str.split(",")
-            if chunk_id.strip()
-        ]
-
-        return chunk_ids
 
     def clear_cache(self) -> int:
         """

@@ -1014,10 +1014,15 @@ class TestCrossDocumentLinking:
         self, service_with_kg, mock_kg_service
     ):
         """Test cross-document links finds concepts with same Q-number."""
-        # Mock finding other concepts with same Q-number
-        mock_kg_service.client.execute_query = AsyncMock(return_value=[
-            {"concept_id": "c2", "document_id": "doc2"},
-            {"concept_id": "c3", "document_id": "doc3"},
+        # Mock finding other concepts with same Q-number (new Chunk-based format)
+        # First call: find matching concepts with document_ids from Chunk traversal
+        # Second call: get current concept's source_ids from Chunk nodes
+        mock_kg_service.client.execute_query = AsyncMock(side_effect=[
+            [
+                {"concept_id": "c2", "document_ids": ["doc2"]},
+                {"concept_id": "c3", "document_ids": ["doc3"]},
+            ],
+            [{"source_ids": ["doc1"]}],
         ])
 
         concept = ConceptNode(
@@ -1044,9 +1049,13 @@ class TestCrossDocumentLinking:
     ):
         """Test cross-document links skips concepts from same document."""
         # Mock finding concepts - one from same doc, one from different
-        mock_kg_service.client.execute_query = AsyncMock(return_value=[
-            {"concept_id": "c2", "document_id": "doc1"},  # Same document
-            {"concept_id": "c3", "document_id": "doc2"},  # Different document
+        # Uses Chunk-based document_ids format
+        mock_kg_service.client.execute_query = AsyncMock(side_effect=[
+            [
+                {"concept_id": "c2", "document_ids": ["doc1"]},  # Same document
+                {"concept_id": "c3", "document_ids": ["doc2"]},  # Different document
+            ],
+            [{"source_ids": ["doc1"]}],
         ])
 
         concept = ConceptNode(
@@ -1144,7 +1153,7 @@ class TestCrossDocumentLinking:
                 {
                     "concept_id": "c2",
                     "name": "Related Concept",
-                    "document_id": "doc2",
+                    "document_ids": ["doc2"],
                     "q_number": "Q42",
                     "hops": 1
                 }
@@ -1219,7 +1228,7 @@ class TestKnowledgeGraphServiceCrossDocument:
             {
                 "concept_id": "c2",
                 "name": "Related",
-                "document_id": "doc2",
+                "document_ids": ["doc2"],
                 "q_number": "Q42",
                 "hops": 1
             }
@@ -1229,7 +1238,7 @@ class TestKnowledgeGraphServiceCrossDocument:
 
         assert len(result) == 1
         assert result[0]["concept_id"] == "c2"
-        assert result[0]["document_id"] == "doc2"
+        assert result[0]["document_ids"] == ["doc2"]
 
     @pytest.mark.asyncio
     async def test_query_with_same_as_traversal_handles_errors(
