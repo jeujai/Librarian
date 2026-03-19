@@ -1,4 +1,17 @@
-use_default_settings: true
+use_default_settings:
+  engines:
+    keep_only:
+      - google
+      - bing
+      - brave
+      - duckduckgo
+      - wikipedia
+      - wikidata
+      - google scholar
+      - arxiv
+      - github
+      - stackoverflow
+
 server:
   secret_key: "dev-searxng-secret"
   bind_address: "0.0.0.0"

@@ -244,6 +244,31 @@ _relation_type_registry: Optional["RelationTypeRegistry"] = None
 _conversation_knowledge_service: Optional["ConversationKnowledgeService"] = None
 
 
+# =============================================================================
+# Cache Invalidation Utilities
+# =============================================================================
+
+def invalidate_rag_cache() -> dict:
+    """Clear retrieval caches on RAG service singletons and KG retrieval service.
+
+    Call this after any operation that modifies the knowledge base (document
+    upload/delete, conversation-to-knowledge conversion, conversation deletion)
+    so that subsequent queries do not serve stale cached results.
+
+    Returns:
+        Dict with counts of cleared entries per service.
+    """
+    cleared = {}
+    if _rag_service is not None:
+        cleared["rag_service"] = _rag_service.clear_retrieval_cache()
+    if _cached_rag_service is not None:
+        cleared["cached_rag_service"] = _cached_rag_service.clear_retrieval_cache()
+    if _kg_retrieval_service is not None:
+        cleared["kg_retrieval_service"] = _kg_retrieval_service.clear_cache()
+    logger.info(f"RAG cache invalidation complete: {cleared}")
+    return cleared
+
+
 class ConnectionManager:
     """
     WebSocket connection manager for chat functionality.

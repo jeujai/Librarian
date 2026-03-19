@@ -629,25 +629,28 @@ async def handle_streaming_rag_response(
                 logger.info(f"Connection {connection_id} disconnected, cancelling stream")
                 return
             
-            # Handle first chunk with citations
-            if chunk_count == 0 and chunk.citations:
+            # Handle first chunk — always send streaming_start so the
+            # frontend creates the message element (even with 0 citations).
+            if chunk_count == 0:
                 citations = []
-                for source in chunk.citations:
-                    citations.append({
-                        'document_id': getattr(source, 'document_id', ''),
-                        'document_title': getattr(source, 'document_title', ''),
-                        'page_number': getattr(source, 'page_number', None),
-                        'relevance_score': round(getattr(source, 'relevance_score', 0), 3),
-                        'excerpt': getattr(source, 'excerpt', ''),
-                        'section_title': getattr(source, 'section_title', ''),
-                        'chunk_id': getattr(source, 'chunk_id', ''),
-                        'content_truncated': getattr(source, 'content_truncated', False),
-                        'excerpt_error': getattr(source, 'excerpt_error', None),
-                        'url': getattr(source, 'url', None),
-                        'source_type': getattr(source, 'source_type', None),
-                        'knowledge_source_type': getattr(source, 'knowledge_source_type', None),
-                    })
+                if chunk.citations:
+                    for source in chunk.citations:
+                        citations.append({
+                            'document_id': getattr(source, 'document_id', ''),
+                            'document_title': getattr(source, 'document_title', ''),
+                            'page_number': getattr(source, 'page_number', None),
+                            'relevance_score': round(getattr(source, 'relevance_score', 0), 3),
+                            'excerpt': getattr(source, 'excerpt', ''),
+                            'section_title': getattr(source, 'section_title', ''),
+                            'chunk_id': getattr(source, 'chunk_id', ''),
+                            'content_truncated': getattr(source, 'content_truncated', False),
+                            'excerpt_error': getattr(source, 'excerpt_error', None),
+                            'url': getattr(source, 'url', None),
+                            'source_type': getattr(source, 'source_type', None),
+                            'knowledge_source_type': getattr(source, 'knowledge_source_type', None),
+                        })
                 await manager.send_streaming_start(connection_id, citations)
+                chunk_count += 1
             
             # Send content chunk
             if chunk.content:

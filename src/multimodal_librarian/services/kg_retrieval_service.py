@@ -476,6 +476,12 @@ class KGRetrievalService:
             f"[capped from {len(new_related)}])"
         )
 
+        # --- determinism diagnostic: log sorted chunk IDs ---
+        _sorted_direct = sorted(direct_chunk_ids)[:10]
+        logger.info(
+            f"DETERMINISM_DIAG direct_chunk_ids ({len(direct_chunk_ids)}): {_sorted_direct}"
+        )
+
         # Step 3: Resolve chunk IDs to actual content
         all_resolved = await self._chunk_resolver.resolve_chunks(
             list(all_chunk_ids), source_mappings
@@ -742,6 +748,7 @@ class KGRetrievalService:
                 1 as hop_distance,
                 [type(r)] as relationship_path,
                 [start.name, related.name] as path_names
+            ORDER BY related.concept_id
             LIMIT 20
             """
 

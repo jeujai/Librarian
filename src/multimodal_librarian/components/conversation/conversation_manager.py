@@ -6,7 +6,9 @@ message processing with multimedia support, and conversation-to-knowledge
 conversion functionality.
 """
 
+import asyncio
 import logging
+import os
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -476,7 +478,146 @@ class ConversationManager:
         except Exception as e:
             logger.error(f"Failed to delete conversation {thread_id}: {e}")
             return False
-    
+
+    async def delete_conversation_completely(self, thread_id: str, user_id: str = "") -> Dict[str, Any]:
+        """
+        Delete conversation from Postgres, Milvus, and Neo4j.
+
+        This is the async counterpart of delete_conversation that also
+        removes vector embeddings and knowledge-graph nodes so that
+        deleted conversations no longer appear as citation sources.
+        """
+        source_id = str(uuid.uuid5(uuid.NAMESPACE_URL, thread_id))
+        results: Dict[str, Any] = {"errors": [], "milvus_deleted": 0, "neo4j_deleted": 0}
+
+        # --- Milvus cleanup ---
+        results["milvus_deleted"] = await self._delete_vectors_from_milvus(source_id, results)
+
+        # --- Neo4j cleanup ---
+        results["neo4j_deleted"] = await self._delete_nodes_from_neo4j(source_id, results)
+
+        # --- Postgres cleanup (existing sync logic) ---
+        pg_ok = self.delete_conversation(thread_id, user_id)
+        results["postgres_deleted"] = pg_ok
+
+        if results["errors"]:
+            logger.warning(f"Conversation {thread_id} deleted with errors: {results['errors']}")
+        else:
+            logger.info(
+                f"Conversation {thread_id} fully deleted — "
+                f"milvus={results['milvus_deleted']}, neo4j={results['neo4j_deleted']}"
+            )
+        return results
+
+    # ------------------------------------------------------------------
+    # Milvus / Neo4j helpers (mirrors DocumentManager patterns)
+    # ------------------------------------------------------------------
+
+    async def _delete_vectors_from_milvus(self, source_id: str, results: Dict[str, Any]) -> int:
+        """Delete conversation vectors from Milvus with a 15-second timeout."""
+        try:
+            return await asyncio.wait_for(
+                self._delete_vectors_from_milvus_inner(source_id, results),
+                timeout=15,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"Milvus deletion timed out for conversation source {source_id}")
+            results["errors"].append("Milvus: timed out after 15s")
+            return 0
+        except Exception as e:
+            logger.warning(f"Milvus deletion failed for conversation source {source_id}: {e}")
+            results["errors"].append(f"Milvus: {e}")
+            return 0
+
+    async def _delete_vectors_from_milvus_inner(self, source_id: str, results: Dict[str, Any]) -> int:
+        from pymilvus import Collection, connections, utility
+
+        host = os.environ.get("MILVUS_HOST", "milvus")
+        port = os.environ.get("MILVUS_PORT", "19530")
+        collection_name = os.environ.get("MILVUS_COLLECTION_NAME", "knowledge_chunks")
+        alias = f"conv_del_{source_id[:8]}"
+        loop = asyncio.get_event_loop()
+
+        await loop.run_in_executor(
+            None, lambda: connections.connect(alias=alias, host=host, port=port, timeout=10)
+        )
+        try:
+            has = await loop.run_in_executor(
+                None, lambda: utility.has_collection(collection_name, using=alias)
+            )
+            if not has:
+                return 0
+
+            col = await loop.run_in_executor(
+                None, lambda: Collection(collection_name, using=alias)
+            )
+            await loop.run_in_executor(None, col.load)
+
+            expr = f'metadata["source_id"] == "{source_id}"'
+            mut = await loop.run_in_executor(None, col.delete, expr)
+            deleted = mut.delete_count if hasattr(mut, "delete_count") else 0
+            logger.info(f"Milvus: deleted {deleted} conversation vectors for source {source_id}")
+            return deleted
+        finally:
+            await loop.run_in_executor(None, connections.disconnect, alias)
+
+    async def _delete_nodes_from_neo4j(self, source_id: str, results: Dict[str, Any]) -> int:
+        """Delete conversation nodes from Neo4j with a 30-second timeout."""
+        try:
+            return await asyncio.wait_for(
+                self._delete_nodes_from_neo4j_inner(source_id, results),
+                timeout=30,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"Neo4j deletion timed out for conversation source {source_id}")
+            results["errors"].append("Neo4j: timed out after 30s")
+            return 0
+        except Exception as e:
+            logger.warning(f"Neo4j deletion failed for conversation source {source_id}: {e}")
+            results["errors"].append(f"Neo4j: {e}")
+            return 0
+
+    async def _delete_nodes_from_neo4j_inner(self, source_id: str, results: Dict[str, Any]) -> int:
+        try:
+            from ...services.knowledge_graph_service import KnowledgeGraphService
+            kg = KnowledgeGraphService()
+            await kg.client.connect()
+            try:
+                res_rels = await kg.client.execute_write_query(
+                    "MATCH (ch:Chunk {source_id: $sid})<-[r:EXTRACTED_FROM]-(c:Concept) "
+                    "DELETE r RETURN count(r) AS deleted_rels",
+                    {"sid": source_id},
+                )
+                deleted_rels = res_rels[0]["deleted_rels"] if res_rels else 0
+
+                res_chunks = await kg.client.execute_write_query(
+                    "MATCH (ch:Chunk {source_id: $sid}) DELETE ch RETURN count(ch) AS deleted_chunks",
+                    {"sid": source_id},
+                )
+                deleted_chunks = res_chunks[0]["deleted_chunks"] if res_chunks else 0
+
+                res_concepts = await kg.client.execute_write_query(
+                    "MATCH (c:Concept) "
+                    "WHERE NOT EXISTS { MATCH (c)-[:EXTRACTED_FROM]->() } "
+                    "AND NOT EXISTS { MATCH (c)<-[:SAME_AS]-() } "
+                    "DETACH DELETE c RETURN count(c) AS deleted_concepts",
+                    {},
+                )
+                deleted_concepts = res_concepts[0]["deleted_concepts"] if res_concepts else 0
+
+                total = deleted_rels + deleted_chunks + deleted_concepts
+                logger.info(
+                    f"Neo4j: deleted {deleted_rels} rels, {deleted_chunks} chunks, "
+                    f"{deleted_concepts} orphaned concepts for conversation source {source_id}"
+                )
+                return total
+            finally:
+                await kg.client.disconnect()
+        except Exception as e:
+            logger.warning(f"Neo4j deletion failed for conversation source {source_id}: {e}")
+            results["errors"].append(f"Neo4j: {e}")
+            return 0
+
     def _create_conversation_context(self, conversation: ConversationThread) -> ConversationContext:
         """Create conversation context for processing."""
         

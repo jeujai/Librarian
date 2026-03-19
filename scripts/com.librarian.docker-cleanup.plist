@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.librarian.docker-cleanup</string>
+    
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/jeujaiwu/librarian/scripts/docker-cleanup.sh</string>
+        <string>--force</string>
+    </array>
+    
+    <key>StartCalendarInterval</key>
+    <array>
+        <!-- Run at 6:00 AM -->
+        <dict>
+            <key>Hour</key>
+            <integer>6</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+        <!-- Run at 6:00 PM -->
+        <dict>
+            <key>Hour</key>
+            <integer>18</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+    </array>
+    
+    <key>StandardOutPath</key>
+    <string>/Users/jeujaiwu/librarian/logs/docker-cleanup.log</string>
+    
+    <key>StandardErrorPath</key>
+    <string>/Users/jeujaiwu/librarian/logs/docker-cleanup.log</string>
+    
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+    </dict>
+    
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

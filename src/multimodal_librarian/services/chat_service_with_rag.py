@@ -328,7 +328,7 @@ class EnhancedChatService(ChatService):
             
             await self.connection_manager.send_message(connection_id, {
                 "type": "system",
-                "content": "🤖 Welcome to Multimodal Librarian with Document Intelligence! I can now answer questions using your uploaded documents and provide citations.",
+                "content": "🤖 Welcome to Librarian with Document Intelligence! I can now answer questions using your uploaded documents and provide citations.",
                 "timestamp": datetime.utcnow().isoformat(),
                 "features": {
                     "enhanced_context": True,

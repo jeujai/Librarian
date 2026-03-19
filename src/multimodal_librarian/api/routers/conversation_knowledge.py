@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from ..dependencies.services import (
     get_conversation_knowledge_service,
     get_conversation_manager,
+    invalidate_rag_cache,
 )
 
 logger = logging.getLogger(__name__)
@@ -109,6 +110,9 @@ async def convert_conversation_to_knowledge(
         result = await service.convert_conversation(
             thread_id, title=body.title
         )
+        # Invalidate retrieval caches so the new knowledge is immediately
+        # discoverable by subsequent queries.
+        invalidate_rag_cache()
         return ConvertToKnowledgeResponse(
             thread_id=result.thread_id,
             chunks_created=result.chunks_created,

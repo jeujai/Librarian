@@ -10,6 +10,7 @@ Requirements: 4.1, 4.2, 4.3, 4.4, 4.5
 """
 
 import asyncio
+import hashlib
 import logging
 from typing import Any, Dict, List, Optional, Set
 
@@ -109,6 +110,12 @@ class QueryDecomposer:
         self._similarity_threshold = similarity_threshold
         self._semantic_max_results = semantic_max_results
         self._semantic_enabled = semantic_enabled
+        # Cache query embeddings so identical query text always produces
+        # the same vector within a session, eliminating floating-point
+        # non-determinism from repeated embedding calls.
+        # Key: SHA-256 of query text, Value: embedding list
+        self._embedding_cache: Dict[str, List[float]] = {}
+        self._max_embedding_cache_size = 128
         logger.debug("QueryDecomposer initialized")
     
     async def decompose(self, query: str) -> QueryDecomposition:
@@ -187,6 +194,14 @@ class QueryDecomposer:
         #   Lucene as a best-effort.
         if semantic_matches:
             concept_matches = semantic_matches
+            # --- determinism diagnostic: log every concept + score ---
+            _diag = [
+                f"{m.get('name','?')[:40]}|sim={m.get('similarity_score',0):.4f}"
+                for m in semantic_matches
+            ]
+            logger.info(
+                f"DETERMINISM_DIAG semantic_matches ({len(semantic_matches)}): {_diag}"
+            )
             logger.info(
                 f"Using {len(semantic_matches)} semantic concept matches "
                 f"(lexical fallback not needed)"
@@ -391,11 +406,21 @@ class QueryDecomposer:
             return []
 
         try:
-            embeddings = await self._model_server_client.generate_embeddings([query])
-            if not embeddings:
-                return []
+            # Use cached embedding if available to ensure deterministic
+            # results for identical queries within the same session.
+            cache_key = hashlib.sha256(query.encode('utf-8')).hexdigest()
+            query_embedding = self._embedding_cache.get(cache_key)
 
-            query_embedding = embeddings[0]
+            if query_embedding is None:
+                embeddings = await self._model_server_client.generate_embeddings([query])
+                if not embeddings:
+                    return []
+                query_embedding = embeddings[0]
+                # Evict oldest entries if cache is full
+                if len(self._embedding_cache) >= self._max_embedding_cache_size:
+                    oldest_key = next(iter(self._embedding_cache))
+                    del self._embedding_cache[oldest_key]
+                self._embedding_cache[cache_key] = query_embedding
 
             cypher = """
             CALL db.index.vector.queryNodes(

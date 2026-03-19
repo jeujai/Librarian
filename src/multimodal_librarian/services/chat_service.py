@@ -901,7 +901,7 @@ class ChatService:
             # Send enhanced welcome message
             await self.connection_manager.send_message(connection_id, {
                 "type": "system",
-                "content": "🤖 Welcome to Enhanced Multimodal Librarian! I'm your AI assistant with advanced conversation capabilities including context management, typing indicators, and multi-session support.",
+                "content": "🤖 Welcome to Enhanced Librarian! I'm your AI assistant with advanced conversation capabilities including context management, typing indicators, and multi-session support.",
                 "timestamp": datetime.utcnow().isoformat(),
                 "features": {
                     "enhanced_context": True,

@@ -134,6 +134,14 @@ async def upload_document(
                 force_upload=force_upload
             )
             
+            # Invalidate retrieval caches so any stale entries from before
+            # this upload don't mask the new content once processing completes.
+            try:
+                from ..dependencies.services import invalidate_rag_cache
+                invalidate_rag_cache()
+            except Exception as e:
+                logger.warning(f"RAG cache invalidation failed: {e}")
+            
             logger.info(f"Document uploaded successfully: {result.document_id}")
             return result
             
@@ -386,6 +394,13 @@ async def delete_document(
                     evicted = _kg_retrieval_service.evict_chunks(stale_chunk_ids)
             except Exception as e:
                 logger.warning(f"KG cache eviction failed: {e}")
+
+        # Invalidate retrieval caches so deleted content is no longer returned.
+        try:
+            from ..dependencies.services import invalidate_rag_cache
+            invalidate_rag_cache()
+        except Exception as e:
+            logger.warning(f"RAG cache invalidation failed: {e}")
 
         return JSONResponse(
             status_code=status.HTTP_200_OK,

@@ -80,6 +80,12 @@ class SemanticReranker:
         # Query embedding cache: hash -> (embedding, timestamp)
         self._query_cache: Dict[str, Tuple[np.ndarray, float]] = {}
 
+        # Chunk content embedding cache: SHA-256(content) -> embedding
+        # Ensures identical chunk text always produces the same embedding
+        # across reranking calls, eliminating floating-point non-determinism.
+        self._chunk_embedding_cache: Dict[str, List[float]] = {}
+        self._max_chunk_cache_size = 512
+
         # Validate weights
         if self._kg_weight < 0 or self._semantic_weight < 0:
             logger.warning("Negative weights provided, using absolute values")
@@ -465,33 +471,71 @@ class SemanticReranker:
 
         # Generate embeddings only for chunks that don't have them
         if chunks_without_embeddings and self._model_client:
-            chunk_texts = [chunk.content for chunk in chunks_without_embeddings]
-            
-            try:
-                chunk_embeddings = await self._model_client.generate_embeddings(
-                    chunk_texts, normalize=True
-                )
-
-                if chunk_embeddings and len(chunk_embeddings) == len(chunks_without_embeddings):
-                    for chunk, embedding in zip(chunks_without_embeddings, chunk_embeddings):
-                        chunk_emb = np.array(embedding)
-                        similarity = self._cosine_similarity(query_embedding, chunk_emb)
-                        chunk.semantic_score = (similarity + 1.0) / 2.0
-                        # Store the generated embedding for potential future use
-                        chunk.embedding = embedding
-                else:
-                    logger.warning(
-                        f"Embedding count mismatch: expected "
-                        f"{len(chunks_without_embeddings)}, "
-                        f"got {len(chunk_embeddings) if chunk_embeddings else 0}"
+            # Check chunk embedding cache first
+            chunks_needing_generation = []
+            for chunk in chunks_without_embeddings:
+                cache_key = hashlib.sha256(
+                    (chunk.content or "").encode('utf-8')
+                ).hexdigest()
+                cached_emb = self._chunk_embedding_cache.get(cache_key)
+                if cached_emb is not None:
+                    chunk_emb = np.array(cached_emb)
+                    similarity = self._cosine_similarity(
+                        query_embedding, chunk_emb
                     )
-                    for chunk in chunks_without_embeddings:
-                        chunk.semantic_score = 0.5
+                    chunk.semantic_score = (similarity + 1.0) / 2.0
+                    chunk.embedding = cached_emb
+                else:
+                    chunks_needing_generation.append(chunk)
 
-            except Exception as e:
-                logger.warning(f"Error generating embeddings: {e}")
-                for chunk in chunks_without_embeddings:
-                    chunk.semantic_score = 0.5
+            if chunks_needing_generation:
+                chunk_texts = [
+                    chunk.content
+                    for chunk in chunks_needing_generation
+                ]
+
+                try:
+                    chunk_embeddings = (
+                        await self._model_client.generate_embeddings(
+                            chunk_texts, normalize=True
+                        )
+                    )
+
+                    if chunk_embeddings and len(chunk_embeddings) == len(
+                        chunks_needing_generation
+                    ):
+                        for chunk, embedding in zip(
+                            chunks_needing_generation, chunk_embeddings
+                        ):
+                            chunk_emb = np.array(embedding)
+                            similarity = self._cosine_similarity(
+                                query_embedding, chunk_emb
+                            )
+                            chunk.semantic_score = (
+                                (similarity + 1.0) / 2.0
+                            )
+                            chunk.embedding = embedding
+                            # Cache the generated embedding
+                            ck = hashlib.sha256(
+                                (chunk.content or "").encode('utf-8')
+                            ).hexdigest()
+                            if len(self._chunk_embedding_cache) >= self._max_chunk_cache_size:
+                                oldest = next(iter(self._chunk_embedding_cache))
+                                del self._chunk_embedding_cache[oldest]
+                            self._chunk_embedding_cache[ck] = embedding
+                    else:
+                        logger.warning(
+                            f"Embedding count mismatch: expected "
+                            f"{len(chunks_needing_generation)}, "
+                            f"got {len(chunk_embeddings) if chunk_embeddings else 0}"
+                        )
+                        for chunk in chunks_needing_generation:
+                            chunk.semantic_score = 0.5
+
+                except Exception as e:
+                    logger.warning(f"Error generating embeddings: {e}")
+                    for chunk in chunks_needing_generation:
+                        chunk.semantic_score = 0.5
         elif chunks_without_embeddings:
             # No model client, set default scores
             for chunk in chunks_without_embeddings:

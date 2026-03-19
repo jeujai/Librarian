@@ -336,7 +336,9 @@ class CitationPopup {
             left = viewportWidth - popupWidth - padding;
         }
 
-        // Apply fixed size, position, and scroll
+        // Apply fixed size and position.
+        // overflow is handled by CSS: outer container is hidden,
+        // inner .citation-popup__content scrolls.
         popup.style.position = 'fixed';
         popup.style.top = `${top}px`;
         popup.style.left = `${left}px`;
@@ -344,7 +346,6 @@ class CitationPopup {
         popup.style.maxWidth = `${popupWidth}px`;
         popup.style.height = `${popupHeight}px`;
         popup.style.maxHeight = `${popupHeight}px`;
-        popup.style.overflowY = 'auto';
     }
 
     /**
@@ -354,6 +355,13 @@ class CitationPopup {
      */
     _scrollToRelevantText(triggerElement, citationData) {
         if (!this.popupElement || !triggerElement || !citationData || !citationData.excerpt) {
+            return;
+        }
+
+        // Only highlight when triggered from an inline [Source N] link.
+        // The sources list at the bottom has no surrounding AI response text
+        // to match against, so highlighting would be arbitrary/wrong.
+        if (!triggerElement.classList.contains('citation-link')) {
             return;
         }
 
@@ -387,32 +395,63 @@ class CitationPopup {
 
         if (matchIndex < 0) return;
 
-        // Insert a marker span at the match position so we can measure its pixel offset
+        // Expand match to the full sentence containing it
         const excerptEl = this.popupElement.querySelector('.citation-popup__excerpt');
         if (!excerptEl) return;
 
         const fullText = citationData.excerpt;
-        const before = fullText.substring(0, matchIndex);
-        const matched = fullText.substring(matchIndex, matchIndex + matchLen);
-        const after = fullText.substring(matchIndex + matchLen);
+
+        // Find sentence start: scan backwards for sentence-ending punctuation
+        let sentenceStart = matchIndex;
+        for (let i = matchIndex - 1; i >= 0; i--) {
+            const ch = fullText[i];
+            if (ch === '.' || ch === '!' || ch === '?') {
+                sentenceStart = i + 1;
+                break;
+            }
+            if (i === 0) sentenceStart = 0;
+        }
+        // Skip leading whitespace
+        while (sentenceStart < matchIndex && /\s/.test(fullText[sentenceStart])) {
+            sentenceStart++;
+        }
+
+        // Find sentence end: scan forwards for sentence-ending punctuation
+        let sentenceEnd = matchIndex + matchLen;
+        for (let i = sentenceEnd; i < fullText.length; i++) {
+            const ch = fullText[i];
+            if (ch === '.' || ch === '!' || ch === '?') {
+                sentenceEnd = i + 1;
+                break;
+            }
+            if (i === fullText.length - 1) sentenceEnd = fullText.length;
+        }
+
+        const before = fullText.substring(0, sentenceStart);
+        const matched = fullText.substring(sentenceStart, sentenceEnd);
+        const after = fullText.substring(sentenceEnd);
 
         excerptEl.textContent = '';
         excerptEl.appendChild(document.createTextNode(before));
         const marker = document.createElement('span');
+        marker.className = 'citation-popup__highlight';
         marker.textContent = matched;
         excerptEl.appendChild(marker);
         excerptEl.appendChild(document.createTextNode(after));
 
-        // Use the marker's actual pixel position to compute ideal scroll
-        const popupRect = this.popupElement.getBoundingClientRect();
-        const markerRect = marker.getBoundingClientRect();
-        const markerTopInScroll = markerRect.top - popupRect.top + this.popupElement.scrollTop;
-        const visibleHeight = this.popupElement.clientHeight;
+        // Scroll the inner __content container (not the outer popup)
+        const scrollContainer = this.popupElement.querySelector('.citation-popup__content');
+        if (!scrollContainer) return;
 
-        // Ideal: marker vertically centered in the popup
+        const containerRect = scrollContainer.getBoundingClientRect();
+        const markerRect = marker.getBoundingClientRect();
+        const markerTopInScroll = markerRect.top - containerRect.top + scrollContainer.scrollTop;
+        const visibleHeight = scrollContainer.clientHeight;
+
+        // Ideal: marker vertically centered in the scroll container
         const idealScroll = markerTopInScroll - visibleHeight / 2;
-        const maxScroll = this.popupElement.scrollHeight - visibleHeight;
-        this.popupElement.scrollTop = Math.max(0, Math.min(idealScroll, maxScroll));
+        const maxScroll = scrollContainer.scrollHeight - visibleHeight;
+        scrollContainer.scrollTop = Math.max(0, Math.min(idealScroll, maxScroll));
     }
 
     /**

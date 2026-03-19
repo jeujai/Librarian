@@ -275,11 +275,19 @@ async def delete_conversation(
         if user_id and thread.user_id != user_id:
             raise HTTPException(status_code=403, detail="Access denied")
         
-        # Delete conversation and associated knowledge
-        success = conversation_manager.delete_conversation(thread_id)
+        # Delete conversation and associated knowledge (Postgres + Milvus + Neo4j)
+        results = await conversation_manager.delete_conversation_completely(thread_id)
         
-        if not success:
+        if not results.get("postgres_deleted"):
             raise HTTPException(status_code=500, detail="Failed to delete conversation")
+        
+        # Invalidate retrieval caches so deleted conversation content
+        # is no longer returned in search results.
+        try:
+            from ..dependencies.services import invalidate_rag_cache
+            invalidate_rag_cache()
+        except Exception as e:
+            logger.warning(f"RAG cache invalidation failed: {e}")
         
         logger.info(f"Deleted conversation thread: {thread_id}")
         

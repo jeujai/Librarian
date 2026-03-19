@@ -623,6 +623,14 @@ async def handle_document_delete_request(
         # Extract success status from results
         success = deletion_results.get('success', False)
 
+        # Invalidate retrieval caches so deleted content is no longer returned.
+        if success:
+            try:
+                from ..dependencies.services import invalidate_rag_cache
+                invalidate_rag_cache()
+            except Exception as e:
+                logger.warning(f"RAG cache invalidation failed: {e}")
+
         # Build detailed message
         if success:
             details = []

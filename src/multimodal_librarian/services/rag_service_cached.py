@@ -240,11 +240,12 @@ class CachedRAGService(RAGService):
         user_id: str,
         document_filter: Optional[List[str]] = None,
         related_concepts: Optional[List[str]] = None,
-        kg_metadata: Optional[Dict[str, Any]] = None
+        kg_metadata: Optional[Dict[str, Any]] = None,
+        raw_query: Optional[str] = None
     ) -> List[DocumentChunk]:
         """Search for relevant document chunks with caching."""
         if not self.enable_search_cache:
-            return await super()._search_documents(query, user_id, document_filter, related_concepts, kg_metadata)
+            return await super()._search_documents(query, user_id, document_filter, related_concepts, kg_metadata, raw_query=raw_query)
         
         await self._ensure_cache_initialized()
         
@@ -271,7 +272,7 @@ class CachedRAGService(RAGService):
         self.cache_stats['search_misses'] += 1
         
         try:
-            chunks = await super()._search_documents(query, user_id, document_filter, related_concepts, kg_metadata)
+            chunks = await super()._search_documents(query, user_id, document_filter, related_concepts, kg_metadata, raw_query=raw_query)
             
             # Cache the results
             if self.cache_service and chunks:
@@ -433,7 +434,8 @@ class CachedRAGService(RAGService):
         
         # Step 2: Search for relevant documents (cached)
         search_results = await self._search_documents(
-            processed_query, user_id, document_filter, related_concepts, kg_metadata
+            processed_query, user_id, document_filter, related_concepts, kg_metadata,
+            raw_query=query,
         )
         
         # Step 3: Prepare context (cached)

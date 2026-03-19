@@ -1163,7 +1163,7 @@ def create_minimal_app() -> FastAPI:
     
     # Use the lifespan context manager for proper startup/shutdown lifecycle
     app = FastAPI(
-        title="Multimodal Librarian",
+        title="Librarian",
         description="Production AI-powered document management system",
         version="1.0.0",
         docs_url="/docs",
@@ -1444,7 +1444,7 @@ def create_minimal_app() -> FastAPI:
         
         # Greeting
         if any(word in message_lower for word in ['hello', 'hi', 'hey', 'good morning']):
-            return "Hello! I'm your Multimodal Librarian assistant. I can help you with questions, provide information, and maintain conversation context. What would you like to know?"
+            return "Hello! I'm your Librarian assistant. I can help you with questions, provide information, and maintain conversation context. What would you like to know?"
         
         # Questions about capabilities
         elif any(word in message_lower for word in ['what can you do', 'capabilities', 'features']):
@@ -1520,7 +1520,7 @@ def create_minimal_app() -> FastAPI:
                             "conversation_memory": True
                         },
                         "rag_status": {"status": "unavailable", "reason": "inline_mode"},
-                        "welcome_message": "🤖 Welcome to Multimodal Librarian! I can help you with questions and provide intelligent responses. Ask me anything!"
+                        "welcome_message": "🤖 Welcome to Librarian! I can help you with questions and provide intelligent responses. Ask me anything!"
                     }, connection_id)
                     
                 elif message_type == "chat_message":
@@ -1557,7 +1557,7 @@ def create_minimal_app() -> FastAPI:
                                 conversation_parts = []
                                 
                                 # Add system context
-                                conversation_parts.append("You are a helpful AI assistant called Multimodal Librarian. Provide clear, concise, and helpful responses. Answer questions directly and accurately.")
+                                conversation_parts.append("You are a helpful AI assistant called Librarian. Provide clear, concise, and helpful responses. Answer questions directly and accurately.")
                                 
                                 # Add conversation history
                                 for msg in history[-6:]:
@@ -2143,7 +2143,7 @@ def create_minimal_app() -> FastAPI:
     async def root():
         """Root endpoint."""
         return {
-            "message": "Multimodal Librarian API - Production",
+            "message": "Librarian API - Production",
             "version": "1.0.0",
             "status": "running",
             "docs_url": "/docs",
@@ -2199,7 +2199,7 @@ def create_minimal_app() -> FastAPI:
             <!DOCTYPE html>
             <html>
             <head>
-                <title>Multimodal Librarian - Chat Interface</title>
+                <title>Librarian - Chat Interface</title>
                 <style>
                     body { font-family: Arial, sans-serif; padding: 40px; text-align: center; }
                     .error { color: #d32f2f; margin: 20px 0; }
@@ -2229,7 +2229,7 @@ def create_minimal_app() -> FastAPI:
             <!DOCTYPE html>
             <html>
             <head>
-                <title>Multimodal Librarian - Unified Interface</title>
+                <title>Librarian - Unified Interface</title>
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
                 <style>
                     body { font-family: Arial, sans-serif; padding: 20px; text-align: center; }
@@ -2264,7 +2264,7 @@ def create_minimal_app() -> FastAPI:
                 <!DOCTYPE html>
                 <html>
                 <head>
-                    <title>Document Management - Multimodal Librarian</title>
+                    <title>Document Management - Librarian</title>
                     <meta name="viewport" content="width=device-width, initial-scale=1.0">
                     <style>
                         body { font-family: Arial, sans-serif; padding: 20px; text-align: center; }
@@ -2299,7 +2299,7 @@ def create_minimal_app() -> FastAPI:
             <!DOCTYPE html>
             <html>
             <head>
-                <title>Analytics Dashboard - Multimodal Librarian</title>
+                <title>Analytics Dashboard - Librarian</title>
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
                 <style>
                     body { font-family: Arial, sans-serif; padding: 20px; text-align: center; }
@@ -2327,7 +2327,7 @@ def create_minimal_app() -> FastAPI:
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Monitoring Dashboard - Multimodal Librarian</title>
+            <title>Monitoring Dashboard - Librarian</title>
             <style>
                 body { font-family: Arial, sans-serif; margin: 40px; background: #f5f5f5; }
                 .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }

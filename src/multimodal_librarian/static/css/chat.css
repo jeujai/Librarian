@@ -253,6 +253,69 @@ body {
     color: #1e293b;
 }
 
+/* Markdown rendering within chat messages */
+.system-message .message-content p {
+    margin: 0 0 0.5em 0;
+}
+
+.system-message .message-content p:last-child {
+    margin-bottom: 0;
+}
+
+.system-message .message-content h4,
+.system-message .message-content h5,
+.system-message .message-content h6 {
+    margin: 0.75em 0 0.35em 0;
+    font-weight: 600;
+    line-height: 1.3;
+}
+
+.system-message .message-content h4 {
+    font-size: 1.05em;
+}
+
+.system-message .message-content h5 {
+    font-size: 0.95em;
+}
+
+.system-message .message-content h6 {
+    font-size: 0.9em;
+}
+
+.system-message .message-content ul,
+.system-message .message-content ol {
+    margin: 0.4em 0;
+    padding-left: 1.5em;
+}
+
+.system-message .message-content li {
+    margin-bottom: 0.25em;
+}
+
+.system-message .message-content code {
+    background: #f1f5f9;
+    padding: 0.15em 0.35em;
+    border-radius: 3px;
+    font-size: 0.9em;
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+}
+
+.system-message .message-content pre {
+    background: #1e293b;
+    color: #e2e8f0;
+    padding: 0.75em 1em;
+    border-radius: 0.5em;
+    overflow-x: auto;
+    margin: 0.5em 0;
+}
+
+.system-message .message-content pre code {
+    background: none;
+    padding: 0;
+    color: inherit;
+    font-size: 0.85em;
+}
+
 /* Message Media */
 .message-media {
     margin: 0.75rem 0;

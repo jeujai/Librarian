@@ -21,6 +21,13 @@ const CitationRenderer = {
     MULTI_CITATION_PATTERN: /\[Source\s+\d+(?:,\s*Source\s+\d+)+\]/gi,
 
     /**
+     * Compact multi-citation pattern - matches "[Source N, M, ...]" where
+     * "Source" only appears before the first number.
+     * @type {RegExp}
+     */
+    COMPACT_CITATION_PATTERN: /\[Source\s+\d+(?:,\s*\d+)+\]/gi,
+
+    /**
      * Reference to the CitationPopup instance (set by ChatApp)
      * @type {CitationPopup|null}
      */
@@ -173,10 +180,23 @@ const CitationRenderer = {
         // Normalize citations array - ensure it's an array
         const citationsArray = Array.isArray(citations) ? citations : [];
 
+        // Pre-process: expand compact citation patterns like "[Source 1, 5]"
+        // into "[Source 1, Source 5]" so the multi-citation regex can handle them.
+        this.COMPACT_CITATION_PATTERN.lastIndex = 0;
+        let processedText = text.replace(this.COMPACT_CITATION_PATTERN, (match) => {
+            const numbers = [];
+            const numPattern = /\d+/g;
+            let numMatch;
+            while ((numMatch = numPattern.exec(match)) !== null) {
+                numbers.push(numMatch[0]);
+            }
+            return '[' + numbers.map(n => `Source ${n}`).join(', ') + ']';
+        });
+
         // Pre-process: expand multi-citation patterns like "[Source 1, Source 3]"
         // into separate "[Source 1] [Source 3]" so the single-citation regex can match
         this.MULTI_CITATION_PATTERN.lastIndex = 0;
-        let processedText = text.replace(this.MULTI_CITATION_PATTERN, (match) => {
+        processedText = processedText.replace(this.MULTI_CITATION_PATTERN, (match) => {
             const numbers = [];
             const numPattern = /\d+/g;
             let numMatch;

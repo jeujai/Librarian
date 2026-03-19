@@ -468,28 +468,7 @@ class ChatApp {
         // Update message element
         const contentDiv = this.streamingState.currentMessageElement.querySelector('.message-content');
         if (contentDiv) {
-            // Clear and re-render content
-            contentDiv.innerHTML = '';
-            const paragraphs = this.streamingState.currentContent.split('\n\n');
-            paragraphs.forEach(paragraph => {
-                if (paragraph.trim()) {
-                    const p = document.createElement('p');
-
-                    // Use CitationRenderer to render inline citations as clickable elements
-                    if (typeof CitationRenderer !== 'undefined' && this.streamingState.citations.length > 0) {
-                        const renderedContent = CitationRenderer.renderCitations(
-                            paragraph.trim(),
-                            this.streamingState.citations
-                        );
-                        p.appendChild(renderedContent);
-                    } else {
-                        // Fallback to plain text if CitationRenderer not available
-                        p.textContent = paragraph.trim();
-                    }
-
-                    contentDiv.appendChild(p);
-                }
-            });
+            this._renderMarkdownContent(contentDiv, this.streamingState.currentContent, this.streamingState.citations);
         }
 
         this.scrollToBottom();
@@ -509,26 +488,7 @@ class ChatApp {
         if (this.streamingState.currentMessageElement) {
             const contentDiv = this.streamingState.currentMessageElement.querySelector('.message-content');
             if (contentDiv && this.streamingState.currentContent) {
-                contentDiv.innerHTML = '';
-                const paragraphs = this.streamingState.currentContent.split('\n\n');
-                paragraphs.forEach(paragraph => {
-                    if (paragraph.trim()) {
-                        const p = document.createElement('p');
-
-                        // Use CitationRenderer to render inline citations as clickable elements
-                        if (typeof CitationRenderer !== 'undefined' && this.streamingState.citations.length > 0) {
-                            const renderedContent = CitationRenderer.renderCitations(
-                                paragraph.trim(),
-                                this.streamingState.citations
-                            );
-                            p.appendChild(renderedContent);
-                        } else {
-                            p.textContent = paragraph.trim();
-                        }
-
-                        contentDiv.appendChild(p);
-                    }
-                });
+                this._renderMarkdownContent(contentDiv, this.streamingState.currentContent, this.streamingState.citations);
             }
         }
 
@@ -553,6 +513,62 @@ class ChatApp {
         this.streamingState.citations = [];
 
         this.scrollToBottom();
+    }
+
+    /**
+     * Render markdown content into a container with citation support.
+     * Uses MarkdownRenderer for formatting and CitationRenderer for
+     * inline [Source N] links.
+     * @param {HTMLElement} container - Target element to render into
+     * @param {string} content - Raw markdown/text content
+     * @param {Array} citations - Citation data array
+     */
+    _renderMarkdownContent(container, content, citations) {
+        container.innerHTML = '';
+
+        const hasCitations = typeof CitationRenderer !== 'undefined' && citations && citations.length > 0;
+
+        if (typeof MarkdownRenderer !== 'undefined') {
+            // Render markdown to HTML
+            const html = MarkdownRenderer.render(content);
+            // Create a temporary container to parse the HTML
+            const temp = document.createElement('div');
+            temp.innerHTML = html;
+
+            // Walk through rendered elements and apply citation links
+            if (hasCitations) {
+                const walker = document.createTreeWalker(temp, NodeFilter.SHOW_TEXT, null, false);
+                const textNodes = [];
+                while (walker.nextNode()) textNodes.push(walker.currentNode);
+
+                textNodes.forEach(node => {
+                    // Only process text nodes that contain [Source N] patterns
+                    if (/\[Source\s+\d+/i.test(node.textContent)) {
+                        const fragment = CitationRenderer.renderCitations(node.textContent, citations);
+                        node.parentNode.replaceChild(fragment, node);
+                    }
+                });
+            }
+
+            // Move children into the real container
+            while (temp.firstChild) {
+                container.appendChild(temp.firstChild);
+            }
+        } else {
+            // Fallback: split on double newlines, plain text with citations
+            const paragraphs = content.split('\n\n');
+            paragraphs.forEach(paragraph => {
+                if (paragraph.trim()) {
+                    const p = document.createElement('p');
+                    if (hasCitations) {
+                        p.appendChild(CitationRenderer.renderCitations(paragraph.trim(), citations));
+                    } else {
+                        p.textContent = paragraph.trim();
+                    }
+                    container.appendChild(p);
+                }
+            });
+        }
     }
 
     /**
@@ -1926,19 +1942,8 @@ class ChatApp {
                     if (msg.citations && msg.citations.length > 0) {
                         // Re-render content with inline citation links
                         const contentDiv = messageElement.querySelector('.message-content');
-                        if (contentDiv && typeof CitationRenderer !== 'undefined') {
-                            contentDiv.innerHTML = '';
-                            const paragraphs = msg.content.split('\n\n');
-                            paragraphs.forEach(paragraph => {
-                                if (paragraph.trim()) {
-                                    const p = document.createElement('p');
-                                    const rendered = CitationRenderer.renderCitations(
-                                        paragraph.trim(), msg.citations
-                                    );
-                                    p.appendChild(rendered);
-                                    contentDiv.appendChild(p);
-                                }
-                            });
+                        if (contentDiv) {
+                            this._renderMarkdownContent(contentDiv, msg.content, msg.citations);
                         }
                         // Add citations list below the message
                         this.addCitationsToElement(messageElement, msg.citations);

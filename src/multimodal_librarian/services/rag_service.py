@@ -10,6 +10,7 @@ chunk retrieval using Neo4j knowledge graph source_chunks pointers.
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -166,6 +167,104 @@ class QueryProcessor:
     def __init__(self, ai_service: AIService, query_decomposer: Optional[QueryDecomposer] = None):
         self.ai_service = ai_service
         self.query_decomposer = query_decomposer
+
+    async def _classify_query_intent(
+        self,
+        query: str,
+        conversation_context: Optional[List[Dict[str, str]]] = None,
+    ) -> Tuple[str, Optional[str]]:
+        """Use the LLM to decide if the query needs document retrieval.
+
+        Returns:
+            (intent, enhanced_query)
+            - intent: "search", "web_search", or "no_search"
+            - enhanced_query: A rewritten query when context resolution was applied,
+              or None if the original query should be used as-is.
+        """
+        context_block = ""
+        if conversation_context and len(conversation_context) > 1:
+            context_lines = "\n".join(
+                f"{msg['role']}: {msg['content']}"
+                for msg in conversation_context[-3:]
+            )
+            context_block = f"\nConversation context:\n{context_lines}\n"
+
+        prompt = [
+            {
+                "role": "user",
+                "content": f"""You are a query classifier for a document knowledge-base assistant called Librarian.
+
+Given the user's message, decide whether it requires searching the document library.
+{context_block}
+User message: "{query}"
+
+Reply with EXACTLY one line in one of these formats:
+SEARCH: <rewritten query optimized for document search>
+WEB_SEARCH: <rewritten query optimized for web search>
+NO_SEARCH
+
+Use SEARCH when the user is asking a factual, topical, or analytical question that could be answered or enriched by documents in the library. Even if the conversation context already contains a previous answer to a similar question, the user may be re-asking to get a cited, document-backed response — always use SEARCH in that case.
+Use WEB_SEARCH only for questions explicitly about current events, breaking news, or clearly time-sensitive information that a static document library cannot answer.
+Use NO_SEARCH ONLY for greetings ("hi", "hello"), farewells ("bye", "thanks"), or meta-questions about the assistant itself ("what can you do?"). Nothing else qualifies as NO_SEARCH.
+
+When in doubt, use SEARCH. If the user message is already a good search query, repeat it after SEARCH:.
+Reply with only one line, nothing else."""
+            }
+        ]
+
+        try:
+            response = await self.ai_service.generate_response(
+                messages=prompt,
+                temperature=0.0,
+                max_tokens=150,
+            )
+            answer = response.content.strip()
+
+            if answer.upper().startswith("NO_SEARCH"):
+                logger.info(f"Query classified as NO_SEARCH: '{query}'")
+                return "no_search", None
+
+            if answer.upper().startswith("WEB_SEARCH:"):
+                rewritten = answer[len("WEB_SEARCH:"):].strip().strip('"')
+                if rewritten and len(rewritten) < len(query) * 3:
+                    # Reject rewrites that lost too much content
+                    if len(rewritten) < len(query) * 0.5:
+                        logger.warning(
+                            f"Rejecting too-short WEB_SEARCH rewrite: "
+                            f"'{query}' -> '{rewritten}'"
+                        )
+                        return "web_search", None
+                    if rewritten.lower() != query.lower():
+                        logger.info(f"Query classified as WEB_SEARCH, rewritten: '{query}' -> '{rewritten}'")
+                        return "web_search", rewritten
+                    logger.info(f"Query classified as WEB_SEARCH (no rewrite needed): '{query}'")
+                    return "web_search", None
+                return "web_search", None
+
+            if answer.upper().startswith("SEARCH:"):
+                rewritten = answer[len("SEARCH:"):].strip().strip('"')
+                if rewritten and len(rewritten) < len(query) * 3:
+                    # Reject rewrites that lost too much content
+                    if len(rewritten) < len(query) * 0.5:
+                        logger.warning(
+                            f"Rejecting too-short SEARCH rewrite: "
+                            f"'{query}' -> '{rewritten}'"
+                        )
+                        return "search", None
+                    if rewritten.lower() != query.lower():
+                        logger.info(f"Query classified as SEARCH, rewritten: '{query}' -> '{rewritten}'")
+                        return "search", rewritten
+                    logger.info(f"Query classified as SEARCH (no rewrite needed): '{query}'")
+                    return "search", None
+                return "search", None
+
+            # Unrecognized format — default to retrieval
+            logger.warning(f"Unexpected intent classification response: {answer!r}")
+            return "search", None
+
+        except Exception as e:
+            logger.warning(f"Query intent classification failed: {e}")
+            return "search", None  # Default to retrieval on error
     
     @staticmethod
     def _needs_context_resolution(query: str) -> bool:
@@ -200,12 +299,32 @@ class QueryProcessor:
             Tuple of (enhanced_query, related_concepts, kg_metadata)
             kg_metadata includes '_decomposition' key with the raw
             QueryDecomposition object for downstream reuse.
+            kg_metadata['skip_retrieval'] is True when the LLM determines
+            the query does not need document search.
         """
         try:
             kg_metadata = {}
             related_concepts = []
+
+            # Step 1: LLM-based intent classification + query rewriting.
+            # This single call decides whether retrieval is needed and,
+            # when conversation context is present, rewrites the query.
+            intent, rewritten_query = await self._classify_query_intent(
+                query, conversation_context
+            )
+
+            if intent == "no_search":
+                kg_metadata['skip_retrieval'] = True
+                return query, [], kg_metadata
+
+            if intent == "web_search":
+                kg_metadata['web_search_only'] = True
+                kg_metadata['web_query'] = rewritten_query or query
+                return rewritten_query or query, [], kg_metadata
+
+            enhanced_query = rewritten_query if rewritten_query else query
             
-            # Step 1: Extract concepts via QueryDecomposer
+            # Step 2: Extract concepts via QueryDecomposer
             if self.query_decomposer:
                 try:
                     decomposition = await self.query_decomposer.decompose(query)
@@ -235,49 +354,6 @@ class QueryProcessor:
                     
                 except Exception as e:
                     logger.warning(f"QueryDecomposer failed: {e}")
-            
-            # Step 2: Enhance query with AI only if it needs context resolution
-            enhanced_query = query
-            if (conversation_context and len(conversation_context) > 1
-                    and self._needs_context_resolution(query)):
-                context_text = "\n".join([
-                    f"{msg['role']}: {msg['content']}" 
-                    for msg in conversation_context[-3:]  # Last 3 messages
-                ])
-                
-                # Include related concepts in enhancement prompt
-                concept_hint = ""
-                if related_concepts:
-                    concept_hint = f"\nRelated concepts to consider: {', '.join(related_concepts)}"
-                
-                enhancement_prompt = [
-                    {
-                        "role": "user",
-                        "content": f"""Given this conversation context:
-{context_text}
-
-Please enhance this search query to better find relevant documents: "{query}"{concept_hint}
-
-Return only the enhanced query, no explanation. Keep it concise and focused on key concepts."""
-                    }
-                ]
-                
-                try:
-                    response = await self.ai_service.generate_response(
-                        messages=enhancement_prompt,
-                        temperature=0.3,
-                        max_tokens=100
-                    )
-                    enhanced_query = response.content.strip().strip('"')
-                    
-                    # Use enhanced query if it's reasonable
-                    if len(enhanced_query) > 0 and len(enhanced_query) < len(query) * 2:
-                        logger.info(f"Enhanced query: '{query}' -> '{enhanced_query}'")
-                    else:
-                        enhanced_query = query
-                except Exception as e:
-                    logger.warning(f"Query enhancement failed: {e}")
-                    enhanced_query = query
             
             return enhanced_query, related_concepts, kg_metadata
             
@@ -558,6 +634,12 @@ class RAGService:
         # Relevance detection (Requirements 4.1, 4.2, 4.4)
         self.relevance_detector = relevance_detector
         self._last_relevance_verdict = None
+
+        # Retrieval result cache: ensures identical queries return
+        # identical citation lists within a session.  Keyed by
+        # SHA-256(query + user_id + document_filter).
+        self._retrieval_cache: Dict[str, List["DocumentChunk"]] = {}
+        self._max_retrieval_cache_size = 64
         
         if self.use_source_prioritization:
             logger.info("RAG Service initialized with source prioritization support")
@@ -565,6 +647,13 @@ class RAGService:
             logger.info("RAG Service initialized with KG-guided retrieval support")
         else:
             logger.info("RAG Service initialized with knowledge graph support")
+
+    def clear_retrieval_cache(self) -> int:
+        """Clear the retrieval cache. Returns number of entries cleared."""
+        count = len(self._retrieval_cache)
+        self._retrieval_cache.clear()
+        logger.info(f"Cleared {count} retrieval cache entries")
+        return count
         
     async def generate_response(
         self,
@@ -598,9 +687,84 @@ class RAGService:
                 query, conversation_context
             )
             
+            # Step 1b: If the LLM classified this as not needing retrieval,
+            # skip search entirely and go straight to fallback response.
+            if kg_metadata.get('skip_retrieval'):
+                logger.info(f"Skipping retrieval for query (non-streaming): '{query}'")
+                ai_response = await self._generate_fallback_response(
+                    query, conversation_context, preferred_ai_provider,
+                    skip_retrieval=True,
+                )
+                processing_time = int((time.time() - start_time) * 1000)
+                return RAGResponse(
+                    response=ai_response.content,
+                    sources=[],
+                    confidence_score=0.5,
+                    processing_time_ms=processing_time,
+                    tokens_used=ai_response.tokens_used,
+                    search_results_count=0,
+                    fallback_used=True,
+                    metadata={
+                        "processed_query": processed_query,
+                        "skip_retrieval": True,
+                        "ai_provider": ai_response.provider,
+                        "ai_model": ai_response.model,
+                    }
+                )
+            
+            # Step 1c: WEB_SEARCH — bypass library retrieval, go straight to SearXNG
+            if kg_metadata.get('web_search_only'):
+                web_query = kg_metadata.get('web_query', query)
+                logger.info(
+                    f"WEB_SEARCH route (non-streaming) for query: '{query}' "
+                    f"(web_query: '{web_query}')"
+                )
+
+                web_chunks: List[DocumentChunk] = []
+                if self.searxng_client is not None and self.searxng_enabled:
+                    try:
+                        web_results = await self.searxng_client.search(
+                            web_query, max_results=self.searxng_max_results,
+                        )
+                        web_chunks = self._convert_web_results(web_results)
+                    except Exception as e:
+                        logger.warning(f"SearXNG web search failed for WEB_SEARCH route: {e}")
+
+                if web_chunks:
+                    context, citations = self.context_preparer.prepare_context(web_chunks, query)
+                    ai_response = await self._generate_document_aware_response(
+                        query, context, conversation_context, preferred_ai_provider, kg_metadata
+                    )
+                    fallback_used = False
+                else:
+                    ai_response = await self._generate_fallback_response(
+                        query, conversation_context, preferred_ai_provider,
+                        skip_retrieval=True,
+                    )
+                    fallback_used = True
+                    citations = []
+
+                processing_time = int((time.time() - start_time) * 1000)
+                return RAGResponse(
+                    response=ai_response.content,
+                    sources=citations if not fallback_used else [],
+                    confidence_score=0.7 if not fallback_used else 0.5,
+                    processing_time_ms=processing_time,
+                    tokens_used=ai_response.tokens_used,
+                    search_results_count=len(web_chunks),
+                    fallback_used=fallback_used,
+                    metadata={
+                        "processed_query": processed_query,
+                        "web_search_only": True,
+                        "ai_provider": ai_response.provider,
+                        "ai_model": ai_response.model,
+                    }
+                )
+
             # Step 2: Search for relevant document chunks with KG enhancement
             search_results = await self._search_documents(
-                processed_query, user_id, document_filter, related_concepts, kg_metadata
+                processed_query, user_id, document_filter, related_concepts, kg_metadata,
+                raw_query=query,
             )
             
             # Remove internal-only decomposition object before metadata goes to response
@@ -774,9 +938,168 @@ class RAGService:
                 query, conversation_context
             )
             
+            # Step 1b: If the LLM classified this as not needing retrieval,
+            # skip search entirely and go straight to fallback response.
+            if kg_metadata.get('skip_retrieval'):
+                logger.info(f"Skipping retrieval for query: '{query}'")
+                
+                # Yield empty first chunk (no citations)
+                yield RAGStreamingChunk(
+                    content="",
+                    is_final=False,
+                    citations=[],
+                    search_results_count=0,
+                    metadata={
+                        "processed_query": processed_query,
+                        "related_concepts": [],
+                        "skip_retrieval": True,
+                    }
+                )
+                
+                # Stream fallback response (general AI, no document context)
+                async for ai_chunk in self._generate_fallback_response_stream(
+                    query, conversation_context, preferred_ai_provider,
+                    skip_retrieval=True,
+                ):
+                    cumulative_content += ai_chunk.content
+                    cumulative_tokens = ai_chunk.tokens_used
+                    
+                    yield RAGStreamingChunk(
+                        content=ai_chunk.content,
+                        is_final=False,
+                        tokens_used=cumulative_tokens,
+                        metadata=ai_chunk.metadata
+                    )
+                
+                processing_time = int((time.time() - start_time) * 1000)
+                yield RAGStreamingChunk(
+                    content="",
+                    is_final=True,
+                    citations=[],
+                    confidence_score=0.5,
+                    processing_time_ms=processing_time,
+                    tokens_used=cumulative_tokens,
+                    search_results_count=0,
+                    fallback_used=True,
+                    metadata={
+                        "processed_query": processed_query,
+                        "skip_retrieval": True,
+                        "ai_provider": "gemini",
+                    }
+                )
+                return
+            
+            # Step 1c: WEB_SEARCH — bypass library retrieval, go straight
+            # to SearXNG, then generate a document-aware response from
+            # web results only.
+            if kg_metadata.get('web_search_only'):
+                web_query = kg_metadata.get('web_query', query)
+                logger.info(
+                    f"WEB_SEARCH route for query: '{query}' "
+                    f"(web_query: '{web_query}')"
+                )
+
+                web_chunks: List[DocumentChunk] = []
+                if (
+                    self.searxng_client is not None
+                    and self.searxng_enabled
+                ):
+                    try:
+                        web_results = await self.searxng_client.search(
+                            web_query,
+                            max_results=self.searxng_max_results,
+                        )
+                        web_chunks = self._convert_web_results(
+                            web_results
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "SearXNG web search failed for "
+                            f"WEB_SEARCH route: {e}"
+                        )
+
+                if web_chunks:
+                    context, citations = (
+                        self.context_preparer.prepare_context(
+                            web_chunks, query
+                        )
+                    )
+                    yield RAGStreamingChunk(
+                        content="",
+                        is_final=False,
+                        citations=citations,
+                        search_results_count=len(web_chunks),
+                        metadata={
+                            "processed_query": processed_query,
+                            "related_concepts": [],
+                            "web_search_only": True,
+                        }
+                    )
+                    async for ai_chunk in self._generate_document_aware_response_stream(
+                        query, context, conversation_context,
+                        preferred_ai_provider, kg_metadata
+                    ):
+                        cumulative_content += ai_chunk.content
+                        cumulative_tokens = ai_chunk.tokens_used
+                        yield RAGStreamingChunk(
+                            content=ai_chunk.content,
+                            is_final=False,
+                            tokens_used=cumulative_tokens,
+                            metadata=ai_chunk.metadata
+                        )
+                    fallback_used = False
+                else:
+                    yield RAGStreamingChunk(
+                        content="",
+                        is_final=False,
+                        citations=[],
+                        search_results_count=0,
+                        metadata={
+                            "processed_query": processed_query,
+                            "related_concepts": [],
+                            "web_search_only": True,
+                        }
+                    )
+                    async for ai_chunk in self._generate_fallback_response_stream(
+                        query, conversation_context,
+                        preferred_ai_provider,
+                        skip_retrieval=True,
+                    ):
+                        cumulative_content += ai_chunk.content
+                        cumulative_tokens = ai_chunk.tokens_used
+                        yield RAGStreamingChunk(
+                            content=ai_chunk.content,
+                            is_final=False,
+                            tokens_used=cumulative_tokens,
+                            metadata=ai_chunk.metadata
+                        )
+                    citations = []
+                    fallback_used = True
+
+                processing_time = int(
+                    (time.time() - start_time) * 1000
+                )
+                yield RAGStreamingChunk(
+                    content="",
+                    is_final=True,
+                    citations=citations if not fallback_used else [],
+                    confidence_score=0.7 if not fallback_used else 0.4,
+                    processing_time_ms=processing_time,
+                    tokens_used=cumulative_tokens,
+                    search_results_count=len(web_chunks),
+                    fallback_used=fallback_used,
+                    metadata={
+                        "processed_query": processed_query,
+                        "web_search_only": True,
+                        "ai_provider": "gemini",
+                    }
+                )
+                return
+            
             # Step 2: Search for relevant document chunks (non-streaming)
             search_results = await self._search_documents(
-                processed_query, user_id, document_filter, related_concepts, kg_metadata
+                processed_query, user_id, document_filter, related_concepts, kg_metadata,
+                raw_query=query,
             )
             
             # Remove internal-only decomposition object before metadata goes to response
@@ -918,16 +1241,17 @@ class RAGService:
         if kg_metadata and kg_metadata.get('kg_explanation'):
             kg_context = f"\n\nKNOWLEDGE GRAPH INSIGHTS:\n{kg_metadata['kg_explanation']}"
         
-        system_prompt = f"""You are a helpful AI assistant for the Multimodal Librarian system. You help users understand and work with their uploaded documents.
+        system_prompt = f"""You are Librarian, a helpful and knowledgeable AI assistant. You help users find answers using their document library and, when relevant, supplementary web search results.
 
-DOCUMENT CONTEXT:
+SOURCES:
 {context}{kg_context}
 
 Instructions:
-- Use the provided document context to answer the user's question
-- Always cite sources using the format [Source X] when referencing document information
+- Use the provided sources to answer the user's question
+- Always cite sources using the format [Source X] when referencing information
+- Sources may come from the user's document library or from web search — use all of them
 - If knowledge graph insights are provided, use them to enhance your understanding
-- If the context doesn't fully answer the question, say so and provide what information you can
+- If the sources don't fully answer the question, say so and provide what information you can
 - Be accurate and helpful in your responses"""
 
         # Prepare messages for AI
@@ -957,17 +1281,33 @@ Instructions:
         self,
         query: str,
         conversation_context: Optional[List[Dict[str, str]]] = None,
-        preferred_provider: Optional[str] = None
+        preferred_provider: Optional[str] = None,
+        skip_retrieval: bool = False,
     ) -> AsyncGenerator[AIResponse, None]:
         """Generate streaming fallback response when no documents found."""
         
         # Prepare messages
         messages = []
         
+        # Use a conversational prompt when retrieval was intentionally skipped
+        if skip_retrieval:
+            system_content = (
+                "You are Librarian, a friendly and knowledgeable AI assistant. "
+                "Respond naturally to the user's message. You can help with general questions, "
+                "conversation, and guidance. Keep responses concise and helpful."
+            )
+        else:
+            system_content = (
+                "You are a helpful AI assistant. The user asked a question but no relevant "
+                "documents were found in their library. Provide a helpful general response "
+                "and suggest they might want to upload relevant documents if their question "
+                "is about specific content."
+            )
+        
         # Add system context
         messages.append({
             "role": "system",
-            "content": "You are a helpful AI assistant. The user asked a question but no relevant documents were found in their library. Provide a helpful general response and suggest they might want to upload relevant documents if their question is about specific content."
+            "content": system_content,
         })
         
         # Add conversation context
@@ -997,7 +1337,8 @@ Instructions:
         user_id: str,
         document_filter: Optional[List[str]] = None,
         related_concepts: Optional[List[str]] = None,
-        kg_metadata: Optional[Dict[str, Any]] = None
+        kg_metadata: Optional[Dict[str, Any]] = None,
+        raw_query: Optional[str] = None
     ) -> List[DocumentChunk]:
         """Search for relevant document chunks using a two-phase pipeline.
 
@@ -1018,6 +1359,26 @@ Instructions:
 
         Requirements: 1.5, 2.1
         """
+        # Check retrieval cache for deterministic results.
+        # Key on the RAW (user-typed) query, not the LLM-processed one,
+        # because process_query may rewrite the query non-deterministically
+        # when conversation context grows (e.g. "that" triggers enhancement).
+        # Also exclude user_id since it's a random connection_id per WebSocket.
+        cache_query = raw_query if raw_query is not None else query
+        filter_key = json.dumps(
+            sorted(document_filter) if document_filter else [],
+            sort_keys=True,
+        )
+        cache_key = hashlib.sha256(
+            f"{cache_query}|{filter_key}".encode('utf-8')
+        ).hexdigest()
+        cached = self._retrieval_cache.get(cache_key)
+        if cached is not None:
+            logger.info(
+                f"Retrieval cache hit for query: {query[:50]}..."
+            )
+            return cached
+
         # Phase 1: Retrieval
         chunks = await self._retrieval_phase(
             query, user_id, document_filter, related_concepts, kg_metadata,
@@ -1030,6 +1391,12 @@ Instructions:
         chunks = await self._post_processing_phase(
             query, chunks, query_decomposition=query_decomposition,
         )
+
+        # Cache the result for deterministic repeated queries
+        if len(self._retrieval_cache) >= self._max_retrieval_cache_size:
+            oldest = next(iter(self._retrieval_cache))
+            del self._retrieval_cache[oldest]
+        self._retrieval_cache[cache_key] = chunks
 
         return chunks
 
@@ -1203,8 +1570,13 @@ Instructions:
             )
             chunk.metadata['librarian_boost_applied'] = True
 
-        # When web results were fetched and librarian results are irrelevant,
-        # drop the librarian chunks so they don't pollute the response.
+        # When librarian results are irrelevant, drop them so they don't
+        # pollute the response.  This applies regardless of whether web
+        # results were fetched — if the relevance detector flagged the
+        # librarian chunks as irrelevant and web search also returned
+        # nothing, we should still drop them so the fallback response
+        # path is used instead of presenting misleading citations.
+        #
         # However, when the relevance detector fired (proper-noun gap),
         # keep any librarian chunks whose content actually contains the
         # query's proper nouns — those are genuinely relevant (e.g. a
@@ -1214,7 +1586,7 @@ Instructions:
         # contains ALL key PROPN tokens together (e.g. "President" +
         # "Venezuela"), only keep chunks that contain ALL key nouns —
         # not just one of them.
-        if web_chunks and (librarian_results_irrelevant or relevance_detected_irrelevant):
+        if librarian_results_irrelevant or relevance_detected_irrelevant:
             tc = (
                 self._last_relevance_verdict.query_term_coverage
                 if self._last_relevance_verdict is not None
@@ -1277,6 +1649,36 @@ Instructions:
                     f"{self.relevance_confidence_threshold})"
                 )
                 librarian_chunks = []
+
+        # Per-chunk key-noun filter: even when the batch-level relevance
+        # verdict is "relevant" (because at least one chunk genuinely matches),
+        # individual chunks that don't contain ALL key nouns are noise.
+        # E.g. "Who is the President of Venezuela?" — a book page mentioning
+        # "president" in an unrelated context should be dropped even though
+        # the conversation chunk that actually discusses Venezuela kept the
+        # batch verdict as is_relevant=True.
+        tc = (
+            self._last_relevance_verdict.query_term_coverage
+            if self._last_relevance_verdict is not None
+            else None
+        )
+        if (
+            tc is not None
+            and len(tc.key_nouns) >= 2
+            and librarian_chunks
+        ):
+            key_nouns_lower = [kn.lower() for kn in tc.key_nouns]
+            before_count = len(librarian_chunks)
+            librarian_chunks = [
+                c for c in librarian_chunks
+                if all(kn in (c.content or "").lower() for kn in key_nouns_lower)
+            ]
+            dropped = before_count - len(librarian_chunks)
+            if dropped > 0:
+                logger.info(
+                    f"Per-chunk key-noun filter: kept {len(librarian_chunks)}, "
+                    f"dropped {dropped} chunks missing key nouns {key_nouns_lower}"
+                )
 
         # Merge and sort — LIBRARIAN wins ties via stable sort key (Req 2.4, 2.5)
         all_chunks = librarian_chunks + web_chunks
@@ -1594,18 +1996,19 @@ Instructions:
         if kg_metadata and kg_metadata.get('kg_explanation'):
             kg_context = f"\n\nKNOWLEDGE GRAPH INSIGHTS:\n{kg_metadata['kg_explanation']}"
         
-        system_prompt = f"""You are a helpful AI assistant for the Multimodal Librarian system. You help users understand and work with their uploaded documents.
+        system_prompt = f"""You are Librarian, a helpful and knowledgeable AI assistant. You help users find answers using their document library and, when relevant, supplementary web search results.
 
-DOCUMENT CONTEXT:
+SOURCES:
 {context}{kg_context}
 
 Instructions:
-- Use the provided document context to answer the user's question
-- Always cite sources using the format [Source X] when referencing document information
+- Use the provided sources to answer the user's question
+- Always cite sources using the format [Source X] when referencing information
+- Sources may come from the user's document library or from web search — use all of them
 - If knowledge graph insights are provided, use them to enhance your understanding of relationships between concepts
-- If the context doesn't fully answer the question, say so and provide what information you can
+- If the sources don't fully answer the question, say so and provide what information you can
 - Be accurate and helpful in your responses
-- If you're unsure about something from the documents, acknowledge the uncertainty"""
+- If you're unsure about something, acknowledge the uncertainty"""
 
         # Prepare messages for AI
         messages = []
@@ -1634,7 +2037,8 @@ Instructions:
         self,
         query: str,
         conversation_context: Optional[List[Dict[str, str]]] = None,
-        preferred_provider: Optional[str] = None
+        preferred_provider: Optional[str] = None,
+        skip_retrieval: bool = False,
     ) -> AIResponse:
         """Generate general AI response when no relevant documents found."""
         
@@ -1653,10 +2057,25 @@ Instructions:
             "content": query
         })
         
-        # Add system context about no documents found
+        # Use a conversational prompt when retrieval was intentionally skipped
+        if skip_retrieval:
+            system_content = (
+                "You are Librarian, a friendly and knowledgeable AI assistant. "
+                "Respond naturally to the user's message. You can help with general questions, "
+                "conversation, and guidance. Keep responses concise and helpful."
+            )
+        else:
+            system_content = (
+                "You are a helpful AI assistant. The user asked a question but no relevant "
+                "documents were found in their library. Provide a helpful general response "
+                "and suggest they might want to upload relevant documents if their question "
+                "is about specific content."
+            )
+        
+        # Add system context — insert at the beginning
         system_message = {
             "role": "system",
-            "content": "You are a helpful AI assistant. The user asked a question but no relevant documents were found in their library. Provide a helpful general response and suggest they might want to upload relevant documents if their question is about specific content."
+            "content": system_content,
         }
         
         # Insert system message at the beginning

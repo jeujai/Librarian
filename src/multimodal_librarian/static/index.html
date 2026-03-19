@@ -5,10 +5,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Librarian - Chat Interface</title>
-    <link rel="stylesheet" href="/static/css/chat.css">
+    <link rel="stylesheet" href="/static/css/chat.css?v=2">
     <!-- document_manager.css removed - document management now integrated into chat UI -->
     <link rel="stylesheet" href="/static/css/quality-indicators.css">
-    <link rel="stylesheet" href="/static/css/citation-popup.css">
+    <link rel="stylesheet" href="/static/css/citation-popup.css?v=5">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
@@ -102,7 +102,7 @@
                     <!-- Text Input -->
                     <textarea id="messageInput" class="message-input"
                         placeholder="Type your message here... (Ctrl+Enter to send)" rows="2" aria-label="Message input"
-                        aria-describedby="inputHelp" maxlength="4000"></textarea>
+                        aria-describedby="inputHelp" maxlength="10000"></textarea>
 
                     <!-- Send Button -->
                     <button type="submit" class="send-btn" id="sendBtn" aria-label="Send message"
@@ -153,13 +153,15 @@
     <script src="/static/js/expectation-manager.js"></script>
     <script src="/static/js/limitation-messages.js"></script>
     <!-- Citation components - must load before chat.js (Requirements: 1.1) -->
-    <script src="/static/js/citation-popup.js?v=6"></script>
-    <script src="/static/js/citation-renderer.js"></script>
+    <script src="/static/js/citation-popup.js?v=9"></script>
+    <script src="/static/js/citation-renderer.js?v=2"></script>
     <!-- Toast notification system - must load before chat.js (Requirements: 10.1) -->
     <script src="/static/js/toast-notification.js"></script>
     <!-- KG Explorer panel - must load before chat.js (Requirements: 11.1) -->
     <script src="/static/js/kg-explorer-panel.js"></script>
-    <script src="/static/js/chat.js?v=8"></script>
+    <!-- Markdown renderer - must load before chat.js -->
+    <script src="/static/js/markdown-renderer.js"></script>
+    <script src="/static/js/chat.js?v=10"></script>
 </body>
 
 </html>
