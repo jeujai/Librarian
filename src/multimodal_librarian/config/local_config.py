@@ -137,7 +137,7 @@ class LocalDatabaseConfig(BaseSettings):
     export_dir: str = Field(default="/app/exports", description="Export directory")
     backup_dir: str = Field(default="/app/backups", description="Backup directory")
     log_dir: str = Field(default="/app/logs", description="Log directory")
-    max_file_size: int = Field(default=104857600, description="Max file size in bytes (100MB)")
+    max_file_size: int = Field(default=10 * 1024 * 1024 * 1024, description="Max file size in bytes (10GB - effectively unlimited)")
     max_files_per_upload: int = Field(default=10, description="Max files per upload")
     
     # Security Configuration
@@ -1238,9 +1238,9 @@ class LocalDatabaseConfig(BaseSettings):
         if total_pool_size > 500:
             warnings.append(f"Total connection pool size ({total_pool_size}) may consume excessive resources")
         
-        # Check file size limits
-        if self.max_file_size > 1024 * 1024 * 1024:  # 1GB
-            warnings.append(f"Max file size ({self.max_file_size / (1024*1024):.0f}MB) is very large")
+        # Check file size limits - only warn if over 50GB (effectively unlimited is fine)
+        if self.max_file_size > 50 * 1024 * 1024 * 1024:  # 50GB
+            warnings.append(f"Max file size ({self.max_file_size / (1024*1024):.0f}MB) is extremely large")
         
         if self.max_files_per_upload > 100:
             warnings.append(f"Max files per upload ({self.max_files_per_upload}) is very high")

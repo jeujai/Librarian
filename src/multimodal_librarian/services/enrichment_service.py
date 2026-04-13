@@ -274,6 +274,15 @@ class EnrichmentService:
                     f"Batch ConceptNet persistence failed: {e}"
                 )
 
+        # --- Step 5b: Bulk-create cross-document SAME_AS links ---
+        # Instead of creating links per-concept (N+1 queries), collect all
+        # Q-numbers from enriched concepts and create all SAME_AS edges
+        # in a single Cypher MERGE query.
+        if self.kg_service and self.kg_service.client:
+            await self._batch_create_cross_document_links(
+                concepts, result.enriched_concepts, document_id
+            )
+
         # --- Step 6: Compute composite cross-document scores ---
         if self.kg_service and self.kg_service.client:
             from .composite_score_engine import CompositeScoreEngine
@@ -346,11 +355,8 @@ class EnrichmentService:
                     concept, yago_entity, document_id
                 )
 
-                # Create cross-document links
-                cross_links = await self.create_cross_document_links(
-                    concept, yago_entity.entity_id
-                )
-                enriched.cross_document_links = cross_links
+                # Cross-document links are created in bulk after all
+                # concepts are processed (see enrich_concepts step 5b).
         elif not yago_available:
             # Mark YAGO as deferred if circuit breaker is open
             enriched.enrichment_deferred = True
@@ -473,7 +479,80 @@ class EnrichmentService:
                 await self._persist_conceptnet_enrichment(concept, enriched.conceptnet_relations, document_id)
         
         return enriched
-    
+
+    async def _batch_create_cross_document_links(
+        self,
+        concepts: List[ConceptNode],
+        enriched_concepts: list,
+        document_id: str,
+    ) -> int:
+        """Bulk-create cross-document SAME_AS edges for all enriched concepts.
+
+        Collects all (concept_id, yago_qid) pairs from enriched concepts that
+        have a YAGO entity, then runs a single Cypher query that:
+        1. Finds all other concepts sharing the same Q-number
+        2. Filters to only cross-document pairs (different source_id via Chunk)
+        3. MERGEs SAME_AS relationships in bulk
+
+        Returns the number of SAME_AS edges created.
+        """
+        # Collect concept_ids that have a YAGO entity with sufficient confidence
+        concept_qids = []
+        for enriched in enriched_concepts:
+            if enriched.yago_entity and enriched.yago_entity.confidence >= YAGO_CONFIDENCE_THRESHOLD:
+                concept_qids.append({
+                    "concept_id": enriched.concept_id,
+                    "q_number": enriched.yago_entity.entity_id,
+                })
+
+        if not concept_qids:
+            return 0
+
+        try:
+            # Single bulk query: for each concept with a Q-number, find all
+            # other concepts sharing that Q-number from different documents,
+            # and MERGE SAME_AS edges.
+            bulk_query = """
+            UNWIND $items AS item
+            MATCH (c1:Concept {concept_id: item.concept_id})
+            OPTIONAL MATCH (c1)-[:EXTRACTED_FROM]->(ch1:Chunk)
+            WITH item, c1, collect(DISTINCT ch1.source_id) AS c1_docs
+            MATCH (c2:Concept)
+            WHERE c2.yago_qid = item.q_number
+              AND c2.concept_id <> item.concept_id
+            OPTIONAL MATCH (c2)-[:EXTRACTED_FROM]->(ch2:Chunk)
+            WITH c1, c2, c1_docs, item,
+                 collect(DISTINCT ch2.source_id) AS c2_docs
+            WHERE NONE(d IN c2_docs WHERE d IN c1_docs)
+              AND size(c2_docs) > 0
+            MERGE (c1)-[r:SAME_AS]->(c2)
+            ON CREATE SET r.q_number = item.q_number,
+                          r.created_at = $created_at
+            ON MATCH SET r.q_number = item.q_number
+            RETURN count(r) AS cnt
+            """
+
+            from datetime import datetime
+            result = await self.kg_service.client.execute_query(
+                bulk_query,
+                {
+                    "items": concept_qids,
+                    "created_at": datetime.utcnow().isoformat(),
+                },
+            )
+
+            cnt = result[0].get("cnt", 0) if result else 0
+            if cnt > 0:
+                logger.info(
+                    f"Bulk-created {cnt} cross-document SAME_AS links "
+                    f"for document {document_id}"
+                )
+            return cnt
+
+        except Exception as e:
+            logger.warning(f"Bulk cross-document link creation failed: {e}")
+            return 0
+
     async def create_cross_document_links(
         self,
         concept: ConceptNode,
@@ -964,7 +1043,7 @@ class EnrichmentService:
                         """
                         UNWIND $names AS tname
                         OPTIONAL MATCH (c:Concept)
-                        WHERE toLower(c.name) = toLower(tname)
+                        WHERE c.name_lower = toLower(tname)
                         WITH tname,
                              collect(elementId(c))[0] AS nid
                         WHERE nid IS NOT NULL
@@ -1059,12 +1138,17 @@ class EnrichmentService:
                                     ON CREATE SET
                                         c.name = row.name,
                                         c.type = row.type,
+                                        c.concept_type = row.type,
                                         c.confidence = row.confidence,
+                                        c.name_lower = toLower(row.name),
                                         c.created_at = row.created_at,
                                         c.updated_at =
                                             row.updated_at{emb_set}
                                     ON MATCH SET
-                                        c.updated_at = row.updated_at
+                                        c.updated_at = row.updated_at,
+                                        c.concept_type = CASE WHEN c.concept_type IS NULL
+                                                         THEN row.type
+                                                         ELSE c.concept_type END
                                     RETURN row.name AS name,
                                            elementId(c) AS node_id
                                     """,
@@ -1207,17 +1291,8 @@ class EnrichmentService:
             if target_names:
                 check_query = """
                 UNWIND $names AS tname
-                MATCH (c:Concept)
-                WHERE toLower(c.name) = toLower(tname)
-                RETURN tname, elementId(c) AS node_id
-                LIMIT 1
-                """
-                # Neo4j UNWIND + LIMIT doesn't scope per-row, so query individually
-                # but in a single batch via UNWIND + collect
-                check_query = """
-                UNWIND $names AS tname
                 OPTIONAL MATCH (c:Concept)
-                WHERE toLower(c.name) = toLower(tname)
+                WHERE c.name_lower = toLower(tname)
                 WITH tname, collect(elementId(c))[0] AS nid
                 WHERE nid IS NOT NULL
                 RETURN tname, nid AS node_id
@@ -1280,10 +1355,15 @@ class EnrichmentService:
                             UNWIND $rows AS row
                             MERGE (c:Concept {{concept_id: row.concept_id}})
                             ON CREATE SET c.name = row.name, c.type = row.type,
+                                          c.concept_type = row.type,
                                           c.confidence = row.confidence,
+                                          c.name_lower = toLower(row.name),
                                           c.created_at = row.created_at,
                                           c.updated_at = row.updated_at{emb_set}
-                            ON MATCH SET c.updated_at = row.updated_at
+                            ON MATCH SET c.updated_at = row.updated_at,
+                                         c.concept_type = CASE WHEN c.concept_type IS NULL
+                                                          THEN row.type
+                                                          ELSE c.concept_type END
                             RETURN row.name AS name, elementId(c) AS node_id
                             """,
                             {'rows': rows}
@@ -1387,7 +1467,7 @@ class EnrichmentService:
             # Find or create target concept node
             target_query = """
             MATCH (c:Concept)
-            WHERE toLower(c.name) = toLower($target_name)
+            WHERE c.name_lower = toLower($target_name)
             RETURN elementId(c) as node_id
             LIMIT 1
             """

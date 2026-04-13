@@ -211,11 +211,14 @@ class UMLSClient:
         start = time.time()
         try:
             result = await self._neo4j.execute_query(
-                "MATCH (c:UMLSConcept) "
-                "WHERE toLower(c.preferred_name) = toLower($name) "
-                "   OR any(s IN c.synonyms WHERE toLower(s) = toLower($name)) "
-                "RETURN c.cui AS cui, c.preferred_name AS preferred_name",
-                {"name": name},
+                "MATCH (c:UMLSConcept) WHERE c.lower_name = $lower_name "
+                "RETURN c.cui AS cui, c.preferred_name AS preferred_name "
+                "UNION "
+                "MATCH (s:UMLSSynonym {name: $lower_name})"
+                "<-[:HAS_SYNONYM]-(c:UMLSConcept) "
+                "RETURN c.cui AS cui, "
+                "c.preferred_name AS preferred_name",
+                {"lower_name": name.lower()},
             )
             latency = time.time() - start
             logger.debug(
@@ -401,7 +404,12 @@ class UMLSClient:
     async def batch_search_by_names(
         self, names: List[str],
     ) -> Optional[Dict[str, str]]:
-        """Look up multiple concept names in a single Cypher query.
+        """Look up multiple concept names against UMLS data in Neo4j.
+
+        Uses pre-computed ``lower_name`` and ``lower_synonyms`` properties
+        (indexed) for fast case-insensitive matching.  Names are processed
+        in sub-batches of 200 to avoid Neo4j transaction timeouts when
+        thousands of concepts are extracted per KG batch.
 
         Returns a dict mapping input name -> CUI for matches found.
         Returns None if unavailable.
@@ -411,49 +419,105 @@ class UMLSClient:
         if not names:
             return {}
 
+        # De-duplicate while preserving original casing for the result map
+        seen: Dict[str, str] = {}  # lower -> original
+        for n in names:
+            low = n.lower()
+            if low not in seen:
+                seen[low] = n
+        unique_lower = list(seen.keys())
+
         cache_key = (
             "batch_search_by_names",
-            tuple(sorted(n.lower() for n in names)),
+            tuple(sorted(unique_lower)),
         )
         hit, cached = self._cache.get(cache_key)
         if hit:
             return cached
 
+        # Sub-batch to keep each Neo4j transaction small.
+        # Two-phase lookup: (1) indexed lower_name (fast), then
+        # (2) lower_synonyms only for names not yet matched.
+        SUB_BATCH = 200
+        mapping: Dict[str, str] = {}
         start = time.time()
-        try:
-            result = await self._neo4j.execute_query(
-                "UNWIND $names AS name "
-                "OPTIONAL MATCH (c:UMLSConcept) "
-                "WHERE toLower(c.preferred_name) = toLower(name) "
-                "   OR any(s IN c.synonyms WHERE toLower(s) = toLower(name)) "
-                "WITH name, c "
-                "WHERE c IS NOT NULL "
-                "RETURN name, c.cui AS cui",
-                {"names": list(names)},
-            )
-            latency = time.time() - start
-            logger.debug(
-                "umls_client_query",
-                method="batch_search_by_names",
-                name_count=len(names),
-                latency_ms=round(latency * 1000, 1),
-            )
-            mapping: Dict[str, str] = {}
-            if result:
-                for r in result:
-                    name_val = r.get("name")
-                    cui_val = r.get("cui")
-                    if name_val and cui_val and name_val not in mapping:
-                        mapping[name_val] = cui_val
-            self._cache.put(cache_key, mapping)
-            return mapping
-        except Exception:
-            latency = time.time() - start
-            logger.warning(
-                "umls_client_query_failed",
-                method="batch_search_by_names",
-                name_count=len(names),
-                latency_ms=round(latency * 1000, 1),
-                exc_info=True,
-            )
+        failed = False
+
+        # Phase 1: Indexed preferred_name lookup (fast)
+        for sb_start in range(0, len(unique_lower), SUB_BATCH):
+            sb_names = unique_lower[sb_start:sb_start + SUB_BATCH]
+            try:
+                result = await self._neo4j.execute_query(
+                    "UNWIND $names AS name "
+                    "MATCH (c:UMLSConcept) "
+                    "WHERE c.lower_name = name "
+                    "RETURN name, c.cui AS cui",
+                    {"names": sb_names},
+                )
+                if result:
+                    for r in result:
+                        nv = r.get("name")
+                        cv = r.get("cui")
+                        if nv and cv and nv not in mapping:
+                            mapping[nv] = cv
+            except Exception:
+                logger.warning(
+                    "umls_client_query_failed",
+                    method="batch_search_by_names_pn",
+                    sub_batch_start=sb_start,
+                    exc_info=True,
+                )
+                failed = True
+
+        # Phase 2: Synonym lookup for unmatched names only
+        unmatched = [n for n in unique_lower if n not in mapping]
+        if unmatched:
+            for sb_start in range(0, len(unmatched), SUB_BATCH):
+                sb_names = unmatched[
+                    sb_start:sb_start + SUB_BATCH
+                ]
+                try:
+                    result = await self._neo4j.execute_query(
+                        "UNWIND $names AS name "
+                        "MATCH (s:UMLSSynonym {name: name})"
+                        "<-[:HAS_SYNONYM]-(c:UMLSConcept) "
+                        "RETURN name, c.cui AS cui",
+                        {"names": sb_names},
+                    )
+                    if result:
+                        for r in result:
+                            nv = r.get("name")
+                            cv = r.get("cui")
+                            if nv and cv and nv not in mapping:
+                                mapping[nv] = cv
+                except Exception:
+                    logger.warning(
+                        "umls_client_query_failed",
+                        method="batch_search_by_names_syn",
+                        sub_batch_start=sb_start,
+                        exc_info=True,
+                    )
+                    failed = True
+
+        # Map lowercased keys back to original casing
+        orig_mapping: Dict[str, str] = {}
+        for low_name, cui in mapping.items():
+            orig = seen.get(low_name, low_name)
+            orig_mapping[orig] = cui
+
+        latency = time.time() - start
+        logger.debug(
+            "umls_client_query",
+            method="batch_search_by_names",
+            name_count=len(unique_lower),
+            matched=len(orig_mapping),
+            latency_ms=round(latency * 1000, 1),
+            had_failures=failed,
+        )
+
+        if not orig_mapping and failed:
+            # All sub-batches failed — return None so caller knows
             return None
+
+        self._cache.put(cache_key, orig_mapping)
+        return orig_mapping

@@ -23,7 +23,8 @@ RUN pip install --no-cache-dir -r requirements-model-server.txt
 # Pre-download models at build time for faster startup
 # This caches the models in the Docker image
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-base-en-v1.5')" \
-    && python -c "import spacy; spacy.cli.download('en_core_web_sm')"
+    && python -c "import spacy; spacy.cli.download('en_core_web_sm')" \
+    && python -c "from sentence_transformers import CrossEncoder; CrossEncoder('BAAI/bge-reranker-v2-m3')"
 
 # Copy application code
 COPY src/model_server /app/src/model_server

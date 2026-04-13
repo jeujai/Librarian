@@ -131,6 +131,18 @@ class ChatUploadHandler extends FileHandler {
         // Note: document_upload_error is handled by chat.js which delegates
         // to this.handleUploadError() - no need to register here to avoid
         // duplicate error messages
+
+        // Invalidate DuplicateChecker cache when a document is deleted
+        this.wsManager.on('document_deleted', (data) => {
+            if (data.success && this.duplicateChecker) {
+                if (data.filename) {
+                    this.duplicateChecker.removeDocument(data.filename, data.document_id);
+                } else {
+                    // Fallback: full refresh if filename not in response
+                    this.duplicateChecker.refresh();
+                }
+            }
+        });
     }
 
 
@@ -191,8 +203,7 @@ class ChatUploadHandler extends FileHandler {
     }
 
     /**
-     * Validate a file for chat upload.
-     * Only accepts PDF files under 100MB.
+     * Only accepts PDF files (no size limit).
      * 
      * @param {File} file - File to validate
      * @returns {Object} Validation result with valid flag and error message
@@ -211,11 +222,11 @@ class ChatUploadHandler extends FileHandler {
             };
         }
 
-        // Check file size - 100MB limit (Requirement 1.5)
+        // Check file size - 10GB limit (effectively unlimited)
         if (file.size > this.maxFileSize) {
             return {
                 valid: false,
-                error: `File exceeds 100MB limit. Please upload a smaller file.`
+                error: `File exceeds 10GB limit. Please upload a smaller file.`
             };
         }
 

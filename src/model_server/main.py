@@ -16,7 +16,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from .api.embeddings import router as embeddings_router
 from .api.health import router as health_router
 from .api.nlp import router as nlp_router
+from .api.rerank import router as rerank_router
 from .config import get_settings
+from .models.cross_encoder import initialize_cross_encoder_model
 from .models.embedding import initialize_embedding_model
 from .models.nlp import initialize_nlp_model
 
@@ -78,6 +80,24 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 logger.error(f"✗ Failed to load NLP model: {nlp_model.error}")
         except Exception as e:
             logger.error(f"✗ Error loading NLP model: {e}")
+
+        # Load cross-encoder model
+        logger.info(f"Loading cross-encoder model: {settings.cross_encoder_model}")
+        try:
+            cross_encoder_model = initialize_cross_encoder_model(
+                model_name=settings.cross_encoder_model,
+                device=settings.cross_encoder_device,
+                cache_dir=settings.model_cache_dir,
+            )
+            if cross_encoder_model.is_loaded:
+                logger.info(
+                    f"✓ Cross-encoder model loaded: {settings.cross_encoder_model} "
+                    f"(time={cross_encoder_model.load_time_seconds:.2f}s)"
+                )
+            else:
+                logger.error(f"✗ Failed to load cross-encoder model: {cross_encoder_model.error}")
+        except Exception as e:
+            logger.error(f"✗ Error loading cross-encoder model: {e}")
     else:
         logger.info("Model preloading disabled, models will load on first request")
     
@@ -115,6 +135,7 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(embeddings_router)
 app.include_router(nlp_router)
+app.include_router(rerank_router)
 
 
 @app.get("/")
@@ -127,7 +148,8 @@ async def root():
         "endpoints": {
             "health": "/health",
             "embeddings": "/embeddings",
-            "nlp": "/nlp/process"
+            "nlp": "/nlp/process",
+            "rerank": "/rerank"
         }
     }
 

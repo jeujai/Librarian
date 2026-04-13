@@ -5,6 +5,7 @@ from typing import Any, Dict
 
 from fastapi import APIRouter, Response
 
+from ..models.cross_encoder import get_cross_encoder_model
 from ..models.embedding import get_embedding_model
 from ..models.nlp import get_nlp_model
 
@@ -21,6 +22,7 @@ async def health_check() -> Dict[str, Any]:
     """
     embedding_model = get_embedding_model()
     nlp_model = get_nlp_model()
+    cross_encoder_model = get_cross_encoder_model()
     
     models_status = {}
     all_ready = True
@@ -43,6 +45,14 @@ async def health_check() -> Dict[str, Any]:
         models_status["nlp"] = {"status": "not_initialized"}
         all_ready = False
     
+    # Check cross-encoder model (informational, not required)
+    if cross_encoder_model:
+        models_status["cross_encoder"] = (
+            cross_encoder_model.get_status()
+        )
+    else:
+        models_status["cross_encoder"] = {"status": "not_initialized"}
+    
     return {
         "status": "healthy" if all_ready else "degraded",
         "ready": all_ready,
@@ -60,10 +70,16 @@ async def readiness_check(response: Response) -> Dict[str, Any]:
     """
     embedding_model = get_embedding_model()
     nlp_model = get_nlp_model()
+    cross_encoder_model = get_cross_encoder_model()
     
     embedding_ready = embedding_model is not None and embedding_model.is_loaded
     nlp_ready = nlp_model is not None and nlp_model.is_loaded
+    cross_encoder_ready = (
+        cross_encoder_model is not None
+        and cross_encoder_model.is_loaded
+    )
     
+    # Cross-encoder is NOT required for readiness
     all_ready = embedding_ready and nlp_ready
     
     if not all_ready:
@@ -72,7 +88,8 @@ async def readiness_check(response: Response) -> Dict[str, Any]:
     return {
         "ready": all_ready,
         "embedding": embedding_ready,
-        "nlp": nlp_ready
+        "nlp": nlp_ready,
+        "cross_encoder": cross_encoder_ready,
     }
 
 

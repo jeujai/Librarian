@@ -774,7 +774,7 @@ class TestEnrichmentService:
 
         # Create mock YAGO client — returns None for "Failing", entity for "Succeeding"
         mock_yago = MagicMock()
-        
+
         async def _search_entities(name, limit=10):
             if name == "Failing":
                 return []  # No results for failing concept
@@ -783,8 +783,23 @@ class TestEnrichmentService:
                     entity_id="Q1", label="Test", description="Test entity", score=0.9
                 )
             ]
-        
+
+        async def _batch_search(names):
+            """Batch search that delegates to per-name logic."""
+            results = {}
+            for name in names:
+                hits = await _search_entities(name)
+                if hits:
+                    entity = YagoEntityData(
+                        entity_id="Q1", label="Test", confidence=0.9
+                    )
+                    results[name] = entity
+                else:
+                    results[name] = None
+            return results
+
         mock_yago.search_entities = AsyncMock(side_effect=_search_entities)
+        mock_yago.batch_search_entities = AsyncMock(side_effect=_batch_search)
         mock_yago.get_entity = AsyncMock(
             return_value=YagoEntityData(
                 entity_id="Q1", label="Test", confidence=0.9

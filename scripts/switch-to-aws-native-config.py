@@ -76,7 +76,7 @@ def main():
         {"name": "AWS_REGION", "value": "us-east-1"},
         
         # Document Processing Configuration
-        {"name": "MAX_FILE_SIZE", "value": "104857600"},
+        {"name": "MAX_FILE_SIZE", "value": "10737418240"},  # 10GB - effectively unlimited
         {"name": "CHUNK_SIZE", "value": "512"},
         {"name": "CHUNK_OVERLAP", "value": "50"},
         {"name": "EMBEDDING_MODEL", "value": "all-MiniLM-L6-v2"},

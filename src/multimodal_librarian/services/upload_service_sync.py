@@ -5,18 +5,22 @@ This service coordinates file validation, storage, database operations,
 and processing queue management for PDF document uploads using synchronous database operations.
 """
 
-import logging
-from typing import Optional, Dict, Any, List
-from uuid import UUID, uuid4
-from datetime import datetime
 import json
+import logging
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+from uuid import UUID, uuid4
 
-from ..models.documents import (
-    Document, DocumentUploadRequest, DocumentUploadResponse, 
-    DocumentStatus, DocumentListResponse, DocumentSearchRequest
-)
-from .storage_service import StorageService, StorageError
 from ..database.connection import get_database_connection
+from ..models.documents import (
+    Document,
+    DocumentListResponse,
+    DocumentSearchRequest,
+    DocumentStatus,
+    DocumentUploadRequest,
+    DocumentUploadResponse,
+)
+from .storage_service import StorageError, StorageService
 
 logger = logging.getLogger(__name__)
 
@@ -59,8 +63,9 @@ class UploadServiceSync:
         Raises:
             ValidationError: If validation fails
         """
-        # Check file size (max 100MB)
-        max_size = 100 * 1024 * 1024  # 100MB
+        # Check file size against config
+        from ..config.config import get_settings
+        max_size = get_settings().max_file_size
         if len(file_data) > max_size:
             raise ValidationError(f"File too large: {len(file_data)} bytes (max: {max_size})")
         

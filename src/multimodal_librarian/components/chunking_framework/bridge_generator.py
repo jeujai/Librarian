@@ -29,6 +29,7 @@ from ...clients.ollama_client import OllamaClient, get_ollama_client
 from ...config import get_settings
 from ...models.chunking import BridgeChunk, DomainConfig, GapAnalysis
 from ...models.core import BridgeStrategy, ContentType
+from ...services.ollama_pool_manager import PoolExhaustedError, submit_ollama_work
 
 logger = logging.getLogger(__name__)
 
@@ -125,16 +126,11 @@ class SmartBridgeGenerator:
         self.last_request_time = 0.0
         
         # Batch processing configuration
-        self.batch_size = 20  # Process 20 at a time (5 rounds of 4 workers)
+        self.batch_size = 60  # Process 60 at a time (3 rounds of 20 workers)
         self.batch_timeout = 30.0  # Timeout for batch processing
         
-        # Thread pool for true parallel Ollama calls
-        # Sized to match OLLAMA_NUM_PARALLEL (default 4)
+        # Thread-local state preserved for httpx.AsyncClient compatibility
         import threading
-        from concurrent.futures import ThreadPoolExecutor
-        self._ollama_pool = ThreadPoolExecutor(
-            max_workers=4, thread_name_prefix="ollama"
-        )
         self._thread_local = threading.local()
         
         # Domain-specific prompting strategies (no blocking calls)
@@ -436,7 +432,8 @@ Bridge:""",
                              content_type: ContentType = ContentType.GENERAL,
                              domain_config: Optional[DomainConfig] = None,
                              bisected_concepts_per_boundary: Optional[Dict[int, List[str]]] = None,
-                             progress_callback: Optional[callable] = None) -> List[BridgeChunk]:
+                             progress_callback: Optional[callable] = None,
+                             storage_callback: Optional[callable] = None) -> Tuple[List[BridgeChunk], BatchGenerationStats]:
         """
         Batch process multiple bridges for cost optimization.
         
@@ -446,9 +443,14 @@ Bridge:""",
             domain_config: Domain configuration
             bisected_concepts_per_boundary: Optional mapping from boundary index
                 to list of bisected concept names for prompt augmentation
+            progress_callback: Optional callback for progress reporting
+            storage_callback: Optional async callback for incremental storage.
+                Called after each batch of bridges is generated and validated.
+                Signature: async def callback(bridges: List[BridgeChunk]) -> None
+                This enables incremental storage to preserve progress on failure.
             
         Returns:
-            List of BridgeChunk objects
+            Tuple of (List of BridgeChunk objects, BatchGenerationStats)
         """
         logger.info(f"Starting batch generation for {len(boundary_pairs)} bridge requests")
         
@@ -488,6 +490,9 @@ Bridge:""",
             batch = requests[i:i + self.batch_size]
             batch_results = self._process_batch(batch)
             
+            # Collect bridges generated in this batch for incremental storage
+            batch_bridges = []
+            
             for request, result in zip(batch, batch_results):
                 if result.is_successful():
                     bridge_chunk = BridgeChunk(
@@ -499,6 +504,7 @@ Bridge:""",
                         created_at=datetime.now()
                     )
                     bridge_chunks.append(bridge_chunk)
+                    batch_bridges.append(bridge_chunk)
                     batch_stats.successful_generations += 1
                 else:
                     logger.warning(f"Failed to generate bridge for {result.request_id}: {result.error}")
@@ -507,6 +513,16 @@ Bridge:""",
                 # Update statistics
                 batch_stats.total_tokens_used += result.token_usage.get('total_tokens', 0)
                 batch_stats.total_cost_estimate += self._estimate_cost(result.token_usage)
+            
+            # Invoke storage callback for incremental storage after each batch
+            # This ensures bridges are stored immediately, preserving progress on failure
+            if storage_callback and batch_bridges:
+                try:
+                    storage_callback(batch_bridges)
+                except Exception as e:
+                    logger.error(f"Storage callback failed for batch: {e}")
+                    # Re-raise to propagate storage failures
+                    raise
             
             # Report incremental progress after each batch
             if progress_callback:
@@ -528,7 +544,7 @@ Bridge:""",
         logger.info(f"Batch generation completed: {batch_stats.successful_generations}/{batch_stats.total_requests} successful")
         logger.info(f"Total tokens used: {batch_stats.total_tokens_used}, Estimated cost: ${batch_stats.total_cost_estimate:.4f}")
         
-        return bridge_chunks
+        return (bridge_chunks, batch_stats)
     
     def _generate_single_bridge(self, request: BridgeGenerationRequest) -> BridgeGenerationResult:
         """Generate a single bridge with error handling and rate limiting."""
@@ -794,11 +810,11 @@ Bridge:""",
     def _process_batch(self, requests: List[BridgeGenerationRequest]) -> List[BridgeGenerationResult]:
         """Process a batch of requests with true parallel execution via thread pool."""
         # Always use async batch processing with thread pool parallelism
+        loop = None
         try:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             results = loop.run_until_complete(self._async_batch_process(requests))
-            loop.close()
             return results
         except Exception as e:
             logger.warning(f"Batch processing failed, falling back to sequential: {e}")
@@ -807,6 +823,13 @@ Bridge:""",
             for req in requests:
                 results.append(self._generate_single_bridge(req))
             return results
+        finally:
+            if loop is not None:
+                loop.close()
+            # Do NOT touch the thread-local event loop here.
+            # generate_bridges_task owns the persistent _task_loop and
+            # will re-set it via asyncio.set_event_loop(_task_loop) after
+            # batch_generate_bridges returns.
     
     async def _async_batch_process(self, requests: List[BridgeGenerationRequest]) -> List[BridgeGenerationResult]:
         """Asynchronously process batch requests."""
@@ -844,14 +867,37 @@ Bridge:""",
     async def _async_generate_bridge(self, request: BridgeGenerationRequest) -> BridgeGenerationResult:
         """Asynchronously generate a single bridge.
         
-        Runs the blocking _generate_single_bridge in a thread pool so that
-        asyncio.gather can actually interleave multiple Ollama HTTP requests,
-        matching OLLAMA_NUM_PARALLEL for true parallelism.
+        Submits the blocking _generate_single_bridge to the shared Ollama
+        pool with task_type="bridge" for fair share scheduling.
+        Falls back to mechanical bridge generation if the pool is exhausted.
         """
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            self._ollama_pool, self._generate_single_bridge, request
-        )
+        try:
+            future = submit_ollama_work(
+                self._generate_single_bridge, request,
+                task_type="bridge"
+            )
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, future.result)
+        except PoolExhaustedError:
+            logger.warning(
+                "Shared Ollama pool exhausted, falling back to mechanical bridge "
+                f"for request {request.get_request_id()}"
+            )
+            bridge_content = self._generate_mechanical_fallback(
+                request.chunk1_content, request.chunk2_content
+            )
+            self.generation_stats['total_requests'] += 1
+            self.generation_stats['successful_generations'] += 1
+            self._track_provider('mechanical_fallback_pool_exhausted')
+            return BridgeGenerationResult(
+                request_id=request.get_request_id(),
+                bridge_content=bridge_content,
+                generation_method="mechanical_fallback",
+                confidence_score=0.4,
+                generation_time=0.0,
+                token_usage={'input_tokens': 0, 'output_tokens': 0, 'total_tokens': 0},
+                error="Pool exhausted"
+            )
     
     def create_adaptive_prompt(self, chunk1: str, chunk2: str, gap_analysis: GapAnalysis,
                              content_type: ContentType, domain_config: Optional[DomainConfig],

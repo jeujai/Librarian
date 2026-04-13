@@ -107,7 +107,7 @@ def test_knowledge_graph_components():
             ner_concepts = kg_builder.concept_extractor.extract_concepts_regex(test_content)
             
             # Test LLM-based extraction (simplified)
-            llm_concepts = kg_builder.concept_extractor.extract_concepts_llm(test_content, "test_chunk")
+            llm_concepts = kg_builder.concept_extractor.extract_concepts_definition_patterns(test_content, "test_chunk")
             
             total_concepts = len(ner_concepts) + len(llm_concepts)
             

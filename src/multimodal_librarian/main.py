@@ -570,6 +570,59 @@ async def _redis_progress_subscriber(app: FastAPI):
                            "Redis subscriber will not forward progress")
         return
 
+    # Initialize ActiveJobsDispatcher and store on app.state for access
+    # NOTE: We must manually resolve dependencies here since we're outside
+    # FastAPI's request context where Depends() would auto-resolve.
+    dispatcher = None
+    try:
+        import multimodal_librarian.api.dependencies.services as _services_module
+
+        from .api.dependencies.services import (
+            get_connection_manager,
+            get_database_factory_optional,
+        )
+        from .services.active_jobs_dispatcher import ActiveJobsDispatcher
+        from .services.status_report_service import StatusReportService
+
+        # Manually resolve the singleton ConnectionManager (async function)
+        connection_manager = await get_connection_manager()
+
+        # Manually create StatusReportService - can't use get_status_report_service_optional()
+        # because it has Depends() parameters that won't resolve outside FastAPI request context
+        status_report_service = None
+        try:
+            factory = await get_database_factory_optional()
+            if factory is not None:
+                db_client = await factory.get_relational_client()
+                status_report_service = StatusReportService(
+                    db_client=db_client,
+                    processing_status_service=service,  # Already resolved above
+                )
+                # Cache it for subsequent DI calls
+                _services_module._status_report_service = status_report_service
+                if logger:
+                    logger.info("StatusReportService created for ActiveJobsDispatcher")
+        except Exception as srs_err:
+            if logger:
+                logger.warning(f"StatusReportService not available: {srs_err}")
+
+        # Create the dispatcher with properly resolved dependencies
+        dispatcher = ActiveJobsDispatcher(
+            connection_manager=connection_manager,
+            processing_status_service=service,  # Already resolved above
+            status_report_service=status_report_service,
+        )
+        app.state.active_jobs_dispatcher = dispatcher
+        
+        # Also set the module-level cache so DI providers return the same instance
+        _services_module._active_jobs_dispatcher = dispatcher
+        
+        if logger:
+            logger.info("ActiveJobsDispatcher available for Redis subscriber fan-out")
+    except Exception as e:
+        if logger:
+            logger.warning(f"Failed to initialize ActiveJobsDispatcher: {e}")
+
     if logger:
         logger.info(f"Redis progress subscriber connecting to {broker_url}")
 
@@ -616,6 +669,14 @@ async def _redis_progress_subscriber(app: FastAPI):
                 else:
                     if logger:
                         logger.warning(f"Unknown progress message type: {msg_type}")
+
+                # Fan out to active-jobs subscribers (Req 2.1, 2.3, 2.4, 7.4)
+                if dispatcher is not None and msg_type in ("status_update", "completion", "failure"):
+                    try:
+                        await dispatcher.on_progress_event(data)
+                    except Exception as disp_err:
+                        if logger:
+                            logger.error(f"ActiveJobsDispatcher error (non-fatal): {disp_err}")
             except Exception as e:
                 if logger:
                     logger.error(f"Error processing Redis progress message: {e}")

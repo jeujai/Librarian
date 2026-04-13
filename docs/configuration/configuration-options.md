@@ -285,7 +285,7 @@ Connection pool health monitoring settings:
 | `ML_EXPORT_DIR` | string | `"/app/exports"` | Export directory |
 | `ML_BACKUP_DIR` | string | `"/app/backups"` | Backup directory |
 | `ML_LOG_DIR` | string | `"/app/logs"` | Log directory |
-| `ML_MAX_FILE_SIZE` | int | `104857600` | Max file size in bytes (100MB) |
+| `ML_MAX_FILE_SIZE` | int | `10737418240` | Max file size in bytes (10GB - effectively unlimited) |
 | `ML_MAX_FILES_PER_UPLOAD` | int | `10` | Max files per upload |
 
 #### AWS S3 Storage

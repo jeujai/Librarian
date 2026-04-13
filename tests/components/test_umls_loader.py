@@ -1414,10 +1414,10 @@ class TestRemoveAllUmlsData:
     async def test_executes_all_delete_queries(
         self, loader, mock_neo4j
     ):
-        """All 7 delete queries are executed."""
+        """All 9 delete queries are executed (includes HAS_SYNONYM + UMLSSynonym)."""
         await loader.remove_all_umls_data()
         calls = mock_neo4j.execute_write_query.call_args_list
-        assert len(calls) == 7
+        assert len(calls) == 9
 
     @pytest.mark.asyncio
     async def test_deletes_relationships_before_nodes(
@@ -1427,15 +1427,17 @@ class TestRemoveAllUmlsData:
         await loader.remove_all_umls_data()
         calls = mock_neo4j.execute_write_query.call_args_list
         queries = [call[0][0] for call in calls]
-        # First 3 should be relationship deletions
+        # First 4 should be relationship deletions
         assert "UMLS_REL" in queries[0]
         assert "UMLS_SEMANTIC_REL" in queries[1]
         assert "HAS_SEMANTIC_TYPE" in queries[2]
+        assert "HAS_SYNONYM" in queries[3]
         # Then node deletions
-        assert "UMLSConcept" in queries[3]
-        assert "UMLSSemanticType" in queries[4]
-        assert "UMLSRelationshipDef" in queries[5]
-        assert "UMLSMetadata" in queries[6]
+        assert "UMLSSynonym" in queries[4]
+        assert "UMLSConcept" in queries[5]
+        assert "UMLSSemanticType" in queries[6]
+        assert "UMLSRelationshipDef" in queries[7]
+        assert "UMLSMetadata" in queries[8]
 
     @pytest.mark.asyncio
     async def test_uses_detach_delete_for_nodes(
@@ -1445,7 +1447,9 @@ class TestRemoveAllUmlsData:
         await loader.remove_all_umls_data()
         calls = mock_neo4j.execute_write_query.call_args_list
         queries = [call[0][0] for call in calls]
-        for q in queries[3:]:
+        # First 4 are relationship deletions (plain DELETE),
+        # remaining 5 are node deletions (DETACH DELETE)
+        for q in queries[4:]:
             assert "DETACH DELETE" in q
 
 
@@ -1460,6 +1464,8 @@ class TestGetUmlsStats:
                 [{"count": 100}],  # concept count
                 [{"count": 50}],   # semantic type count
                 [{"count": 200}],  # relationship count
+                [{"count": 15}],   # same_as count
+                [{"count": 75}],   # has_semantic_type count
                 [{                 # metadata
                     "loaded_tier": "full",
                     "umls_version": "2024AA",
@@ -1472,6 +1478,8 @@ class TestGetUmlsStats:
         assert result.concept_count == 100
         assert result.semantic_type_count == 50
         assert result.relationship_count == 200
+        assert result.same_as_count == 15
+        assert result.has_semantic_type_count == 75
         assert result.loaded_tier == "full"
         assert result.umls_version == "2024AA"
         assert result.load_timestamp == "2024-01-01T00:00:00"
@@ -1486,6 +1494,8 @@ class TestGetUmlsStats:
                 [{"count": 0}],  # concept count
                 [{"count": 0}],  # semantic type count
                 [{"count": 0}],  # relationship count
+                [{"count": 0}],  # same_as count
+                [{"count": 0}],  # has_semantic_type count
                 [],              # no metadata
             ]
         )
@@ -1506,6 +1516,7 @@ class TestGetUmlsStats:
         assert result.concept_count == 0
         assert result.semantic_type_count == 0
         assert result.relationship_count == 0
+        assert result.same_as_count == 0
 
 
 class TestResumeImport:
@@ -1686,13 +1697,14 @@ class TestVersionReplacement:
         )
         try:
             await loader.load_concepts(mrconso_path, mrsty_path)
-            # Verify remove_all_umls_data was called (7 delete queries)
+            # Verify _remove_concept_data was called (4 targeted
+            # delete queries — preserves semantic types/rel defs)
             write_calls = mock_neo4j.execute_write_query.call_args_list
             delete_queries = [
                 c for c in write_calls
                 if "DELETE" in c[0][0]
             ]
-            assert len(delete_queries) >= 7
+            assert len(delete_queries) >= 4
         finally:
             os.unlink(mrconso_path)
             os.unlink(mrsty_path)

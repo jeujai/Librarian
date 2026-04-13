@@ -1594,3 +1594,39 @@ async def local_database_health_check():
             },
             status_code=503
         )
+
+
+@router.get("/ollama-pool")
+async def ollama_pool_health_check():
+    """
+    Health check for the shared Ollama thread pool.
+
+    Returns pool statistics including worker utilization, fair share scheduling
+    metrics, and dynamic concurrency scaling state.
+
+    Returns:
+        JSON with pool stats, fair share metrics, and concurrency scaling metrics.
+    """
+    try:
+        from ...services.ollama_pool_manager import get_pool_stats
+
+        stats = get_pool_stats()
+
+        return JSONResponse(
+            content={
+                "status": "healthy",
+                "pool": stats,
+                "timestamp": datetime.now().isoformat(),
+            },
+            status_code=200,
+        )
+    except Exception as e:
+        logger.error(f"Ollama pool health check failed: {e}")
+        return JSONResponse(
+            content={
+                "status": "error",
+                "error": str(e),
+                "timestamp": datetime.now().isoformat(),
+            },
+            status_code=503,
+        )

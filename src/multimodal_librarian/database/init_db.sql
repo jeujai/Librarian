@@ -241,6 +241,15 @@ CREATE TABLE IF NOT EXISTS bridge_chunks (
     CONSTRAINT check_bridge_confidence CHECK (confidence_score >= 0.0 AND confidence_score <= 1.0)
 );
 
+-- Processing payloads table (temporary storage for inter-task data)
+-- Avoids passing large serialized documents through the Celery message broker.
+-- Rows are cleaned up by finalize_processing_task after processing completes.
+CREATE TABLE IF NOT EXISTS processing_payloads (
+    document_id UUID PRIMARY KEY REFERENCES knowledge_sources(id) ON DELETE CASCADE,
+    payload JSONB NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Audit log table (for security and compliance)
 CREATE TABLE IF NOT EXISTS audit.audit_log (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

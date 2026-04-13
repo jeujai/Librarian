@@ -86,7 +86,7 @@ services:
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:-bG9jYWwtZGV2LWVuY3J5cHRpb24ta2V5LWNoYW5nZS1pbi1wcm9kdWN0aW9u}
       - REQUIRE_AUTH=${REQUIRE_AUTH:-false}
       - RATE_LIMIT_PER_MINUTE=${RATE_LIMIT_PER_MINUTE:-100}
-      - WEBSOCKET_TIMEOUT=${WEBSOCKET_TIMEOUT:-300}
+      - WEBSOCKET_TIMEOUT=${WEBSOCKET_TIMEOUT:-3600}  # 1 hour for large uploads
       
       # External APIs
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
@@ -99,7 +99,7 @@ services:
       - UPLOAD_DIR=${UPLOAD_DIR:-/app/uploads}
       - MEDIA_DIR=${MEDIA_DIR:-/app/media}
       - EXPORT_DIR=${EXPORT_DIR:-/app/exports}
-      - MAX_FILE_SIZE=${MAX_FILE_SIZE:-104857600}
+      - MAX_FILE_SIZE=${MAX_FILE_SIZE:-10737418240}  # 10GB - effectively unlimited
       
       # Processing settings - optimized for development
       - CHUNK_SIZE=${CHUNK_SIZE:-256}  # Reduced from 512

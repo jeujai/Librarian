@@ -160,8 +160,12 @@ class DocumentListPanel {
 
         // Handle processing status updates to refresh list
         this.wsManager.on('document_processing_status', (data) => {
+            // Update status badge in real-time for the affected document
+            if (data.document_id) {
+                this._updateDocumentStatus(data.document_id, data.status);
+            }
             if (this.isVisible && (data.status === 'completed' || data.status === 'failed')) {
-                // Refresh list when a document finishes processing
+                // Full refresh when a document finishes processing
                 this.requestDocumentList();
             }
         });
@@ -517,6 +521,8 @@ class DocumentListPanel {
         if (data.bridge_count) rows += `<div class="stat-row"><span class="stat-label">Bridges</span><span class="stat-value">${fmt(data.bridge_count)}</span></div>`;
         if (data.concept_count) rows += `<div class="stat-row"><span class="stat-label">Concepts</span><span class="stat-value">${fmt(data.concept_count)}</span></div>`;
         if (data.relationship_count) rows += `<div class="stat-row"><span class="stat-label">Relationships</span><span class="stat-value">${fmt(data.relationship_count)}</span></div>`;
+        if (data.umls_linked_count) rows += `<div class="stat-row"><span class="stat-label">🏥 UMLS Linked</span><span class="stat-value">${fmt(data.umls_linked_count)}</span></div>`;
+        if (data.umls_concept_count) rows += `<div class="stat-row"><span class="stat-label">🏥 UMLS Concepts</span><span class="stat-value">${fmt(data.umls_concept_count)}</span></div>`;
 
         if (data.relationship_breakdown && Object.keys(data.relationship_breakdown).length > 0) {
             const bySource = {};
@@ -577,6 +583,37 @@ class DocumentListPanel {
         };
 
         return badges[status] || badges['uploaded'];
+    }
+
+    /**
+     * Update the status badge for a specific document in-place.
+     * Called on real-time processing status WebSocket events.
+     */
+    _updateDocumentStatus(documentId, status) {
+        if (!status) return;
+        // Map processing statuses to badge status
+        const badgeStatus = (status === 'running' || status === 'pending') ? 'processing' : status;
+        const newBadgeHtml = this.getStatusBadge(badgeStatus);
+
+        // Update in floating panel
+        const item = this.panelElement?.querySelector(`[data-document-id="${documentId}"]`);
+        if (item) {
+            const badge = item.querySelector('.status-badge');
+            if (badge) badge.outerHTML = newBadgeHtml;
+        }
+
+        // Update in inline list
+        if (this.inlineContainer) {
+            const inlineItem = this.inlineContainer.querySelector(`[data-document-id="${documentId}"]`);
+            if (inlineItem) {
+                const badge = inlineItem.querySelector('.status-badge');
+                if (badge) badge.outerHTML = newBadgeHtml;
+            }
+        }
+
+        // Update local documents array
+        const doc = this.documents.find(d => d.document_id === documentId);
+        if (doc) doc.status = badgeStatus;
     }
 
     /**

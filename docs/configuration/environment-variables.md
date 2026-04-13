@@ -130,7 +130,7 @@ All configuration variables use the `ML_` prefix to avoid conflicts with system 
 | `ML_EXPORT_DIR` | string | `"/app/exports"` | Export directory | `/app/exports`, `/data/exports` |
 | `ML_BACKUP_DIR` | string | `"/app/backups"` | Backup directory | `/app/backups`, `/data/backups` |
 | `ML_LOG_DIR` | string | `"/app/logs"` | Log directory | `/app/logs`, `/var/log/ml` |
-| `ML_MAX_FILE_SIZE` | int | `104857600` | Max file size in bytes (100MB) | `52428800` (50MB), `209715200` (200MB) |
+| `ML_MAX_FILE_SIZE` | int | `10737418240` | Max file size in bytes (10GB - effectively unlimited) | `52428800` (50MB), `209715200` (200MB) |
 | `ML_MAX_FILES_PER_UPLOAD` | int | `10` | Max files per upload | `5`, `20` |
 
 **Alternative Variable Names**:

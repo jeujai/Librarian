@@ -62,13 +62,16 @@ class PDFProcessor:
     For large PDFs, uses streaming/page-by-page processing to avoid memory exhaustion.
     """
     
-    def __init__(self, max_file_size: int = 100 * 1024 * 1024):  # 100MB default
+    def __init__(self, max_file_size: int = None):
         """
         Initialize PDF processor.
         
         Args:
-            max_file_size: Maximum allowed file size in bytes (default 100MB)
+            max_file_size: Maximum allowed file size in bytes (defaults to config setting)
         """
+        if max_file_size is None:
+            from ...config.config import get_settings
+            max_file_size = get_settings().max_file_size
         self.max_file_size = max_file_size
         self.supported_image_formats = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff'}
         self.enable_graceful_degradation = True

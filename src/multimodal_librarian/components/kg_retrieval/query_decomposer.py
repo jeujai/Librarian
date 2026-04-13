@@ -357,7 +357,7 @@ class QueryDecomposer:
             cypher_query = """
             UNWIND $words as word
             MATCH (c:Concept)
-            WHERE toLower(c.name) CONTAINS word
+            WHERE c.name_lower CONTAINS word
             WITH c, word, size(c.name) as name_length
             WHERE name_length < 150
             RETURN DISTINCT

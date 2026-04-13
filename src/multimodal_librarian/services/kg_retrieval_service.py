@@ -312,8 +312,25 @@ class KGRetrievalService:
             chunks_for_reranking = stage1_chunks
             if self._relevance_detector is not None:
                 try:
+                    # Compute adaptive threshold from entity count
+                    from ..components.kg_retrieval.relevance_detector import (
+                        compute_adaptive_threshold,
+                    )
+                    from ..config import get_settings
+
+                    _settings = get_settings()
+                    _proper_noun_count = len(decomposition.entities)
+                    _adaptive_threshold = compute_adaptive_threshold(
+                        proper_noun_count=_proper_noun_count,
+                        domain=None,  # domain not available pre-reranking
+                        base_threshold_floor=_settings.adaptive_threshold_floor,
+                        medical_threshold=_settings.adaptive_medical_threshold,
+                        legal_threshold=_settings.adaptive_legal_threshold,
+                        small_query_noun_limit=_settings.adaptive_small_query_noun_limit,
+                    )
+
                     filtered = self._relevance_detector.filter_chunks_by_proper_nouns(
-                        stage1_chunks, query
+                        stage1_chunks, query, adaptive_threshold=_adaptive_threshold
                     )
                     if filtered is not None:
                         chunks_for_reranking = filtered

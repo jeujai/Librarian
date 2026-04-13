@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from ...config.scoring_weights import BRIDGE_WEIGHT, KG_WEIGHT
 from ...models.kg_retrieval import RetrievedChunk
 
 logger = logging.getLogger(__name__)
@@ -43,14 +44,14 @@ class SemanticReranker:
         ranked = await reranker.rerank(chunks, "What did our team observe?")
     """
 
-    # Default weights for combining scores
-    # KG weight dominates because conceptual matching (lexical + semantic
-    # concept resolution) is more precise than raw vector similarity.
-    DEFAULT_KG_WEIGHT = 0.7
-    DEFAULT_SEMANTIC_WEIGHT = 0.3
+    # Default weights for combining scores — sourced from
+    # config.scoring_weights so quality gate and reranker stay in sync.
+    DEFAULT_KG_WEIGHT = KG_WEIGHT
+    DEFAULT_SEMANTIC_WEIGHT = BRIDGE_WEIGHT
     
     # Optimization constants
-    MAX_CHUNKS_FOR_RERANKING = 50  # Pre-filter to this many before semantic scoring
+    MAX_CHUNKS_FOR_CROSS_ENCODER = 12  # Keep low for CPU cross-encoder performance
+    MAX_CHUNKS_FOR_BI_ENCODER = 50  # Bi-encoder is fast, can handle more
     QUERY_CACHE_SIZE = 50  # Max cached query embeddings
     QUERY_CACHE_TTL_SECONDS = 300  # 5 minutes
 
@@ -165,20 +166,79 @@ class SemanticReranker:
                 )
                 return self._sort_by_kg_score(chunks, top_k)
 
-            # Pre-filter chunks by semantic similarity to query
-            chunks_to_rerank = self._prefilter_chunks(chunks, query_embedding)
-            logger.debug(f"Pre-filtered to {len(chunks_to_rerank)} chunks for reranking")
+            # Check if cross-encoder is enabled (disabled by default for CPU performance)
+            import os
+            use_cross_encoder = os.environ.get("USE_CROSS_ENCODER", "false").lower() == "true"
+            
+            # Use appropriate chunk limit based on reranking method
+            max_chunks = self.MAX_CHUNKS_FOR_CROSS_ENCODER if use_cross_encoder else self.MAX_CHUNKS_FOR_BI_ENCODER
 
-            # Generate chunk embeddings and calculate similarities
-            chunks_with_scores = await self._calculate_semantic_scores(
-                chunks_to_rerank, query_embedding
-            )
+            # Pre-filter chunks by semantic similarity to query
+            chunks_to_rerank = self._prefilter_chunks(chunks, query_embedding, max_chunks)
+            logger.debug(f"Pre-filtered to {len(chunks_to_rerank)} chunks for reranking")
+            
+            # Attempt cross-encoder scoring; fall back to bi-encoder on failure
+            cross_encoder_success = False
+            if use_cross_encoder:
+                try:
+                    cross_encoder_scores = await self._model_client.rerank(
+                        query, [c.content for c in chunks_to_rerank]
+                    )
+                    if len(cross_encoder_scores) != len(chunks_to_rerank):
+                        logger.warning(
+                            f"Cross-encoder score count mismatch: expected "
+                            f"{len(chunks_to_rerank)}, got {len(cross_encoder_scores)}. "
+                            "Falling back to bi-encoder."
+                        )
+                    else:
+                        for chunk, score in zip(chunks_to_rerank, cross_encoder_scores):
+                            chunk.semantic_score = score
+                        cross_encoder_success = True
+                        logger.info(
+                            f"Cross-encoder scoring succeeded for {len(chunks_to_rerank)} chunks"
+                        )
+                except Exception as e:
+                    logger.warning(f"Cross-encoder reranking failed, falling back to bi-encoder: {e}")
+
+            if cross_encoder_success:
+                # Rescale cross-encoder scores: BGE reranker v2 m3 outputs
+                # sigmoid-normalized scores centered around 0.5 (neutral).
+                # To make the geometric formula effective, we rescale so that:
+                #   - 0.5 (neutral) → 0.1 (strong penalty in geometric mean)
+                #   - 1.0 (highly relevant) → 1.0
+                #   - 0.0 (irrelevant) → 0.0
+                # Using a power transform: rescaled = (2 * max(0, score - 0.5))^2
+                # This maps [0.5, 1.0] → [0, 1] with quadratic emphasis on high scores
+                for chunk in chunks_to_rerank:
+                    raw = chunk.semantic_score
+                    if raw <= 0.5:
+                        chunk.semantic_score = 0.05  # Floor for neutral/irrelevant
+                    else:
+                        # Map (0.5, 1.0] → (0.05, 1.0] with quadratic curve
+                        normalized = (raw - 0.5) * 2  # [0, 1]
+                        chunk.semantic_score = 0.05 + 0.95 * (normalized ** 1.5)
+                    logger.debug(
+                        f"Cross-encoder score rescaled: {raw:.4f} → {chunk.semantic_score:.4f}"
+                    )
+                chunks_with_scores = chunks_to_rerank
+            else:
+                # Bi-encoder fallback: generate chunk embeddings and calculate cosine similarities
+                chunks_with_scores = await self._calculate_semantic_scores(
+                    chunks_to_rerank, query_embedding
+                )
 
             # Calculate final scores and sort
             for chunk in chunks_with_scores:
                 chunk.final_score = self._calculate_final_score(
                     chunk.kg_relevance_score,
                     chunk.semantic_score,
+                )
+                print(
+                    f"GEOM_DIAG kg={chunk.kg_relevance_score:.4f} "
+                    f"sem={chunk.semantic_score:.4f} "
+                    f"final={chunk.final_score:.4f} "
+                    f"content={((chunk.content or '')[:80]).replace(chr(10),' ')}",
+                    flush=True
                 )
 
             # Query-term content boost using decomposition.
@@ -265,7 +325,7 @@ class SemanticReranker:
             return self._sort_by_kg_score(chunks, top_k)
 
     def _prefilter_chunks(
-        self, chunks: List[RetrievedChunk], query_embedding: np.ndarray
+        self, chunks: List[RetrievedChunk], query_embedding: np.ndarray, max_chunks: int
     ) -> List[RetrievedChunk]:
         """
         Pre-filter chunks by semantic similarity to the query embedding.
@@ -277,13 +337,14 @@ class SemanticReranker:
         Args:
             chunks: All candidate chunks
             query_embedding: Shape (D,) query vector
+            max_chunks: Maximum number of chunks to return
 
         Returns:
-            Filtered list of chunks (max MAX_CHUNKS_FOR_RERANKING)
+            Filtered list of chunks (max max_chunks)
 
         Requirements: 1.1, 1.2, 1.3, 5.1
         """
-        if len(chunks) <= self.MAX_CHUNKS_FOR_RERANKING:
+        if len(chunks) <= max_chunks:
             return chunks
 
         # Separate chunks into those with and without embeddings
@@ -296,8 +357,8 @@ class SemanticReranker:
                 chunks_without_emb.append(chunk)
 
         if not chunks_with_emb:
-            # No embeddings available — return first MAX_CHUNKS_FOR_RERANKING
-            return chunks[: self.MAX_CHUNKS_FOR_RERANKING]
+            # No embeddings available — return first max_chunks
+            return chunks[:max_chunks]
 
         # Build numpy matrix from chunk embeddings and compute similarities
         embedding_matrix = np.array(
@@ -314,22 +375,29 @@ class SemanticReranker:
 
         # Always preserve chunks with high KG relevance scores
         # (direct concept matches) regardless of semantic similarity
+        # But cap at half the limit to leave room for semantic diversity
         KG_PRESERVE_THRESHOLD = 0.7
+        MAX_KG_PRESERVED = max_chunks // 2
         selected: List[RetrievedChunk] = []
         selected_ids: set = set()
 
-        # First pass: preserve high-KG-score chunks
+        # First pass: preserve high-KG-score chunks (up to half the limit)
+        high_kg_chunks = []
         for _sim, chunk in scored:
             if chunk.kg_relevance_score >= KG_PRESERVE_THRESHOLD:
-                selected.append(chunk)
-                selected_ids.add(id(chunk))
+                high_kg_chunks.append(chunk)
         for chunk in chunks_without_emb:
             if chunk.kg_relevance_score >= KG_PRESERVE_THRESHOLD:
-                selected.append(chunk)
-                selected_ids.add(id(chunk))
+                high_kg_chunks.append(chunk)
+        
+        # Sort by KG score and take top MAX_KG_PRESERVED
+        high_kg_chunks.sort(key=lambda c: c.kg_relevance_score, reverse=True)
+        for chunk in high_kg_chunks[:MAX_KG_PRESERVED]:
+            selected.append(chunk)
+            selected_ids.add(id(chunk))
 
         # Fill remaining slots by semantic similarity
-        remaining = self.MAX_CHUNKS_FOR_RERANKING - len(selected)
+        remaining = max_chunks - len(selected)
 
         for _sim, chunk in scored:
             if remaining <= 0:
@@ -602,21 +670,33 @@ class SemanticReranker:
         self, kg_score: float, semantic_score: float
     ) -> float:
         """
-        Calculate weighted final score.
+        Calculate weighted final score using geometric mean.
 
-        Combines KG-based relevance score with semantic similarity score
-        using the configured weights.
+        Uses a weighted geometric mean so that both KG relevance and
+        semantic relevance must be present for a high score.  A near-zero
+        semantic score (cross-encoder says content is irrelevant) tanks
+        the result even if the KG score is high — preventing concept
+        name collisions (e.g. "Chelsea" the company vs "chelsea()" the
+        function) from dominating the ranking.
+
+        Formula: kg^KG_WEIGHT × semantic^SEMANTIC_WEIGHT
+
+        A small floor (1e-6) is applied to each input to avoid zero
+        products when one signal is legitimately absent.
 
         Args:
             kg_score: Score from knowledge graph (0-1)
             semantic_score: Score from semantic similarity (0-1)
 
         Returns:
-            Weighted final score
+            Weighted geometric mean score
 
         Validates: Requirement 3.2 - weighted scoring for relevance
         """
-        return (self._kg_weight * kg_score) + (self._semantic_weight * semantic_score)
+        floor = 1e-6
+        kg = max(kg_score, floor)
+        sem = max(semantic_score, floor)
+        return (kg ** self._kg_weight) * (sem ** self._semantic_weight)
 
     def _sort_by_kg_score(
         self, chunks: List[RetrievedChunk], top_k: int
@@ -694,5 +774,6 @@ class SemanticReranker:
             "cache_size": len(self._query_cache),
             "max_cache_size": self.QUERY_CACHE_SIZE,
             "cache_ttl_seconds": self.QUERY_CACHE_TTL_SECONDS,
-            "max_chunks_for_reranking": self.MAX_CHUNKS_FOR_RERANKING,
+            "max_chunks_cross_encoder": self.MAX_CHUNKS_FOR_CROSS_ENCODER,
+            "max_chunks_bi_encoder": self.MAX_CHUNKS_FOR_BI_ENCODER,
         }

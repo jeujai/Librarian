@@ -7,10 +7,10 @@ environments, including configuration validation and environment setup.
 
 import os
 import shutil
-from typing import Dict, Any, Optional, List
-from pathlib import Path
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 from ..config.config import get_settings
 
@@ -392,7 +392,7 @@ ENABLE_ANALYTICS=true
 UPLOAD_DIR=/app/uploads
 MEDIA_DIR=/app/media
 EXPORT_DIR=/app/exports
-MAX_FILE_SIZE=104857600
+MAX_FILE_SIZE=10737418240
 
 # =============================================================================
 # PROCESSING SETTINGS

@@ -32,6 +32,18 @@ class ModelServerSettings(BaseSettings):
         description="Maximum batch size for embedding generation"
     )
     
+    # Cross-encoder model configuration
+    cross_encoder_model: str = Field(
+        default="BAAI/bge-reranker-v2-m3",
+        env="CROSS_ENCODER_MODEL",
+        description="Cross-encoder model for reranking"
+    )
+    cross_encoder_device: str = Field(
+        default="cpu",
+        env="CROSS_ENCODER_DEVICE",
+        description="Device for cross-encoder model (cpu, cuda, mps)"
+    )
+
     # NLP model configuration
     nlp_model: str = Field(
         default="en_core_web_sm",
@@ -66,6 +78,7 @@ class ModelServerSettings(BaseSettings):
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+        extra = "ignore"
 
 
 # Global settings instance

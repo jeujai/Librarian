@@ -78,7 +78,7 @@ Upload a document for processing and indexing.
 **Content-Type**: `multipart/form-data`
 
 **Parameters:**
-- `file` (required): PDF or TXT file (max 100MB)
+- `file` (required): PDF or TXT file (no size limit)
 - `title` (optional): Document title
 - `description` (optional): Document description
 - `user_id` (optional): User identifier (defaults to "default_user")
@@ -110,7 +110,7 @@ curl -X POST "http://localhost:8000/api/documents/upload" \
 
 **Error Responses:**
 - `400 Bad Request`: Invalid file type or size
-- `413 Request Entity Too Large`: File exceeds 100MB limit
+- `413 Request Entity Too Large`: File exceeds size limit
 - `422 Unprocessable Entity`: Validation errors
 
 ### GET /api/documents/

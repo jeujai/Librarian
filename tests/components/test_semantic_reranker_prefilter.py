@@ -78,8 +78,9 @@ def test_property2_custom_weights_respected(kg_w, sem_w, kg_score, sem_score):
 
     For any pair of non-negative floats (kg_w, sem_w), a SemanticReranker
     initialized with those weights should compute
-    final_score = kg_w * kg_relevance_score + sem_w * semantic_score
-    for every chunk it reranks.
+    final_score = kg^kg_w × sem^sem_w (weighted geometric mean)
+    for every chunk it reranks.  A floor of 1e-6 is applied to each
+    input to avoid zero products.
 
     **Validates: Requirements 2.1, 2.2, 2.3**
     """
@@ -89,8 +90,11 @@ def test_property2_custom_weights_respected(kg_w, sem_w, kg_score, sem_score):
     assert reranker.kg_weight == kg_w
     assert reranker.semantic_weight == sem_w
 
-    # Verify final score formula
-    expected = kg_w * kg_score + sem_w * sem_score
+    # Verify final score formula (geometric mean with floor)
+    floor = 1e-6
+    kg = max(kg_score, floor)
+    sem = max(sem_score, floor)
+    expected = (kg ** kg_w) * (sem ** sem_w)
     actual = reranker._calculate_final_score(kg_score, sem_score)
     assert abs(actual - expected) < 1e-9, f"Expected {expected}, got {actual}"
 

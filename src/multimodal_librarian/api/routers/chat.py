@@ -420,7 +420,51 @@ async def handle_websocket_message(message_data: dict, connection_id: str, manag
                 connection_id=connection_id,
                 manager=manager,
             )
-            
+
+        # =================================================================
+        # Active Jobs Subscription (Requirements: 1.1, 1.2, 4.1)
+        # =================================================================
+
+        elif message_type == 'subscribe_active_jobs':
+            manager.subscribe_active_jobs(connection_id)
+            # Send initial snapshot of all active jobs
+            try:
+                from ..dependencies.services import get_active_jobs_dispatcher_optional
+                dispatcher = await get_active_jobs_dispatcher_optional()
+                if dispatcher is not None:
+                    await dispatcher.send_initial_snapshot(connection_id)
+                else:
+                    logger.warning("ActiveJobsDispatcher unavailable for initial snapshot")
+            except Exception as e:
+                logger.error(f"Error sending active jobs snapshot: {e}")
+
+        elif message_type == 'unsubscribe_active_jobs':
+            manager.unsubscribe_active_jobs(connection_id)
+
+        # =================================================================
+        # Paginated Telemetry Report (Requirements: 4.1, 4.2, 4.3, 4.4)
+        # =================================================================
+
+        elif message_type == 'throughput_report_page':
+            offset = message_data.get('offset', 0)
+            limit = message_data.get('limit', 10)
+
+            if not isinstance(offset, int) or offset < 0:
+                await manager.send_personal_message({
+                    'type': 'error',
+                    'message': 'Invalid offset: must be a non-negative integer',
+                }, connection_id)
+                return
+
+            if not isinstance(limit, int) or limit <= 0 or limit > 100:
+                await manager.send_personal_message({
+                    'type': 'error',
+                    'message': 'Invalid limit: must be a positive integer no greater than 100',
+                }, connection_id)
+                return
+
+            await _handle_throughput_report(connection_id, manager, offset=offset, limit=limit)
+
         else:
             # Log unknown message types but don't send error to avoid spamming UI
             logger.warning(f"Unknown message type from {connection_id}: {message_type}")
@@ -523,6 +567,350 @@ async def handle_resume_conversation(message_data: dict, connection_id: str, man
         await handle_start_conversation(connection_id, manager)
 
 
+async def _handle_status_report(connection_id: str, manager: ConnectionManager):
+    """Handle a status_report intent by generating and sending a processing status report.
+
+    Bypasses the RAG pipeline entirely. Manually resolves StatusReportService
+    dependencies (since we're outside FastAPI's DI context), generates the
+    report, and sends both the structured payload and a human-readable
+    assistant summary over WebSocket.
+
+    Also auto-subscribes the connection to receive live Active Jobs updates
+    so the report stays current without requiring manual refresh.
+
+    Requirements: 1.2, 3.1, 3.5, 4.1, 4.2, 4.4
+    """
+    try:
+        from ...services.status_report_service import StatusReportService
+        from ..dependencies.services import (
+            _status_report_service,
+            get_active_jobs_dispatcher_optional,
+            get_database_factory_optional,
+        )
+
+        # Auto-subscribe to active jobs updates for live progress
+        manager.subscribe_active_jobs(connection_id)
+        logger.info(f"Auto-subscribed {connection_id} to active jobs updates")
+
+        # Resolve StatusReportService manually — the DI provider uses
+        # Depends() which doesn't resolve outside a FastAPI request.
+        svc = _status_report_service
+        if svc is None:
+            factory = await get_database_factory_optional()
+            if factory is None:
+                raise RuntimeError("Database factory unavailable")
+            db_client = await factory.get_relational_client()
+            processing_svc = await get_processing_status_service_optional()
+            svc = StatusReportService(
+                db_client=db_client,
+                processing_status_service=processing_svc,
+            )
+            # Cache it for subsequent calls
+            import multimodal_librarian.api.dependencies.services as _dep
+            _dep._status_report_service = svc
+
+        # Generate the report
+        report = await svc.generate_report()
+
+        # Send structured processing_status_report message (Req 3.1)
+        try:
+            await manager.send_personal_message(
+                report.model_dump(mode="json"),
+                connection_id,
+            )
+        except Exception as send_err:
+            logger.error(f"Failed to send structured report: {send_err}")
+
+        # Build and send human-readable assistant summary (Req 3.5)
+        human_summary = svc.format_human_summary(
+            report.summary, report.jobs,
+            job_metadata_map=getattr(svc, "last_job_metadata_map", None),
+        )
+
+        # Add assistant summary to conversation history (Req 4.1)
+        manager.add_to_conversation_history(connection_id, "assistant", human_summary)
+
+        # Persist to conversation thread
+        thread_id = manager.get_thread_id(connection_id)
+        if thread_id:
+            await _persist_message(thread_id, human_summary, MessageType.SYSTEM)
+
+        await manager.send_personal_message({
+            'type': 'response',
+            'response': {
+                'text_content': human_summary,
+                'visualizations': [],
+                'knowledge_citations': [],
+            },
+            'metadata': {
+                'rag_enabled': False,
+                'status_report': True,
+            },
+        }, connection_id)
+
+        # Dismiss typing indicator (Req 4.2)
+        await manager.send_personal_message({
+            'type': 'processing_complete',
+        }, connection_id)
+
+    except Exception as e:
+        logger.error(f"Error generating status report: {e}")
+        error_msg = "Status information is temporarily unavailable."
+        manager.add_to_conversation_history(connection_id, "assistant", error_msg)
+        await manager.send_personal_message({
+            'type': 'response',
+            'response': {
+                'text_content': error_msg,
+                'visualizations': [],
+                'knowledge_citations': [],
+            },
+            'metadata': {
+                'rag_enabled': False,
+                'status_report': True,
+                'error': True,
+            },
+        }, connection_id)
+        await manager.send_personal_message({
+            'type': 'processing_complete',
+        }, connection_id)
+
+
+async def _handle_system_commands(connection_id: str, manager: ConnectionManager):
+    """Send a list of available system instrumentation commands."""
+    commands = [
+        ("Upload Processing Status", "What jobs are running?"),
+        ("Upload Telemetry", "Show me upload telemetry"),
+        ("Enrichment Report", "Show me the enrichments"),
+        ("Failed Uploads Report", "Show me failed uploads"),
+        ("System Instrumentation", "Show me available system instrumentation"),
+    ]
+
+    lines = ["**Available System Reports**", ""]
+    for label, prompt in commands:
+        lines.append(f'- {label} — `{prompt}`')
+
+    text = "\n".join(lines)
+
+    manager.add_to_conversation_history(connection_id, "assistant", text)
+
+    thread_id = manager.get_thread_id(connection_id)
+    if thread_id:
+        await _persist_message(thread_id, text, MessageType.SYSTEM)
+
+    # Send the human-readable list
+    await manager.send_personal_message({
+        'type': 'response',
+        'response': {
+            'text_content': text,
+            'visualizations': [],
+            'knowledge_citations': [],
+        },
+        'metadata': {'rag_enabled': False, 'system_commands': True},
+    }, connection_id)
+
+    # Send clickable suggestions via inline code elements (handled by frontend)
+    await manager.send_personal_message({
+        'type': 'processing_complete',
+    }, connection_id)
+
+
+async def _handle_throughput_report(connection_id: str, manager: ConnectionManager, offset: int = 0, limit: int = 10):
+    """Generate and send a processing throughput report over WebSocket."""
+    try:
+        from ...services.status_report_service import StatusReportService
+        from ..dependencies.services import (
+            _status_report_service,
+            get_database_factory_optional,
+        )
+
+        svc = _status_report_service
+        if svc is None:
+            factory = await get_database_factory_optional()
+            if factory is None:
+                raise RuntimeError("Database factory unavailable")
+            db_client = await factory.get_relational_client()
+            processing_svc = await get_processing_status_service_optional()
+            svc = StatusReportService(
+                db_client=db_client,
+                processing_status_service=processing_svc,
+            )
+            import multimodal_librarian.api.dependencies.services as _dep
+            _dep._status_report_service = svc
+
+        text, total_count = await svc.generate_throughput_report(offset=offset, limit=limit)
+        quality_data = getattr(svc, "last_throughput_quality_data", [])
+
+        manager.add_to_conversation_history(connection_id, "assistant", text)
+
+        thread_id = manager.get_thread_id(connection_id)
+        if thread_id:
+            await _persist_message(thread_id, text, MessageType.SYSTEM)
+
+        await manager.send_personal_message({
+            'type': 'response',
+            'response': {
+                'text_content': text,
+                'visualizations': [],
+                'knowledge_citations': [],
+            },
+            'metadata': {
+                'rag_enabled': False,
+                'throughput_report': True,
+                'quality_gate_data': quality_data,
+                'total_count': total_count,
+                'offset': offset,
+                'limit': limit,
+            },
+        }, connection_id)
+
+        await manager.send_personal_message({
+            'type': 'processing_complete',
+        }, connection_id)
+
+    except Exception as e:
+        logger.error(f"Error generating throughput report: {e}")
+        error_msg = "Throughput information is temporarily unavailable."
+        manager.add_to_conversation_history(connection_id, "assistant", error_msg)
+        await manager.send_personal_message({
+            'type': 'response',
+            'response': {
+                'text_content': error_msg,
+                'visualizations': [],
+                'knowledge_citations': [],
+            },
+            'metadata': {'rag_enabled': False, 'error': True},
+        }, connection_id)
+        await manager.send_personal_message({
+            'type': 'processing_complete',
+        }, connection_id)
+
+
+async def _handle_enrichment_report(connection_id: str, manager: ConnectionManager):
+    """Generate and send an enrichment status report over WebSocket."""
+    try:
+        from ...services.status_report_service import StatusReportService
+        from ..dependencies.services import (
+            _status_report_service,
+            get_database_factory_optional,
+        )
+
+        svc = _status_report_service
+        if svc is None:
+            factory = await get_database_factory_optional()
+            if factory is None:
+                raise RuntimeError("Database factory unavailable")
+            db_client = await factory.get_relational_client()
+            processing_svc = await get_processing_status_service_optional()
+            svc = StatusReportService(
+                db_client=db_client,
+                processing_status_service=processing_svc,
+            )
+            import multimodal_librarian.api.dependencies.services as _dep
+            _dep._status_report_service = svc
+
+        text = await svc.generate_enrichment_report()
+
+        manager.add_to_conversation_history(connection_id, "assistant", text)
+
+        thread_id = manager.get_thread_id(connection_id)
+        if thread_id:
+            await _persist_message(thread_id, text, MessageType.SYSTEM)
+
+        await manager.send_personal_message({
+            'type': 'response',
+            'response': {
+                'text_content': text,
+                'visualizations': [],
+                'knowledge_citations': [],
+            },
+            'metadata': {'rag_enabled': False, 'enrichment_report': True},
+        }, connection_id)
+
+        await manager.send_personal_message({
+            'type': 'processing_complete',
+        }, connection_id)
+
+    except Exception as e:
+        logger.error(f"Error generating enrichment report: {e}")
+        error_msg = "Enrichment information is temporarily unavailable."
+        manager.add_to_conversation_history(connection_id, "assistant", error_msg)
+        await manager.send_personal_message({
+            'type': 'response',
+            'response': {
+                'text_content': error_msg,
+                'visualizations': [],
+                'knowledge_citations': [],
+            },
+            'metadata': {'rag_enabled': False, 'error': True},
+        }, connection_id)
+        await manager.send_personal_message({
+            'type': 'processing_complete',
+        }, connection_id)
+
+
+async def _handle_failed_uploads_report(connection_id: str, manager: ConnectionManager):
+    """Generate and send a failed uploads report over WebSocket."""
+    try:
+        from ...services.status_report_service import StatusReportService
+        from ..dependencies.services import (
+            _status_report_service,
+            get_database_factory_optional,
+        )
+
+        svc = _status_report_service
+        if svc is None:
+            factory = await get_database_factory_optional()
+            if factory is None:
+                raise RuntimeError("Database factory unavailable")
+            db_client = await factory.get_relational_client()
+            processing_svc = await get_processing_status_service_optional()
+            svc = StatusReportService(
+                db_client=db_client,
+                processing_status_service=processing_svc,
+            )
+            import multimodal_librarian.api.dependencies.services as _dep
+            _dep._status_report_service = svc
+
+        text = await svc.generate_failed_uploads_report()
+
+        manager.add_to_conversation_history(connection_id, "assistant", text)
+
+        thread_id = manager.get_thread_id(connection_id)
+        if thread_id:
+            await _persist_message(thread_id, text, MessageType.SYSTEM)
+
+        await manager.send_personal_message({
+            'type': 'response',
+            'response': {
+                'text_content': text,
+                'visualizations': [],
+                'knowledge_citations': [],
+            },
+            'metadata': {'rag_enabled': False, 'failed_uploads_report': True},
+        }, connection_id)
+
+        await manager.send_personal_message({
+            'type': 'processing_complete',
+        }, connection_id)
+
+    except Exception as e:
+        logger.error(f"Error generating failed uploads report: {e}")
+        error_msg = "Failed uploads information is temporarily unavailable."
+        manager.add_to_conversation_history(connection_id, "assistant", error_msg)
+        await manager.send_personal_message({
+            'type': 'response',
+            'response': {
+                'text_content': error_msg,
+                'visualizations': [],
+                'knowledge_citations': [],
+            },
+            'metadata': {'rag_enabled': False, 'error': True},
+        }, connection_id)
+        await manager.send_personal_message({
+            'type': 'processing_complete',
+        }, connection_id)
+
+
 async def handle_chat_message(message_data: dict, connection_id: str, manager: ConnectionManager):
     """Handle chat message from user with RAG integration and streaming support."""
     thread_id = manager.get_thread_id(connection_id)
@@ -557,6 +945,33 @@ async def handle_chat_message(message_data: dict, connection_id: str, manager: C
             'message': 'Processing your message...'
         }, connection_id)
         
+        # Classify intent before entering the RAG pipeline so we can
+        # intercept status_report requests and bypass RAG entirely.
+        if manager.rag_available and manager.rag_service and hasattr(manager.rag_service, 'query_processor'):
+            try:
+                conversation_context = manager.get_conversation_context(connection_id)
+                intent, _ = await manager.rag_service.query_processor._classify_query_intent(
+                    user_message, conversation_context
+                )
+                if intent == "status_report":
+                    await _handle_status_report(connection_id, manager)
+                    return
+                if intent == "throughput_report":
+                    await _handle_throughput_report(connection_id, manager)
+                    return
+                if intent == "enrichment_report":
+                    await _handle_enrichment_report(connection_id, manager)
+                    return
+                if intent == "failed_uploads_report":
+                    await _handle_failed_uploads_report(connection_id, manager)
+                    return
+                if intent == "system_commands":
+                    await _handle_system_commands(connection_id, manager)
+                    return
+            except Exception as e:
+                logger.warning(f"Intent classification for status_report check failed: {e}")
+                # Fall through to normal RAG flow
+
         # Try RAG-powered response first
         if manager.rag_available and manager.rag_service:
             try:
@@ -1295,9 +1710,12 @@ def create_export_content(thread: ConversationThread) -> MultimediaResponse:
 async def upload_file(file: UploadFile = File(...)):
     """Handle file upload through chat interface."""
     try:
-        # Validate file
-        if file.size > 100 * 1024 * 1024:  # 100MB limit
-            raise HTTPException(status_code=413, detail="File too large")
+        # Validate file size against config
+        from ...config.config import get_settings
+        settings = get_settings()
+        if file.size > settings.max_file_size:
+            max_mb = settings.max_file_size // (1024 * 1024)
+            raise HTTPException(status_code=413, detail=f"File too large (max {max_mb}MB)")
         
         # Read file content
         content = await file.read()

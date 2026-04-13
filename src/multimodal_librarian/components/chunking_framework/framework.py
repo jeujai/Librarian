@@ -23,7 +23,7 @@ from ...models.chunking import (
     ValidationResult,
 )
 from ...models.core import BridgeStrategy, ContentType, DocumentContent, GapType
-from .bridge_generator import SmartBridgeGenerator
+from .bridge_generator import BatchGenerationStats, SmartBridgeGenerator
 from .config_manager import DomainConfigurationManager
 from .content_analyzer import AutomatedContentAnalyzer
 from .fallback_system import FallbackConfig, IntelligentFallbackSystem
@@ -354,7 +354,8 @@ class GenericMultiLevelChunkingFramework:
         }
     
     def generate_bridges_for_document(self, bridge_generation_data: Dict[str, Any],
-                                     progress_callback: callable = None) -> List[BridgeChunk]:
+                                     progress_callback: callable = None,
+                                     storage_callback: callable = None) -> Tuple[List[BridgeChunk], BatchGenerationStats]:
         """Generate bridges from previously serialized bridge data.
         
         This is the slow path (~550s) that can run in parallel with
@@ -362,9 +363,14 @@ class GenericMultiLevelChunkingFramework:
         
         Args:
             bridge_generation_data: Dict from processing_stats['bridge_generation_data']
+            progress_callback: Optional callback for progress reporting
+            storage_callback: Optional async callback for incremental storage.
+                Called after each batch of bridges is generated and validated.
+                Signature: async def callback(bridges: List[BridgeChunk]) -> None
+                This enables incremental storage to preserve progress on failure.
             
         Returns:
-            List of BridgeChunk objects
+            Tuple of (List of BridgeChunk objects, BatchGenerationStats)
         """
         from ...models.core import BridgeStrategy, GapType
         
@@ -387,7 +393,16 @@ class GenericMultiLevelChunkingFramework:
         
         if not bridge_needed_data:
             logger.info("No bridges needed")
-            return []
+            empty_stats = BatchGenerationStats(
+                total_requests=0,
+                successful_generations=0,
+                failed_generations=0,
+                total_tokens_used=0,
+                total_cost_estimate=0.0,
+                average_generation_time=0.0,
+                batch_processing_time=0.0,
+            )
+            return ([], empty_stats)
         
         # Reconstruct boundary pairs and gap analyses
         boundary_pairs = []
@@ -421,12 +436,13 @@ class GenericMultiLevelChunkingFramework:
         
         logger.info(f"Generating {len(boundary_pairs)} bridges (deferred)")
         
-        raw_bridges = self.bridge_generator.batch_generate_bridges(
+        raw_bridges, batch_stats = self.bridge_generator.batch_generate_bridges(
             boundary_pairs,
             content_type=content_type,
             domain_config=domain_config,
             bisected_concepts_per_boundary=bisected_concepts_per_boundary,
             progress_callback=progress_callback,
+            storage_callback=storage_callback,
         )
         
         # Validate and apply fallbacks
@@ -542,7 +558,7 @@ class GenericMultiLevelChunkingFramework:
                 bridge.metadata['adjacent_chunk_ids'] = bridge.source_chunks
         
         logger.info(f"Generated {len(bridges)} bridges (deferred)")
-        return bridges
+        return (bridges, batch_stats)
 
     def process_document(self, document: DocumentContent, 
                         document_id: Optional[str] = None,
@@ -764,7 +780,7 @@ class GenericMultiLevelChunkingFramework:
 
             logger.info(f"Batch generating {len(boundary_pairs)} bridges (batch_size={self.bridge_generator.batch_size})")
             
-            raw_bridges = self.bridge_generator.batch_generate_bridges(
+            raw_bridges, _batch_stats = self.bridge_generator.batch_generate_bridges(
                 boundary_pairs,
                 content_type=content_profile.content_type,
                 domain_config=domain_config,

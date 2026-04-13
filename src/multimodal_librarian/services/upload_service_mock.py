@@ -55,8 +55,9 @@ class UploadServiceMock:
         Raises:
             ValidationError: If validation fails
         """
-        # Check file size (max 100MB)
-        max_size = 100 * 1024 * 1024  # 100MB
+        # Check file size against config
+        from ..config.config import get_settings
+        max_size = get_settings().max_file_size
         if len(file_data) > max_size:
             raise ValidationError(f"File too large: {len(file_data)} bytes (max: {max_size})")
         

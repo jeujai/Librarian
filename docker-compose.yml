@@ -12,6 +12,7 @@ services:
     environment:
       - EMBEDDING_MODEL=BAAI/bge-base-en-v1.5
       - NLP_MODEL=en_core_web_sm
+      - CROSS_ENCODER_MODEL=BAAI/bge-reranker-v2-m3
       - LOG_LEVEL=INFO
       - PRELOAD_MODELS=true
     volumes:
@@ -20,7 +21,7 @@ services:
     networks:
       - app-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8001/health/ready"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8001/health/ready" ]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -87,7 +88,7 @@ services:
       - SECRET_KEY=dev-secret-key-change-in-production
       - REQUIRE_AUTH=false
       - RATE_LIMIT_PER_MINUTE=100
-      - WEBSOCKET_TIMEOUT=300
+      - WEBSOCKET_TIMEOUT=3600  # 1 hour for large uploads
 
       # External APIs (set these in .env file)
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
@@ -102,7 +103,7 @@ services:
       - UPLOAD_DIR=/app/uploads
       - MEDIA_DIR=/app/media
       - EXPORT_DIR=/app/exports
-      - MAX_FILE_SIZE=104857600
+      - MAX_FILE_SIZE=10737418240  # 10GB - effectively unlimited
 
       # Processing settings
       - CHUNK_SIZE=512
@@ -115,7 +116,7 @@ services:
 
       # Model Server configuration
       - MODEL_SERVER_URL=http://model-server:8001
-      - MODEL_SERVER_TIMEOUT=30
+      - MODEL_SERVER_TIMEOUT=120
       - MODEL_SERVER_ENABLED=true
 
       # Ollama Configuration (Local LLM for bridge generation)
@@ -148,19 +149,8 @@ services:
       - ./scripts:/app/scripts
       - ./yago-dumps:/tmp/yago-dumps
     # Override CMD to disable reload (prevents stuck reload loops from log file changes)
-    command:
-      [
-        "python",
-        "-m",
-        "uvicorn",
-        "multimodal_librarian.main:app",
-        "--host",
-        "0.0.0.0",
-        "--port",
-        "8000",
-        "--ws-max-size",
-        "157286400",
-      ]
+    # ws-max-size set to 16GB to support large file uploads (10GB file + base64 overhead)
+    command: [ "python", "-m", "uvicorn", "multimodal_librarian.main:app", "--host", "0.0.0.0", "--port", "8000", "--ws-max-size", "17179869184" ]
     depends_on:
       model-server:
         condition: service_healthy
@@ -174,7 +164,7 @@ services:
     networks:
       - app-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health/simple"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health/simple" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -197,7 +187,7 @@ services:
     networks:
       - app-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d multimodal_librarian"]
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d multimodal_librarian" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -224,7 +214,7 @@ services:
   # Milvus vector database for embeddings
   milvus:
     image: milvusdb/milvus:v2.3.4
-    command: ["milvus", "run", "standalone"]
+    command: [ "milvus", "run", "standalone" ]
     logging:
       driver: "json-file"
       options:
@@ -257,7 +247,7 @@ services:
     networks:
       - app-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      test: [ "CMD", "curl", "-f", "http://localhost:9091/healthz" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -305,7 +295,7 @@ services:
     networks:
       - app-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: [ "CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -318,10 +308,11 @@ services:
       - NEO4J_PLUGINS=["apoc", "graph-data-science"]
       - NEO4J_dbms_security_procedures_unrestricted=apoc.*,gds.*
       - NEO4J_dbms_security_procedures_allowlist=apoc.*,gds.*
-      # Memory optimization — capped to prevent OOM under Docker Desktop
-      - NEO4J_dbms_memory_heap_initial__size=1G
-      - NEO4J_dbms_memory_heap_max__size=3G
-      - NEO4J_dbms_memory_pagecache_size=1G
+      # Memory optimization — sized for UMLS expanded vocabulary loading
+      # (SNOMEDCT_US, MSH, ICD10CM, RXNORM, LNC, HPO + NDF-RT, ICD10PCS, ATC)
+      - NEO4J_dbms_memory_heap_initial__size=2G
+      - NEO4J_dbms_memory_heap_max__size=6G
+      - NEO4J_dbms_memory_pagecache_size=3G
       # Query optimization
       - NEO4J_dbms_query__cache__size=1000
       - NEO4J_cypher_min__replan__interval=10s
@@ -346,7 +337,7 @@ services:
     networks:
       - app-network
     healthcheck:
-      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "password", "RETURN 1"]
+      test: [ "CMD", "cypher-shell", "-u", "neo4j", "-p", "password", "RETURN 1" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -356,16 +347,7 @@ services:
   redis:
     image: redis:7-alpine
     command: >
-      redis-server 
-      --appendonly yes 
-      --maxmemory 512mb 
-      --maxmemory-policy allkeys-lru
-      --tcp-keepalive 300
-      --timeout 0
-      --tcp-backlog 511
-      --save ""
-      --io-threads 2
-      --io-threads-do-reads yes
+      redis-server  --appendonly yes  --maxmemory 512mb  --maxmemory-policy allkeys-lru --tcp-keepalive 300 --timeout 0 --tcp-backlog 511 --save "" --io-threads 2 --io-threads-do-reads yes
     volumes:
       - redis_data:/data
     ports:
@@ -374,7 +356,7 @@ services:
     networks:
       - app-network
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -390,15 +372,7 @@ services:
       options:
         max-size: "100m"
         max-file: "3"
-    command:
-      [
-        "celery",
-        "-A",
-        "src.multimodal_librarian.services.celery_service",
-        "worker",
-        "--loglevel=info",
-        "--queues=document_processing,pdf_processing,chunking,vector_storage,knowledge_graph,enrichment",
-      ]
+    command: [ "celery", "-A", "src.multimodal_librarian.services.celery_service", "worker", "--loglevel=info", "--queues=document_processing,pdf_processing,chunking,vector_storage,knowledge_graph,enrichment" ]
     environment:
       # Celery broker configuration
       - CELERY_BROKER_URL=redis://redis:6379/0
@@ -453,7 +427,7 @@ services:
 
       # Model Server configuration
       - MODEL_SERVER_URL=http://model-server:8001
-      - MODEL_SERVER_TIMEOUT=30
+      - MODEL_SERVER_TIMEOUT=120
       - MODEL_SERVER_ENABLED=true
 
       # Ollama Configuration (Local LLM for bridge generation)
@@ -462,6 +436,7 @@ services:
       - OLLAMA_MODEL=llama3.2:3b
       - OLLAMA_ENABLED=true
       - OLLAMA_TIMEOUT=120.0
+      - OLLAMA_NUM_PARALLEL=14
       - BRIDGE_GENERATION_PROVIDER=ollama
 
       # External APIs (for Gemini fallback)
@@ -492,11 +467,7 @@ services:
     networks:
       - app-network
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "celery -A src.multimodal_librarian.services.celery_service inspect ping -d celery@$$HOSTNAME || exit 0",
-        ]
+      test: [ "CMD-SHELL", "celery -A src.multimodal_librarian.services.celery_service inspect ping -d celery@$$HOSTNAME || exit 0" ]
       interval: 60s
       timeout: 30s
       retries: 3

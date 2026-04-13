@@ -4,10 +4,11 @@ Basic presigned URL generation for secure file uploads/downloads
 This module provides simple presigned URL functionality for the learning project.
 """
 
-import os
 import logging
-from typing import Optional, Dict, Any
+import os
 from datetime import datetime, timedelta
+from typing import Any, Dict, Optional
+
 import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
 
@@ -41,7 +42,7 @@ class PresignedUrlGenerator:
         s3_key: str, 
         expiration: int = 3600,
         content_type: Optional[str] = None,
-        max_file_size: int = 100 * 1024 * 1024  # 100MB default
+        max_file_size: Optional[int] = None  # Defaults to config setting
     ) -> Optional[Dict[str, Any]]:
         """
         Generate a presigned URL for file upload
@@ -50,11 +51,16 @@ class PresignedUrlGenerator:
             s3_key: S3 object key where file will be stored
             expiration: URL expiration time in seconds (default: 1 hour)
             content_type: Expected content type
-            max_file_size: Maximum file size in bytes
+            max_file_size: Maximum file size in bytes (defaults to config setting)
             
         Returns:
             Dictionary with presigned URL and fields, or None if failed
         """
+        # Use config default if not specified
+        if max_file_size is None:
+            from ..config.config import get_settings
+            max_file_size = get_settings().max_file_size
+        
         try:
             # Conditions for the upload
             conditions = [

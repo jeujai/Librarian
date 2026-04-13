@@ -61,6 +61,8 @@ class QueryTermCoverageResult:
     # contains all key terms, indicating scattered matches.
     has_cooccurrence_gap: bool = False
     key_nouns: List[str] = field(default_factory=list)
+    adaptive_threshold: float = 1.0
+    detected_domain: Optional[str] = None
 
 
 @dataclass
@@ -243,11 +245,70 @@ def analyze_concept_specificity(
     )
 
 
+def compute_adaptive_threshold(
+    proper_noun_count: int,
+    domain: Optional[str] = None,
+    base_threshold_floor: float = 0.70,
+    medical_threshold: float = 0.95,
+    legal_threshold: float = 0.90,
+    small_query_noun_limit: int = 2,
+) -> float:
+    """Compute the adaptive coverage threshold.
+
+    For queries with few proper nouns (≤ ``small_query_noun_limit``),
+    100 % coverage is required.  As the noun count grows the
+    threshold decreases linearly, flooring at
+    ``base_threshold_floor``.  Domain elevation raises the
+    floor for medical and legal queries.
+
+    Returns a float clamped to ``[0.0, 1.0]``.
+    """
+    if proper_noun_count <= small_query_noun_limit:
+        threshold = 1.0
+    else:
+        threshold = max(
+            base_threshold_floor,
+            1.0 - (proper_noun_count - small_query_noun_limit) * 0.05,
+        )
+
+    # Domain elevation
+    if domain == "medical":
+        threshold = max(threshold, medical_threshold)
+    elif domain == "legal":
+        threshold = max(threshold, legal_threshold)
+
+    # Clamp to [0.0, 1.0]
+    return max(0.0, min(1.0, threshold))
+
+
+def compute_chunk_noun_score(
+    chunk_content: str,
+    key_nouns: List[str],
+) -> float:
+    """Fraction of *key_nouns* found in *chunk_content*.
+
+    Uses case-insensitive substring matching.  Returns ``1.0``
+    when *key_nouns* is empty.
+    """
+    if not key_nouns:
+        return 1.0
+    content_lower = chunk_content.lower()
+    found = sum(
+        1 for noun in key_nouns if noun.lower() in content_lower
+    )
+    return found / len(key_nouns)
+
+
 def analyze_query_term_coverage(
     query: str,
     concept_matches: List[Dict[str, Any]],
     spacy_nlp: Optional[Any] = None,
     chunks: Optional[List[RetrievedChunk]] = None,
+    domain: Optional[str] = None,
+    base_threshold_floor: float = 0.70,
+    medical_threshold: float = 0.95,
+    legal_threshold: float = 0.90,
+    small_query_noun_limit: int = 2,
 ) -> QueryTermCoverageResult:
     """Check if the query's proper nouns are covered in results.
 
@@ -269,10 +330,10 @@ def analyze_query_term_coverage(
     Additionally performs a **co-occurrence check** using spaCy
     POS tagging.  When the query contains 2+ PROPN tokens
     (e.g. "President" and "Venezuela"), the function checks
-    whether any single chunk contains ALL of them.  If no
-    chunk has all key proper nouns together, the results are
-    likely incidental matches (each term matched a different
-    book) rather than genuinely relevant content.
+    whether any single chunk achieves a noun score meeting or
+    exceeding the adaptive threshold.  If no chunk does, the
+    results are likely incidental matches rather than genuinely
+    relevant content.
 
     If spaCy is unavailable or the query contains no named
     entities, the signal is indeterminate (no gap detected).
@@ -283,6 +344,13 @@ def analyze_query_term_coverage(
         spacy_nlp: Pre-loaded spaCy Language model, or None.
         chunks: Returned chunks to verify content-level coverage.
             When None, only concept-level check is performed.
+        domain: Detected domain string (e.g. ``"medical"``,
+            ``"legal"``) or None for general queries.
+        base_threshold_floor: Minimum adaptive threshold.
+        medical_threshold: Minimum threshold for medical domain.
+        legal_threshold: Minimum threshold for legal domain.
+        small_query_noun_limit: Noun count at or below which
+            100 % coverage is required.
 
     Returns:
         QueryTermCoverageResult with proper nouns found,
@@ -299,6 +367,16 @@ def analyze_query_term_coverage(
 
     if not proper_nouns:
         return QueryTermCoverageResult()
+
+    # Compute adaptive threshold based on noun count and domain
+    adaptive_thresh = compute_adaptive_threshold(
+        proper_noun_count=len(proper_nouns),
+        domain=domain,
+        base_threshold_floor=base_threshold_floor,
+        medical_threshold=medical_threshold,
+        legal_threshold=legal_threshold,
+        small_query_noun_limit=small_query_noun_limit,
+    )
 
     # Build a lowercase list of all concept names
     # for substring matching
@@ -346,8 +424,8 @@ def analyze_query_term_coverage(
 
     total = len(proper_nouns)
     ratio = len(covered) / total if total else 1.0
-    # Gap exists when at least one proper noun is missing
-    has_gap = len(uncovered) > 0
+    # Gap exists when coverage ratio falls below adaptive threshold
+    has_gap = ratio < adaptive_thresh
 
     # --- Co-occurrence check using PROPN POS tags + noun chunk
     # PROPN tokens ---
@@ -377,19 +455,36 @@ def analyze_query_term_coverage(
 
     if len(propn_tokens) >= 2 and chunk_contents_lower:
         key_nouns = sorted(propn_tokens)
-        key_nouns_lower = [k.lower() for k in key_nouns]
 
-        any_chunk_has_all = any(
-            all(kn in cc for kn in key_nouns_lower)
+        # Adaptive co-occurrence: gap iff no chunk achieves
+        # a noun score >= adaptive threshold
+        best_score = max(
+            compute_chunk_noun_score(cc, key_nouns)
             for cc in chunk_contents_lower
         )
-        if not any_chunk_has_all:
+        if best_score < adaptive_thresh:
             has_cooccurrence_gap = True
             logger.info(
-                "Co-occurrence gap: no chunk contains all "
-                "key nouns %s",
+                "Co-occurrence gap: no chunk meets adaptive "
+                "threshold %.2f for key nouns %s "
+                "(best score=%.2f)",
+                adaptive_thresh,
                 key_nouns,
+                best_score,
             )
+
+    logger.info(
+        "Adaptive coverage: proper_noun_count=%d "
+        "adaptive_threshold=%.2f coverage_ratio=%.2f "
+        "detected_domain=%s has_proper_noun_gap=%s "
+        "has_cooccurrence_gap=%s",
+        len(proper_nouns),
+        adaptive_thresh,
+        ratio,
+        domain,
+        has_gap,
+        has_cooccurrence_gap,
+    )
 
     return QueryTermCoverageResult(
         proper_nouns=proper_nouns,
@@ -399,6 +494,8 @@ def analyze_query_term_coverage(
         has_proper_noun_gap=has_gap,
         has_cooccurrence_gap=has_cooccurrence_gap,
         key_nouns=key_nouns,
+        adaptive_threshold=adaptive_thresh,
+        detected_domain=domain,
     )
 
 
@@ -413,27 +510,84 @@ class RelevanceDetector:
     Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 4.8
     """
 
+    # Domain keyword patterns for extracting domain from query text.
+    # Mirrors the patterns in QueryProcessor._extract_context_keywords().
+    _DOMAIN_PATTERNS: Dict[str, List[str]] = {
+        "medical": [
+            "patient", "treatment", "diagnosis", "medical",
+            "health", "disease", "symptom",
+        ],
+        "legal": [
+            "law", "legal", "court", "statute", "regulation",
+            "attorney", "plaintiff", "defendant",
+        ],
+        "technical": [
+            "algorithm", "code", "programming", "software",
+            "system", "api", "database",
+        ],
+        "academic": [
+            "research", "study", "theory", "hypothesis",
+            "methodology",
+        ],
+        "business": [
+            "market", "revenue", "strategy", "investment",
+            "profit",
+        ],
+    }
+
     def __init__(
         self,
         spread_threshold: float = 0.05,
         variance_threshold: float = 0.001,
         specificity_threshold: float = 0.3,
         spacy_nlp: Optional[Any] = None,
+        base_threshold_floor: float = 0.70,
+        medical_threshold: float = 0.95,
+        legal_threshold: float = 0.90,
+        small_query_noun_limit: int = 2,
     ) -> None:
         self.spread_threshold = spread_threshold
         self.variance_threshold = variance_threshold
         self.specificity_threshold = specificity_threshold
         self.spacy_nlp = spacy_nlp
+        self.base_threshold_floor = base_threshold_floor
+        self.medical_threshold = medical_threshold
+        self.legal_threshold = legal_threshold
+        self.small_query_noun_limit = small_query_noun_limit
 
         logger.info(
             "RelevanceDetector initialised — "
             "spread=%.4f, variance=%.5f, "
-            "specificity=%.2f, spacy=%s",
+            "specificity=%.2f, spacy=%s, "
+            "adaptive_floor=%.2f, medical=%.2f, "
+            "legal=%.2f, small_noun_limit=%d",
             spread_threshold,
             variance_threshold,
             specificity_threshold,
             "loaded" if spacy_nlp else "None",
+            base_threshold_floor,
+            medical_threshold,
+            legal_threshold,
+            small_query_noun_limit,
         )
+
+    def _detect_domain(self, query: str) -> Optional[str]:
+        """Extract domain from query text using keyword patterns.
+
+        Mirrors the domain detection logic in
+        ``QueryProcessor._extract_context_keywords()`` so that
+        the relevance detector can determine domain independently
+        without requiring the query processor's output.
+
+        Returns:
+            Domain string (e.g. ``"medical"``, ``"legal"``)
+            or ``None`` when no domain is detected.
+        """
+        query_lower = query.lower()
+        for domain, terms in self._DOMAIN_PATTERNS.items():
+            if any(term in query_lower for term in terms):
+                return domain
+        return None
 
     def evaluate(
         self,
@@ -472,6 +626,13 @@ class RelevanceDetector:
             query_decomposition.concept_matches,
             self.spacy_nlp,
             chunks,
+            domain=self._detect_domain(
+                query_decomposition.original_query,
+            ),
+            base_threshold_floor=self.base_threshold_floor,
+            medical_threshold=self.medical_threshold,
+            legal_threshold=self.legal_threshold,
+            small_query_noun_limit=self.small_query_noun_limit,
         )
 
         # Count how many signals fired
@@ -575,13 +736,21 @@ class RelevanceDetector:
         self,
         chunks: List[RetrievedChunk],
         query: str,
+        adaptive_threshold: float = 1.0,
     ) -> Optional[List[RetrievedChunk]]:
         """Pre-reranking filter: keep only chunks whose content
-        contains at least one of the query's proper nouns.
+        contains the query's proper nouns, using a three-tier
+        strategy.
 
         Uses spaCy NER to extract named entities from *query*,
         then does a case-insensitive substring match against
         each chunk's ``content``.
+
+        Three-tier filter:
+        1. Prefer chunks containing ALL key terms.
+        2. Fall back to chunks where the fraction of matched
+           key terms >= ``adaptive_threshold``.
+        3. Fall back to chunks containing ANY key term.
 
         Returns
         -------
@@ -592,7 +761,7 @@ class RelevanceDetector:
             - query has no proper nouns
             - filtered set is empty (fall back to unfiltered)
 
-        Requirements: 7.1, 7.3, 7.4, 7.6, 7.7, 7.9
+        Requirements: 5.1, 5.2, 5.3, 7.1, 7.3, 7.4, 7.6, 7.7, 7.9
         """
         if self.spacy_nlp is None or not query:
             return None
@@ -625,11 +794,13 @@ class RelevanceDetector:
             return None
 
         key_terms_lower = [kt.lower() for kt in key_terms]
+        total_key_terms = len(key_terms_lower)
         before_count = len(chunks)
 
-        # Two-tier filter:
+        # Three-tier filter:
         # 1. Prefer chunks containing ALL key terms
-        # 2. Fall back to chunks containing ANY key term
+        # 2. Fall back to chunks meeting adaptive threshold fraction
+        # 3. Fall back to chunks containing ANY key term
         filtered_all = [
             c for c in chunks
             if all(
@@ -642,25 +813,45 @@ class RelevanceDetector:
             filtered = filtered_all
             match_mode = "all"
         else:
-            filtered = [
+            # Tier 2: chunks where matched fraction >= adaptive_threshold
+            filtered_threshold = [
                 c for c in chunks
-                if any(
-                    kt in (c.content or "").lower()
-                    for kt in key_terms_lower
+                if (
+                    sum(
+                        1 for kt in key_terms_lower
+                        if kt in (c.content or "").lower()
+                    )
+                    / total_key_terms
                 )
+                >= adaptive_threshold
             ]
-            match_mode = "any"
+
+            if filtered_threshold:
+                filtered = filtered_threshold
+                match_mode = "threshold"
+            else:
+                # Tier 3: any key term present
+                filtered = [
+                    c for c in chunks
+                    if any(
+                        kt in (c.content or "").lower()
+                        for kt in key_terms_lower
+                    )
+                ]
+                match_mode = "any"
 
         after_count = len(filtered)
         retained_ids = [c.chunk_id for c in filtered]
 
         logger.info(
             "Proper-noun chunk filter: %d → %d chunks "
-            "(key_terms=%s, match_mode=%s, retained_ids=%s)",
+            "(key_terms=%s, match_mode=%s, adaptive_threshold=%.2f, "
+            "retained_ids=%s)",
             before_count,
             after_count,
             sorted(key_terms),
             match_mode,
+            adaptive_threshold,
             retained_ids,
         )
 

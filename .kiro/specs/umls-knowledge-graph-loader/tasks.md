@@ -6,8 +6,8 @@ Extend the existing UMLS loading infrastructure with a new RRF parser module, UM
 
 ## Tasks
 
-- [ ] 1. Create RRF Parser module with dataclasses and streaming parsers
-  - [ ] 1.1 Create `src/multimodal_librarian/components/knowledge_graph/rrf_parser.py` with dataclasses and parser functions
+- [x] 1. Create RRF Parser module with dataclasses and streaming parsers
+  - [x] 1.1 Create `src/multimodal_librarian/components/knowledge_graph/rrf_parser.py` with dataclasses and parser functions
     - Define `MRCONSORow`, `MRRELRow`, `MRSTYRow`, `MRDEFRow` dataclasses
     - Implement `parse_mrconso(path, source_vocabs)` generator: stream line-by-line, split on `|`, filter LAT="ENG" and optional SAB filter, yield `MRCONSORow`, log warning with line number for malformed rows
     - Implement `parse_mrrel(path, source_vocabs)` generator: stream line-by-line, filter optional SAB, yield `MRRELRow`, log malformed rows
@@ -44,16 +44,16 @@ Extend the existing UMLS loading infrastructure with a new RRF parser module, UM
     - Test optional files (MRDEF, MRSTY, SRDEF) reported as optional, not required
     - **Validates: Requirements 2.7**
 
-- [ ] 2. Checkpoint - Ensure all RRF parser tests pass
+- [x] 2. Checkpoint - Ensure all RRF parser tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 3. Extend UMLSLoader with definitions, enhanced cleanup, config check, and SAME_AS stats
-  - [ ] 3.1 Add `same_as_count` field to `UMLSStats` dataclass and update `get_umls_stats` to query SAME_AS edge count
+- [x] 3. Extend UMLSLoader with definitions, enhanced cleanup, config check, and SAME_AS stats
+  - [x] 3.1 Add `same_as_count` field to `UMLSStats` dataclass and update `get_umls_stats` to query SAME_AS edge count
     - Add `same_as_count: int` field to `UMLSStats` (default 0)
     - Add Cypher query `MATCH ()-[r:SAME_AS]->() RETURN count(r) AS count` in `get_umls_stats`
     - _Requirements: 1.5_
 
-  - [ ] 3.2 Implement `load_definitions` method on `UMLSLoader`
+  - [x] 3.2 Implement `load_definitions` method on `UMLSLoader`
     - Add `async def load_definitions(self, mrdef_path, source_vocabs, batch_size=5000) -> LoadResult`
     - Use `parse_mrdef` from `rrf_parser` to stream definitions
     - Aggregate first definition per CUI (after vocab filtering)
@@ -61,14 +61,14 @@ Extend the existing UMLS loading infrastructure with a new RRF parser module, UM
     - Track progress with `last_batch_number` on UMLSMetadata
     - _Requirements: 3.4_
 
-  - [ ] 3.3 Implement `remove_all_umls_data_with_counts` method on `UMLSLoader`
+  - [x] 3.3 Implement `remove_all_umls_data_with_counts` method on `UMLSLoader`
     - Add `async def remove_all_umls_data_with_counts(self, include_same_as=True) -> Dict[str, int]`
     - Delete in order: UMLS_REL, UMLS_SEMANTIC_REL, HAS_SEMANTIC_TYPE, SAME_AS (if include_same_as), UMLSConcept, UMLSSemanticType, UMLSRelationshipDef, UMLSMetadata
     - Use count-returning Cypher for each category (e.g., `MATCH ()-[r:UMLS_REL]->() WITH r LIMIT 50000 DELETE r RETURN count(r)` in batches)
     - Return dict mapping category name to deleted count
     - _Requirements: 9.1, 9.2, 9.4_
 
-  - [ ] 3.4 Implement `check_neo4j_config` method on `UMLSLoader`
+  - [x] 3.4 Implement `check_neo4j_config` method on `UMLSLoader`
     - Add `async def check_neo4j_config(self) -> Dict[str, Any]`
     - Query Neo4j for heap size, page cache size, and store size via `CALL dbms.listConfig()` or equivalent
     - Compare against recommended minimums: heap 5-6 GB, page cache 3 GB
@@ -96,11 +96,11 @@ Extend the existing UMLS loading infrastructure with a new RRF parser module, UM
     - Test default batch sizes: 5000 concepts, 10000 relationships
     - _Requirements: 3.4, 9.1, 9.2, 9.4, 8.1, 8.2, 1.5, 7.2_
 
-- [ ] 4. Checkpoint - Ensure all UMLSLoader extension tests pass
+- [x] 4. Checkpoint - Ensure all UMLSLoader extension tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 5. Create UMLSBridger module for SAME_AS edge creation
-  - [ ] 5.1 Create `src/multimodal_librarian/components/knowledge_graph/umls_bridger.py`
+- [x] 5. Create UMLSBridger module for SAME_AS edge creation
+  - [x] 5.1 Create `src/multimodal_librarian/components/knowledge_graph/umls_bridger.py`
     - Define `BridgeResult` dataclass with `concepts_matched`, `same_as_edges_created`, `unmatched_concepts`, `elapsed_seconds`
     - Implement `UMLSBridger.__init__(self, neo4j_client)`
     - Implement `async def create_same_as_edges(self, batch_size=1000) -> BridgeResult`
@@ -129,11 +129,11 @@ Extend the existing UMLS loading infrastructure with a new RRF parser module, UM
     - Test no UMLSConcept nodes in graph produces zero SAME_AS edges
     - _Requirements: 5.2, 5.3, 5.6, 5.7_
 
-- [ ] 6. Checkpoint - Ensure all UMLSBridger tests pass
+- [x] 6. Checkpoint - Ensure all UMLSBridger tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 7. Create CLI script with subcommands and orchestration
-  - [ ] 7.1 Create `scripts/load_umls.py` with argparse subcommands and handler functions
+- [x] 7. Create CLI script with subcommands and orchestration
+  - [x] 7.1 Create `scripts/load_umls.py` with argparse subcommands and handler functions
     - Implement `main()` with argparse: subcommands `dry-run`, `load`, `bridge`, `stats`, `clean`
     - Implement `load` subcommand arguments: `rrf_dir` (positional), `--vocabs`, `--batch-size` (default 5000), `--rel-batch-size` (default 10000), `--memory-limit`, `--resume`, `--bridge`, `--neo4j-uri`, `--neo4j-user`, `--neo4j-password`, `--check-config`
     - Implement `clean` subcommand with `--confirm` flag; prompt interactively without it
@@ -141,7 +141,7 @@ Extend the existing UMLS loading infrastructure with a new RRF parser module, UM
     - Instantiate `Neo4jClient` directly (not via FastAPI DI) using args or env vars
     - _Requirements: 1.1, 1.2, 1.7, 1.8, 9.3_
 
-  - [ ] 7.2 Implement `cmd_load` handler with correct execution order
+  - [x] 7.2 Implement `cmd_load` handler with correct execution order
     - Execute in order: (a) create indexes, (b) load semantic network from SRDEF if present, (c) load concepts from MRCONSO, (d) load semantic type edges from MRSTY, (e) load definitions from MRDEF, (f) load relationships from MRREL
     - If `--bridge` flag set, run `UMLSBridger.create_same_as_edges()` after relationship loading
     - If `--resume` flag set, read `last_batch_number` from UMLSMetadata and skip completed batches
@@ -152,7 +152,7 @@ Extend the existing UMLS loading infrastructure with a new RRF parser module, UM
     - Skip SRDEF gracefully if missing (log warning, continue)
     - _Requirements: 10.1, 10.2, 10.3, 10.4, 6.2, 6.3, 7.1, 8.1_
 
-  - [ ] 7.3 Implement `cmd_dry_run`, `cmd_bridge`, `cmd_stats`, `cmd_clean` handlers
+  - [x] 7.3 Implement `cmd_dry_run`, `cmd_bridge`, `cmd_stats`, `cmd_clean` handlers
     - `cmd_dry_run`: call `validate_rrf_directory`, scan RRF files via parsers, report estimated counts and memory usage, recommend reduced vocabs if over budget
     - `cmd_bridge`: instantiate `UMLSBridger`, call `create_same_as_edges`, print `BridgeResult`
     - `cmd_stats`: call `UMLSLoader.get_umls_stats`, display all counts including `same_as_count` and loaded tier
@@ -171,11 +171,11 @@ Extend the existing UMLS loading infrastructure with a new RRF parser module, UM
     - Test `--bridge` flag triggers bridging after load
     - _Requirements: 1.1, 1.2, 1.7, 1.8, 9.3, 8.1, 10.1, 10.3_
 
-- [ ] 8. Checkpoint - Ensure all CLI tests pass
+- [x] 8. Checkpoint - Ensure all CLI tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 9. Integration wiring and remaining property tests
-  - [ ] 9.1 Wire all components together and verify end-to-end flow
+- [-] 9. Integration wiring and remaining property tests
+  - [x] 9.1 Wire all components together and verify end-to-end flow
     - Ensure `rrf_parser` is imported correctly in `UMLSLoader` and CLI script
     - Ensure `UMLSBridger` is imported correctly in CLI script
     - Verify `__init__.py` exports for the knowledge_graph package include new modules
@@ -202,7 +202,7 @@ Extend the existing UMLS loading infrastructure with a new RRF parser module, UM
     - Test supported RELA types list matches design spec
     - _Requirements: 2.8, 3.1, 4.4, 4.6, 6.2, 10.4_
 
-- [ ] 10. Final checkpoint - Ensure all tests pass
+- [x] 10. Final checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 ## Notes

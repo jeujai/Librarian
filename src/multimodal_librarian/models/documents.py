@@ -5,11 +5,12 @@ This module contains Pydantic models for document management,
 including upload requests, responses, and data validation.
 """
 
-from datetime import datetime
-from typing import Optional, Dict, Any, List
-from enum import Enum
-from pydantic import BaseModel, Field, validator
 import uuid
+from datetime import datetime
+from enum import Enum
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, Field, validator
 
 
 class DocumentStatus(str, Enum):
@@ -51,9 +52,10 @@ class Document(BaseModel):
     @validator('file_size')
     def validate_file_size(cls, v):
         """Validate file size is within limits."""
-        max_size = 100 * 1024 * 1024  # 100MB
-        if v > max_size:
-            raise ValueError(f"File size {v} exceeds maximum limit of {max_size} bytes")
+        from ..config.config import get_settings
+        settings = get_settings()
+        if v > settings.max_file_size:
+            raise ValueError(f"File size {v} exceeds maximum limit of {settings.max_file_size} bytes")
         return v
 
     @validator('mime_type')

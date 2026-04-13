@@ -8,6 +8,7 @@ documents asynchronously with Redis as the message broker.
 import asyncio
 import logging
 import os
+import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from uuid import UUID
@@ -15,13 +16,27 @@ from uuid import UUID
 import redis
 from celery import Celery
 from celery.result import AsyncResult
-from celery.signals import task_failure, task_postrun, task_prerun
+from celery.signals import (
+    task_failure,
+    task_postrun,
+    task_prerun,
+    worker_ready,
+    worker_shutdown,
+)
+
+from .redis_task_lock import redis_task_lock
 
 logger = logging.getLogger(__name__)
 
 # Celery configuration - use environment variables for Docker compatibility
 CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", "redis://redis:6379/0")
 CELERY_RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", "redis://redis:6379/0")
+
+# Task time limits (seconds).  Every pipeline task shares these.
+# Change here to adjust all tasks + progress-key TTLs in one place.
+TASK_HARD_TIME_LIMIT = 501 * 60 * 60   # 501 hours
+TASK_SOFT_TIME_LIMIT = 500 * 60 * 60   # 500 hours
+PROGRESS_KEY_TTL = TASK_HARD_TIME_LIMIT  # progress keys live as long as the task can
 
 # --- Shared parallel-progress helpers (bridges + KG) ---
 # Each parallel task writes its own fraction (0.0–1.0) to Redis.
@@ -50,7 +65,7 @@ def _set_parallel_progress(document_id: str, task_name: str, fraction: float):
         old_val = float(old_raw)
         if new_val < old_val:
             new_val = old_val
-    r.set(key, str(new_val), ex=7200)  # 2h TTL
+    r.set(key, str(new_val), ex=PROGRESS_KEY_TTL)
     # Read both fractions
     bridge_val = r.get(f"docprog:{document_id}:bridges")
     kg_val = r.get(f"docprog:{document_id}:kg")
@@ -58,6 +73,45 @@ def _set_parallel_progress(document_id: str, task_name: str, fraction: float):
     k = float(kg_val) if kg_val else 0.0
     avg = (b + k) / 2.0
     return int(30 + avg * 60)  # 30–90%
+
+
+def _get_parallel_step_label(document_id: str) -> str:
+    """Return a progress label reflecting which parallel tasks are still running."""
+    r = _get_progress_redis()
+    bridge_val = r.get(f"docprog:{document_id}:bridges")
+    kg_val = r.get(f"docprog:{document_id}:kg")
+    b = float(bridge_val) if bridge_val else 0.0
+    k = float(kg_val) if kg_val else 0.0
+    bridges_done = b >= 1.0
+    kg_done = k >= 1.0
+    if bridges_done and not kg_done:
+        return 'Updating knowledge graph'
+    if kg_done and not bridges_done:
+        return 'Generating bridges'
+    if not bridges_done and not kg_done:
+        return 'Generating bridges & knowledge graph'
+    return 'Finalizing'
+
+
+def _get_parallel_substage_pcts(document_id: str) -> Optional[str]:
+    """Return a formatted substage breakdown string, or None if not in parallel phase."""
+    r = _get_progress_redis()
+    bridge_val = r.get(f"docprog:{document_id}:bridges")
+    kg_val = r.get(f"docprog:{document_id}:kg")
+    if bridge_val is None and kg_val is None:
+        return None
+    b = float(bridge_val) if bridge_val else 0.0
+    k = float(kg_val) if kg_val else 0.0
+    if b >= 1.0 and k >= 1.0:
+        return None
+    b_pct = min(int(b * 100), 100)
+    k_pct = min(int(k * 100), 100)
+    parts = []
+    if b < 1.0:
+        parts.append(f"Bridges: {b_pct}%")
+    if k < 1.0:
+        parts.append(f"KG: {k_pct}%")
+    return "  ·  ".join(parts)
 
 def _cleanup_parallel_progress(document_id: str):
     """Remove Redis keys after finalization."""
@@ -67,6 +121,11 @@ def _cleanup_parallel_progress(document_id: str):
 
 class DocumentDeletedError(Exception):
     """Raised when a pipeline task detects the document has been deleted."""
+    pass
+
+
+class CancellationError(Exception):
+    """Raised when a Celery task revocation fails (broker unreachable, timeout, etc.)."""
     pass
 
 
@@ -315,45 +374,129 @@ class CeleryService:
     async def cancel_job(self, document_id: UUID) -> bool:
         """
         Cancel a processing job.
-        
+
+        Handles NULL task_id (race window) by polling, propagates
+        revocation errors as CancellationError, and verifies post-revoke
+        task state via AsyncResult.status polling.
+
         Args:
             document_id: Document identifier
-            
+
         Returns:
-            bool: True if job was cancelled
+            bool: True if job was cancelled or fallback is in effect
+
+        Raises:
+            CancellationError: If revoke() fails (broker unreachable, etc.)
         """
-        try:
-            job_status = await self.get_job_status(document_id)
-            if not job_status:
-                return False
-            
-            # Revoke Celery task if it exists
-            if job_status.get('task_id'):
-                celery_app.control.revoke(job_status['task_id'], terminate=True)
-            
-            # Update job status in database
-            await self._update_job_status(
-                document_id, 'failed', 0, 'Cancelled by user', 'Job cancelled by user'
-            )
-            
-            # Update document status
-            from ..models.documents import DocumentStatus
-            from .upload_service import UploadService
-            
-            upload_service = UploadService()
-            await upload_service.update_document_status(
-                document_id, DocumentStatus.FAILED, "Processing cancelled by user"
-            )
-            
-            self.processing_stats['active_jobs'] = max(0, self.processing_stats['active_jobs'] - 1)
-            self.processing_stats['failed_jobs'] += 1
-            
-            logger.info(f"Processing job cancelled for document {document_id}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error cancelling job: {e}")
+        job_status = await self.get_job_status(document_id)
+        if not job_status:
             return False
+
+        task_id = job_status.get('task_id')
+        status = job_status.get('status')
+
+        # --- 3.1: Handle NULL task_id with polling for active jobs ---
+        if not task_id and status in ('pending', 'running'):
+            for attempt in range(3):
+                time.sleep(1)
+                job_status = await self.get_job_status(document_id)
+                if not job_status:
+                    return False
+                task_id = job_status.get('task_id')
+                if task_id:
+                    logger.info(
+                        f"task_id appeared after {attempt + 1} poll(s) "
+                        f"for document {document_id}"
+                    )
+                    break
+
+            if not task_id:
+                logger.warning(
+                    f"task_id still NULL after 3 polls for document "
+                    f"{document_id} (status={status}). Relying on "
+                    f"_check_document_deleted() fallback."
+                )
+                # Mark job as failed so it doesn't linger
+                await self._update_job_status(
+                    document_id, 'failed', 0,
+                    'Cancelled by user',
+                    'Job cancelled — task_id unavailable, '
+                    'fallback to _check_document_deleted()'
+                )
+                from ..models.documents import DocumentStatus
+                from .upload_service import UploadService
+                upload_service = UploadService()
+                await upload_service.update_document_status(
+                    document_id, DocumentStatus.FAILED,
+                    "Processing cancelled by user"
+                )
+                self.processing_stats['active_jobs'] = max(
+                    0, self.processing_stats['active_jobs'] - 1
+                )
+                self.processing_stats['failed_jobs'] += 1
+                return True
+
+        # --- 3.2: Revoke with error propagation ---
+        if task_id:
+            try:
+                celery_app.control.revoke(
+                    task_id, terminate=True
+                )
+            except Exception as e:
+                logger.error(
+                    f"Failed to revoke task {task_id} for document "
+                    f"{document_id}: {e}"
+                )
+                raise CancellationError(
+                    f"Failed to revoke task {task_id}: {e}"
+                ) from e
+
+            # --- 3.3: Post-revoke verification ---
+            terminal_states = {'REVOKED', 'FAILURE', 'SUCCESS'}
+            task_stopped = False
+            for _ in range(5):
+                result = AsyncResult(task_id, app=celery_app)
+                if result.status in terminal_states:
+                    task_stopped = True
+                    logger.info(
+                        f"Task {task_id} reached terminal state "
+                        f"'{result.status}' for document {document_id}"
+                    )
+                    break
+                time.sleep(1)
+
+            if not task_stopped:
+                logger.warning(
+                    f"Task {task_id} still in non-terminal state after "
+                    f"revoke for document {document_id}. Relying on "
+                    f"_check_document_deleted() fallback."
+                )
+
+        # Update job status in database
+        await self._update_job_status(
+            document_id, 'failed', 0,
+            'Cancelled by user', 'Job cancelled by user'
+        )
+
+        # Update document status
+        from ..models.documents import DocumentStatus
+        from .upload_service import UploadService
+
+        upload_service = UploadService()
+        await upload_service.update_document_status(
+            document_id, DocumentStatus.FAILED,
+            "Processing cancelled by user"
+        )
+
+        self.processing_stats['active_jobs'] = max(
+            0, self.processing_stats['active_jobs'] - 1
+        )
+        self.processing_stats['failed_jobs'] += 1
+
+        logger.info(
+            f"Processing job cancelled for document {document_id}"
+        )
+        return True
     
     async def get_active_jobs(self) -> List[Dict[str, Any]]:
         """
@@ -681,18 +824,23 @@ class CeleryService:
                 params["error_message"] = error_message
             
             if status == 'running':
-                update_fields.append("started_at = NOW()")
+                update_fields.append("started_at = COALESCE(started_at, NOW())")
             elif status in ['completed', 'failed']:
                 update_fields.append("completed_at = NOW()")
             
             update_clause = ", ".join(update_fields)
+            
+            # Guard: don't let a 'running' update overwrite a terminal status
+            status_guard = ""
+            if status == 'running':
+                status_guard = " AND status NOT IN ('completed', 'failed')"
             
             async with db_manager.get_async_session() as session:
                 await session.execute(
                     text(f"""
                         UPDATE multimodal_librarian.processing_jobs 
                         SET {update_clause}
-                        WHERE source_id = :source_id
+                        WHERE source_id = :source_id{status_guard}
                     """),
                     params
                 )
@@ -823,6 +971,70 @@ def process_document_task(self, document_id: str):
         raise
 
 
+def _validate_parallel_results(parallel_results):
+    """
+    Validate that parallel_results from the chord contain real completion data.
+
+    Returns (is_valid, error_message).  Defence-in-depth: even if
+    ``Ignore()`` prevents ``skipped_duplicate`` from reaching here, this
+    guard catches any edge case where incomplete results slip through.
+
+    Requirements: 1.2, 1.3, 2.2, 2.3
+    """
+    if not isinstance(parallel_results, list):
+        return False, (
+            f"parallel_results is not a list (got {type(parallel_results).__name__}): "
+            "incomplete parallel processing"
+        )
+
+    if len(parallel_results) < 2:
+        return False, (
+            f"Expected at least 2 parallel results, got {len(parallel_results)}: "
+            "incomplete parallel processing"
+        )
+
+    has_kg = False
+    has_bridge = False
+
+    for result in parallel_results:
+        if not isinstance(result, dict):
+            continue
+
+        if result.get('status') == 'skipped_duplicate':
+            return False, (
+                f"parallel_results contains a skipped_duplicate entry "
+                f"(document_id={result.get('document_id', 'unknown')}): "
+                "chord fired before real task completed"
+            )
+
+        if 'kg_failures' in result:
+            has_kg = True
+        if 'bridge_failures' in result:
+            has_bridge = True
+
+    # Aborted results won't contain kg_failures/bridge_failures, and that's
+    # fine — the abort handler downstream deals with them.  But if *no*
+    # result carries the expected keys and none is aborted, something is wrong.
+    has_abort = any(
+        isinstance(r, dict) and r.get('status') == 'aborted'
+        for r in parallel_results
+    )
+
+    if not has_kg and not has_abort:
+        return False, (
+            "No parallel result contains 'kg_failures': "
+            "KG task result missing — incomplete parallel processing"
+        )
+
+    if not has_bridge and not has_abort:
+        return False, (
+            "No parallel result contains 'bridge_failures': "
+            "bridge task result missing — incomplete parallel processing"
+        )
+
+    return True, ''
+
+
 @celery_app.task(name='finalize_processing_task')
 def finalize_processing_task(parallel_results, document_id: str):
     """
@@ -836,27 +1048,163 @@ def finalize_processing_task(parallel_results, document_id: str):
         parallel_results: List of results from parallel tasks
         document_id: Document identifier
     """
+    import time as _time
     from uuid import UUID
 
     from ..models.documents import DocumentStatus
-    
+    _t0 = _time.monotonic()
     try:
         logger.info(f"Finalizing document processing for {document_id}")
+
+        # Validate parallel_results before proceeding (defense-in-depth).
+        # Requirements: 1.2, 1.3, 2.2, 2.3
+        is_valid, validation_error = _validate_parallel_results(parallel_results)
+        if not is_valid:
+            logger.error(
+                f"Invalid parallel_results for {document_id}: {validation_error}"
+            )
+            asyncio.run(_update_job_status_sync(
+                UUID(document_id), 'failed', 0,
+                'Incomplete parallel processing', validation_error,
+                failed_stage='finalize_processing'
+            ))
+            asyncio.run(_update_document_status_sync(
+                UUID(document_id), DocumentStatus.FAILED, validation_error
+            ))
+            try:
+                from .processing_status_integration import (
+                    notify_processing_failure_sync,
+                )
+                notify_processing_failure_sync(
+                    document_id=UUID(document_id),
+                    error=validation_error,
+                    retry_available=True
+                )
+            except Exception as ws_error:
+                logger.debug(f"WebSocket failure notification failed (non-critical): {ws_error}")
+            try:
+                asyncio.run(_delete_processing_payload(document_id))
+            except Exception:
+                pass
+            return {'status': 'failed', 'document_id': document_id, 'error': validation_error}
         
         # If the document was deleted during processing, skip finalization
-        _cleanup_parallel_progress(document_id)
+        # NOTE: _cleanup_parallel_progress is called AFTER job completion to ensure
+        # the Active Jobs report can read substage progress until the job is done.
         try:
             _check_document_deleted(document_id, "finalize_processing")
         except DocumentDeletedError:
             logger.info(f"Skipping finalization for deleted document {document_id}")
+            _cleanup_parallel_progress(document_id)
             return {'status': 'aborted', 'document_id': document_id}
         
+        # --- Quality gate evaluation ---
+        # Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 5.1, 5.2, 5.3, 7.5
+        from ..models.core import ContentType
+        from .quality_gate import compute_quality_gate
+
+        # Extract kg_failures and bridge_failures from parallel task results
+        kg_failures = {'ner_failures': 0, 'llm_failures': 0, 'total_chunks': 0}
+        bridge_failures = {'failed_bridges': 0, 'total_bridges': 0}
+        if isinstance(parallel_results, list):
+            for result in parallel_results:
+                if isinstance(result, dict):
+                    if 'kg_failures' in result:
+                        kg_failures = result['kg_failures']
+                    if 'bridge_failures' in result:
+                        bridge_failures = result['bridge_failures']
+
+        # Determine document content_type from the processing payload
+        content_type = ContentType.GENERAL
+        try:
+            payload = asyncio.run(_retrieve_processing_payload(document_id))
+            ct_value = (payload.get('content_profile') or {}).get('content_type', '')
+            if ct_value:
+                content_type = ContentType(ct_value)
+            logger.info(
+                f"Quality gate: resolved content_type={content_type.value} "
+                f"for {document_id}"
+            )
+        except Exception as ct_err:
+            logger.warning(f"Could not determine content_type for {document_id}, using GENERAL: {ct_err}")
+
+        qg_result = compute_quality_gate(kg_failures, bridge_failures, content_type)
+        logger.info(
+            f"Quality gate result for {document_id}: "
+            f"content_type={qg_result.content_type}, "
+            f"threshold={qg_result.threshold}, "
+            f"composite={qg_result.composite_rate:.4f}, "
+            f"passed={qg_result.passed}"
+        )
+
+        # Persist quality gate data for both passing and failing documents
+        # Requirements: 7.5
+        try:
+            asyncio.run(_persist_quality_gate_data(document_id, qg_result.to_dict()))
+        except Exception as qg_persist_err:
+            logger.warning(f"Failed to persist quality gate data for {document_id}: {qg_persist_err}")
+
+        if not qg_result.passed:
+            # Quality gate FAILED — mark document as FAILED
+            # Requirements: 4.1, 4.2, 4.3, 4.4, 4.5
+            error_message = qg_result.error_message()
+            logger.warning(f"Quality gate failed for {document_id}: {error_message}")
+
+            asyncio.run(_update_job_status_sync(
+                UUID(document_id), 'failed', 0, 'Quality gate failed', error_message,
+                failed_stage='update_knowledge_graph'
+            ))
+            asyncio.run(_update_document_status_sync(
+                UUID(document_id), DocumentStatus.FAILED, error_message
+            ))
+
+            # Send failure notification via WebSocket
+            # Requirements: 5.1, 5.2, 5.3
+            try:
+                from .processing_status_integration import (
+                    notify_processing_failure_sync,
+                )
+                notify_processing_failure_sync(
+                    document_id=UUID(document_id),
+                    error=error_message,
+                    retry_available=True
+                )
+            except Exception as ws_error:
+                logger.debug(f"WebSocket failure notification failed (non-critical): {ws_error}")
+
+            asyncio.run(_record_stage_timing(document_id, "finalize", _time.monotonic() - _t0))
+
+            # Clean up parallel progress Redis keys
+            _cleanup_parallel_progress(document_id)
+
+            # Clean up the processing payload from PostgreSQL
+            try:
+                asyncio.run(_delete_processing_payload(document_id))
+            except Exception as cleanup_err:
+                logger.debug(f"Processing payload cleanup failed (non-critical): {cleanup_err}")
+
+            return {'status': 'failed', 'document_id': document_id, 'quality_gate': qg_result.to_dict()}
+
+        # --- Quality gate PASSED — proceed with normal completion flow ---
         # Update job and document status
+        asyncio.run(_update_job_status_sync(
+            UUID(document_id), 'running', 90.0, 'Computing related documents'
+        ))
+        
+        # Compute composite scores to create RELATED_DOCS edges
+        try:
+            asyncio.run(_compute_composite_scores(document_id))
+        except Exception as score_err:
+            logger.warning(
+                f"Composite score computation failed for {document_id} "
+                f"(non-fatal): {score_err}"
+            )
+        
         asyncio.run(_update_job_status_sync(
             UUID(document_id), 'running', 95.0, 'Finalizing'
         ))
         asyncio.run(_update_job_status_sync(
-            UUID(document_id), 'completed', 100.0, 'Processing completed successfully'
+            UUID(document_id), 'running', 99.0, 'Finalizing'
         ))
         asyncio.run(_update_document_status_sync(
             UUID(document_id), DocumentStatus.COMPLETED
@@ -896,11 +1244,32 @@ def finalize_processing_task(parallel_results, document_id: str):
             logger.debug(f"WebSocket completion notification failed (non-critical): {ws_error}")
         
         logger.info(f"Document processing completed successfully for {document_id}")
+        
+        # Clean up parallel progress Redis keys now that job is complete
+        _cleanup_parallel_progress(document_id)
+        
+        asyncio.run(_record_stage_timing(document_id, "finalize", _time.monotonic() - _t0))
+        
+        # Clean up the processing payload from PostgreSQL
+        try:
+            asyncio.run(_delete_processing_payload(document_id))
+        except Exception as cleanup_err:
+            logger.debug(f"Processing payload cleanup failed (non-critical): {cleanup_err}")
+        
         return {'status': 'completed', 'document_id': document_id}
         
     except Exception as e:
         error_message = str(e)
         logger.error(f"Failed to finalize processing for {document_id}: {error_message}")
+        
+        # Clean up parallel progress Redis keys
+        _cleanup_parallel_progress(document_id)
+        
+        # Clean up the processing payload even on failure
+        try:
+            asyncio.run(_delete_processing_payload(document_id))
+        except Exception:
+            pass
         
         # Update job and document status with failed_stage for retry support
         # Requirements: 8.4 - Track failed stage in processing metadata
@@ -927,32 +1296,22 @@ def finalize_processing_task(parallel_results, document_id: str):
         raise
 
 
-@celery_app.task(name='extract_pdf_content_task')
+@celery_app.task(name='extract_pdf_content_task', time_limit=TASK_HARD_TIME_LIMIT, soft_time_limit=TASK_SOFT_TIME_LIMIT)
+@redis_task_lock("extract_lock:{document_id}")
 def extract_pdf_content_task(document_id: str):
     """
     Extract content from PDF document.
     
     Uses a single asyncio.run() call to avoid the stale-event-loop problem.
-    Previous implementation called asyncio.run() twice — once for job status
-    update and once for upload_service.get_document_content(). The second
-    call used db_manager.get_async_session() whose SQLAlchemy async engine
-    was bound to the first (now-dead) event loop, causing:
-        RuntimeError: Future attached to a different loop
-    
-    The fix wraps all async work in one coroutine (_extract_pdf_content_async)
-    that uses get_async_connection() (fresh asyncpg connection per call) to
-    fetch the document's s3_key directly, bypassing db_manager entirely.
-    
-    Args:
-        document_id: Document identifier
-        
-    Returns:
-        Serialized DocumentContent
     """
     try:
+        import time as _time
+        _t0 = _time.monotonic()
         _check_document_deleted(document_id, "extract_pdf_content start")
         logger.info(f"Extracting PDF content for document {document_id}")
-        return asyncio.run(_extract_pdf_content_async(document_id))
+        result = asyncio.run(_extract_pdf_content_async(document_id))
+        asyncio.run(_record_stage_timing(document_id, "extract_pdf", _time.monotonic() - _t0))
+        return result
     except Exception as e:
         logger.error(f"PDF content extraction failed for document {document_id}: {e}")
         raise
@@ -1075,7 +1434,8 @@ async def _extract_pdf_content_async(document_id: str) -> Dict[str, Any]:
     return serialized_content
 
 
-@celery_app.task(name='generate_chunks_task')
+@celery_app.task(name='generate_chunks_task', time_limit=TASK_HARD_TIME_LIMIT, soft_time_limit=TASK_SOFT_TIME_LIMIT)
+@redis_task_lock("chunks_lock:{document_id}")
 def generate_chunks_task(pdf_content: Dict[str, Any], document_id: str):
     """
     Generate chunks from PDF content.
@@ -1106,6 +1466,8 @@ def generate_chunks_task(pdf_content: Dict[str, Any], document_id: str):
 
     try:
         # Import here to avoid circular imports
+        import time as _time
+        _t0 = _time.monotonic()
         from uuid import UUID
 
         from ..components.chunking_framework.framework import (
@@ -1236,15 +1598,27 @@ def generate_chunks_task(pdf_content: Dict[str, Any], document_id: str):
                       'pages': pdf_content['metadata']['page_count']}
         ))
         
-        return serialized_processed
+        # Store processed document payload in PostgreSQL instead of passing
+        # through the Celery message broker. Large payloads (68MB+) cause
+        # JSON serialization timeouts and chord dispatch failures.
+        asyncio.run(_store_processing_payload(document_id, serialized_processed))
         
+        # Return only the document_id — downstream tasks retrieve the
+        # payload from PostgreSQL via _retrieve_processing_payload().
+        asyncio.run(_record_stage_timing(document_id, "generate_chunks", _time.monotonic() - _t0))
+        return {'document_id': document_id}
+        
+    except DocumentDeletedError:
+        logger.info(f"Chunk generation aborted — document {document_id} was deleted")
+        return {'status': 'aborted', 'document_id': document_id}
     except Exception as e:
         logger.error(f"Chunk generation failed for document {document_id}: {e}")
         raise
 
 
-@celery_app.task(name='generate_bridges_task', time_limit=3 * 60 * 60, soft_time_limit=170 * 60)
-def generate_bridges_task(processed_document: Dict[str, Any], document_id: str):
+@celery_app.task(name='generate_bridges_task', time_limit=TASK_HARD_TIME_LIMIT, soft_time_limit=TASK_SOFT_TIME_LIMIT)
+@redis_task_lock("bridge_lock:{document_id}")
+def generate_bridges_task(upstream_result: Dict[str, Any], document_id: str):
     """
     Generate bridge chunks between adjacent content chunks.
     
@@ -1253,24 +1627,39 @@ def generate_bridges_task(processed_document: Dict[str, Any], document_id: str):
     stashed by generate_chunks_task to produce bridges without
     re-running chunking or gap analysis.
     
-    Bridges are stored directly in PostgreSQL and the vector DB
-    by this task (not by store_embeddings_task).
+    Bridges are stored INCREMENTALLY in PostgreSQL and the vector DB
+    as each batch is generated. This ensures that if Milvus storage fails,
+    previously-stored bridges are preserved and not lost.
     
     Args:
         processed_document: Serialized processed document (from generate_chunks_task)
         document_id: Document identifier
         
     Returns:
-        Dict with bridge generation results
+        Dict with bridge generation results including bridges_stored count
     """
+    # Use a single persistent event loop for all async calls in this task.
+    # asyncio.run() creates and DESTROYS a loop each time, which on Python
+    # 3.11 sets the thread-local event loop to None.  The bridge generator's
+    # _process_batch also manipulates event loops.  Using one shared loop
+    # with run_until_complete() avoids the "no current event loop" crash.
+    _task_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(_task_loop)
+    
+    # Track bridges stored incrementally (separate from bridges_generated)
+    bridges_stored_counter = [0]  # mutable for closure
+    storage_error = [None]  # Track storage errors for partial failure handling
+    total_bridges_expected = [0]  # Track total bridges expected for error reporting
+    
     try:
+        import time as _time
         from uuid import UUID
 
         from ..components.chunking_framework.framework import (
             GenericMultiLevelChunkingFramework,
         )
         from ..database.connection import db_manager
-        
+        _t0 = _time.monotonic()
         logger.info(f"Generating bridges for document {document_id}")
         
         _check_document_deleted(document_id, "generate_bridges start")
@@ -1278,24 +1667,40 @@ def generate_bridges_task(processed_document: Dict[str, Any], document_id: str):
         if not db_manager.AsyncSessionLocal:
             db_manager.initialize()
         
+        # Retrieve processed document from PostgreSQL (no longer passed via broker)
+        processed_document = _task_loop.run_until_complete(
+            _retrieve_processing_payload(document_id)
+        )
+        
+        # Get document title from chunk metadata for bridge title propagation
+        document_title = None
+        chunks = processed_document.get('chunks', [])
+        if chunks:
+            document_title = chunks[0].get('metadata', {}).get('title')
+        
         # Update progress — bridges run in parallel with KG
         pct = _set_parallel_progress(document_id, 'bridges', 0.0)
-        asyncio.run(_update_job_status_sync(
-            UUID(document_id), 'running', pct, 'Generating bridges'
+        _task_loop.run_until_complete(_update_job_status_sync(
+            UUID(document_id), 'running', pct, _get_parallel_step_label(document_id)
         ))
         
         bridge_generation_data = processed_document.get('bridge_generation_data', {})
         if not bridge_generation_data or not bridge_generation_data.get('bridge_needed'):
             logger.info(f"No bridges needed for document {document_id}")
             pct = _set_parallel_progress(document_id, 'bridges', 1.0)
-            asyncio.run(_update_job_status_sync(
-                UUID(document_id), 'running', pct, 'Generating bridges',
-                metadata={'bridges_generated': 0, 'bridges_needed': False}
+            _task_loop.run_until_complete(_update_job_status_sync(
+                UUID(document_id), 'running', pct, _get_parallel_step_label(document_id),
+                metadata={'bridges_generated': 0, 'bridges_stored': 0, 'bridges_needed': False}
             ))
             return {
                 'status': 'completed',
                 'document_id': document_id,
-                'bridges_generated': 0
+                'bridges_generated': 0,
+                'bridges_stored': 0,
+                'bridge_failures': {
+                    'failed_bridges': 0,
+                    'total_bridges': 0,
+                }
             }
         
         # Generate bridges using the deferred method with progress reporting
@@ -1308,79 +1713,163 @@ def generate_bridges_task(processed_document: Dict[str, Any], document_id: str):
             if now - _last_progress_time[0] < 5.0:
                 return
             _last_progress_time[0] = now
+
+            # Check if document was deleted during generation — abort early
+            # to avoid wasting Ollama/GPU resources on orphaned work
+            try:
+                _check_document_deleted(document_id, "bridge_progress")
+            except DocumentDeletedError:
+                raise  # Propagates up through batch_generate_bridges
+
             fraction = bridges_so_far / max(total_bridges, 1)
             pct = _set_parallel_progress(document_id, 'bridges', fraction)
-            asyncio.run(_update_job_status_sync(
+            # Re-set the event loop — _process_batch may have replaced it
+            asyncio.set_event_loop(_task_loop)
+            _task_loop.run_until_complete(_update_job_status_sync(
                 UUID(document_id), 'running', pct,
-                'Generating bridges',
+                _get_parallel_step_label(document_id),
                 metadata={
                     'bridges_generated': bridges_so_far,
+                    'bridges_stored': bridges_stored_counter[0],
                     'total_bridges': total_bridges,
                     'bridges_failed': failed,
                 }
             ))
 
+        async def _incremental_storage_async(batch_bridges):
+            """Async implementation of incremental bridge storage."""
+            nonlocal bridges_stored_counter, storage_error
+            
+            if not batch_bridges:
+                return
+            
+            serialized_batch = [
+                {
+                    'id': bridge.id,
+                    'content': bridge.content,
+                    'source_chunks': bridge.source_chunks,
+                    'generation_method': bridge.generation_method,
+                    'confidence_score': bridge.confidence_score
+                }
+                for bridge in batch_bridges
+            ]
+            
+            batch_size = len(serialized_batch)
+            
+            try:
+                await _store_bridge_chunks_in_database(document_id, serialized_batch)
+                logger.info(f"Stored {batch_size} bridges in PostgreSQL for document {document_id} (total: {bridges_stored_counter[0] + batch_size})")
+                
+                await _store_bridge_embeddings_in_vector_db(document_id, serialized_batch, document_title=document_title)
+                logger.info(f"Stored {batch_size} bridge embeddings in Milvus for document {document_id}")
+                
+                bridges_stored_counter[0] += batch_size
+                
+            except Exception as e:
+                logger.error(
+                    f"Incremental storage failed for batch of {batch_size} bridges "
+                    f"(document {document_id}, stored so far: {bridges_stored_counter[0]}): {e}"
+                )
+                storage_error[0] = str(e)
+                raise
+
+        def _incremental_storage_callback(batch_bridges):
+            """
+            Synchronous wrapper that runs incremental storage on the task event loop.
+            
+            Called by batch_generate_bridges after each batch completes.
+            Uses _task_loop.run_until_complete to properly await the async storage.
+            """
+            # Re-set the event loop — _process_batch may have replaced it
+            asyncio.set_event_loop(_task_loop)
+            _task_loop.run_until_complete(_incremental_storage_async(batch_bridges))
+
         chunking_framework = GenericMultiLevelChunkingFramework()
-        bridges = chunking_framework.generate_bridges_for_document(
-            bridge_generation_data, progress_callback=_bridge_progress
+        # Track total expected bridges before generation starts
+        total_bridges_expected[0] = len(bridge_generation_data.get('bridge_needed', []))
+        bridges, batch_stats = chunking_framework.generate_bridges_for_document(
+            bridge_generation_data, 
+            progress_callback=_bridge_progress,
+            storage_callback=_incremental_storage_callback
         )
         
-        # Serialize bridges for storage
-        serialized_bridges = [
-            {
-                'id': bridge.id,
-                'content': bridge.content,
-                'source_chunks': bridge.source_chunks,
-                'generation_method': bridge.generation_method,
-                'confidence_score': bridge.confidence_score
-            }
-            for bridge in bridges
-        ]
+        # Restore our task loop after _process_batch may have replaced it
+        asyncio.set_event_loop(_task_loop)
         
-        # Store bridges directly in PostgreSQL and vector DB
-        if serialized_bridges:
-            # Get document title from chunk metadata for bridge title propagation
-            document_title = None
-            chunks = processed_document.get('chunks', [])
-            if chunks:
-                document_title = chunks[0].get('metadata', {}).get('title')
-            
-            asyncio.run(_store_bridge_chunks_in_database(document_id, serialized_bridges))
-            asyncio.run(_store_bridge_embeddings_in_vector_db(document_id, serialized_bridges, document_title=document_title))
-            logger.info(f"Stored {len(serialized_bridges)} bridge chunks for document {document_id}")
+        # Note: With incremental storage, bridges are already stored by the callback.
+        # We no longer need to store all bridges at the end.
         
-        logger.info(f"Bridge generation completed for document {document_id}: {len(bridges)} bridges")
+        logger.info(f"Bridge generation completed for document {document_id}: {len(bridges)} bridges generated, {bridges_stored_counter[0]} stored")
         pct = _set_parallel_progress(document_id, 'bridges', 1.0)
-        asyncio.run(_update_job_status_sync(
-            UUID(document_id), 'running', pct, 'Generating bridges',
-            metadata={'bridges_generated': len(bridges), 'bridges_stored': len(serialized_bridges)}
+        _task_loop.run_until_complete(_update_job_status_sync(
+            UUID(document_id), 'running', pct, _get_parallel_step_label(document_id),
+            metadata={'bridges_generated': len(bridges), 'bridges_stored': bridges_stored_counter[0]}
         ))
+        _task_loop.run_until_complete(_record_stage_timing(document_id, "generate_bridges", _time.monotonic() - _t0))
+        
+        # Check for partial success (some bridges stored before failure)
+        if storage_error[0] and bridges_stored_counter[0] > 0:
+            return {
+                'status': 'partial',
+                'document_id': document_id,
+                'bridges_generated': len(bridges),
+                'bridges_stored': bridges_stored_counter[0],
+                'bridge_failures': {
+                    'failed_bridges': batch_stats.failed_generations,
+                    'total_bridges': batch_stats.total_requests,
+                },
+                'storage_error': storage_error[0]
+            }
+        
         return {
             'status': 'completed',
             'document_id': document_id,
-            'bridges_generated': len(bridges)
+            'bridges_generated': len(bridges),
+            'bridges_stored': bridges_stored_counter[0],
+            'bridge_failures': {
+                'failed_bridges': batch_stats.failed_generations,
+                'total_bridges': batch_stats.total_requests,
+            }
         }
         
     except DocumentDeletedError:
         logger.info(f"Bridge generation aborted — document {document_id} was deleted")
+        _task_loop.run_until_complete(_record_stage_timing(document_id, "generate_bridges", _time.monotonic() - _t0))
         return {
             'status': 'aborted',
             'document_id': document_id,
             'bridges_generated': 0,
+            'bridges_stored': bridges_stored_counter[0],
+            'bridge_failures': {
+                'failed_bridges': 0,
+                'total_bridges': 0,
+            }
         }
     except Exception as e:
         logger.error(f"Bridge generation failed for document {document_id}: {e}")
         # Don't fail the entire pipeline for bridge errors
-        logger.warning(f"Continuing without bridges for document {document_id}")
+        # Log partial success if some bridges were stored before failure
+        if bridges_stored_counter[0] > 0:
+            logger.info(f"Partial success: {bridges_stored_counter[0]} bridges stored before failure")
+        logger.warning(f"Continuing without remaining bridges for document {document_id}")
         return {
-            'status': 'failed',
+            'status': 'failed' if bridges_stored_counter[0] == 0 else 'partial',
             'document_id': document_id,
-            'bridges_generated': 0,
+            'bridges_generated': bridges_stored_counter[0],
+            'bridges_stored': bridges_stored_counter[0],
+            'bridge_failures': {
+                'failed_bridges': total_bridges_expected[0] - bridges_stored_counter[0],
+                'total_bridges': total_bridges_expected[0],
+            },
             'error': str(e)
         }
+    finally:
+        _task_loop.close()
+        asyncio.set_event_loop(None)
 
 
-@celery_app.task(name='store_embeddings_task')
+@celery_app.task(name='store_embeddings_task', time_limit=TASK_HARD_TIME_LIMIT, soft_time_limit=TASK_SOFT_TIME_LIMIT)
+@redis_task_lock("embeddings_lock:{document_id}")
 def store_embeddings_task(processed_document: Dict[str, Any], document_id: str):
     """
     Store embeddings in vector database.
@@ -1513,6 +2002,16 @@ async def _store_embeddings_in_vector_db(document_id: str, chunks: List[Dict[str
         stored_so_far = 0
 
         for batch_start in range(0, total_chunks, EMBED_BATCH_SIZE):
+            # Check for deletion between batches so we abort promptly
+            if await _is_document_deleted(document_id):
+                logger.info(
+                    f"Document {document_id} deleted during embedding storage "
+                    f"(batch {batch_start}/{total_chunks}), aborting."
+                )
+                raise DocumentDeletedError(
+                    f"Document {document_id} was deleted during embedding storage"
+                )
+
             batch_end = min(batch_start + EMBED_BATCH_SIZE, total_chunks)
             batch = all_vector_chunks[batch_start:batch_end]
             
@@ -1535,6 +2034,8 @@ async def _store_embeddings_in_vector_db(document_id: str, chunks: List[Dict[str
                             max_page = max(max_page, int(pn))
                         except (ValueError, TypeError):
                             pass
+                if total_pages > 0:
+                    max_page = min(max_page, total_pages)
                 meta = {
                     'embeddings_stored_so_far': stored_so_far,
                     'total_chunks': total_chunks,
@@ -1634,16 +2135,19 @@ async def _store_bridge_embeddings_in_vector_db(document_id: str, bridges: List[
         raise
 
 
-@celery_app.task(name='update_knowledge_graph_task', time_limit=3 * 60 * 60, soft_time_limit=170 * 60, acks_late=False)
-def update_knowledge_graph_task(processed_document: Dict[str, Any], document_id: str):
+@celery_app.task(name='update_knowledge_graph_task', time_limit=TASK_HARD_TIME_LIMIT, soft_time_limit=TASK_SOFT_TIME_LIMIT, acks_late=False)
+@redis_task_lock("kg_lock:{document_id}")
+def update_knowledge_graph_task(upstream_result: Dict[str, Any], document_id: str):
     """
     Update knowledge graph with document concepts.
     
     Args:
-        processed_document: Serialized processed document (from previous task in chain)
+        upstream_result: Minimal result from previous task (contains document_id only)
         document_id: Document identifier
     """
     try:
+        import time as _time
+        _t0 = _time.monotonic()
         from uuid import UUID
 
         from ..database.connection import db_manager
@@ -1656,19 +2160,24 @@ def update_knowledge_graph_task(processed_document: Dict[str, Any], document_id:
         if not db_manager.AsyncSessionLocal:
             db_manager.initialize()
         
+        # Retrieve processed document from PostgreSQL (no longer passed via broker)
+        processed_document = asyncio.run(
+            _retrieve_processing_payload(document_id)
+        )
+        
         # Update progress — KG runs in parallel with bridges
         pct = _set_parallel_progress(document_id, 'kg', 0.0)
         asyncio.run(_update_job_status_sync(
-            UUID(document_id), 'running', pct, 'Updating knowledge graph'
+            UUID(document_id), 'running', pct, _get_parallel_step_label(document_id)
         ))
         
         # Process chunks through knowledge graph builder
-        asyncio.run(_update_knowledge_graph(document_id, processed_document['chunks']))
+        kg_failures = asyncio.run(_update_knowledge_graph(document_id, processed_document['chunks']))
         
         logger.info(f"Knowledge graph updated for document {document_id}")
         
-        # Return processed_document for next task in chain
-        return processed_document
+        asyncio.run(_record_stage_timing(document_id, "update_knowledge_graph", _time.monotonic() - _t0))
+        return {'status': 'completed', 'document_id': document_id, 'kg_failures': kg_failures}
         
     except DocumentDeletedError:
         logger.info(f"KG update aborted — document {document_id} was deleted")
@@ -1677,6 +2186,29 @@ def update_knowledge_graph_task(processed_document: Dict[str, Any], document_id:
         logger.error(f"Knowledge graph update failed for document {document_id}: {e}")
         # KG failure is fatal — re-raise to fail the entire processing pipeline
         raise
+
+
+async def _execute_with_retry(client, query, params, max_retries=3):
+    """Execute a Neo4j query with exponential backoff retry on failure.
+
+    After exhausting retries, logs a warning and returns None (matching
+    the existing behaviour of bare try/except blocks around MERGE ops).
+    """
+    for attempt in range(1, max_retries + 1):
+        try:
+            return await client.execute_query(query, params)
+        except Exception as e:
+            if attempt >= max_retries:
+                logger.warning(
+                    f"Query failed after {max_retries} retries: {e}"
+                )
+                return None
+            backoff = 2 ** (attempt - 1)  # 1s, 2s, 4s
+            logger.warning(
+                f"Query attempt {attempt}/{max_retries} failed, "
+                f"retrying in {backoff}s: {e}"
+            )
+            await asyncio.sleep(backoff)
 
 
 async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]):
@@ -1727,6 +2259,24 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
 
         kg_builder = KnowledgeGraphBuilder(neo4j_client=neo4j_client)
 
+        # Initialize UMLS linker for concept-to-CUI annotation.
+        # Degrades gracefully: if UMLS data isn't loaded, link_concepts()
+        # is a fast no-op that returns concepts unchanged.
+        umls_linker = None
+        try:
+            from ..components.knowledge_graph.umls_client import UMLSClient
+            from ..components.knowledge_graph.umls_linker import UMLSLinker
+
+            umls_client = UMLSClient(neo4j_client=kg_service.client)
+            await umls_client.initialize()
+            if await umls_client.is_available():
+                umls_linker = UMLSLinker(umls_client=umls_client)
+                logger.info("UMLS linker initialized for KG extraction")
+            else:
+                logger.info("UMLS data not loaded; skipping UMLS linking")
+        except Exception as e:
+            logger.warning(f"UMLS linker initialization failed, skipping: {e}")
+
         # Obtain model server client for embedding generation.
         # IMPORTANT: Always call initialize_model_client() here instead of
         # get_model_client().  Earlier asyncio.run() calls in this Celery
@@ -1754,7 +2304,8 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
         # to avoid Neo4j OOM from oversized UNWIND transactions.
         # Scale factor: every 1000 chunks doubles the divisor.
         # E.g. 3333 chunks → scale=3 → BATCH_SIZE=33, CONCEPT/REL=166
-        MAX_CONCURRENT = 10
+        # NOTE: MAX_CONCURRENT is no longer used for semaphore-based throttling.
+        # Concurrency is now managed by the shared Ollama pool (ollama_pool_manager).
 
         # Persistent maps across batches — concepts may be referenced by
         # relationships in later batches.
@@ -1786,22 +2337,56 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
 
         total_chunks = len(knowledge_chunks)
 
-        # Dynamic batch scaling: scale_factor grows with document size
-        _scale_factor = max(1, total_chunks // 1000)
-        BATCH_SIZE = max(10, 100 // _scale_factor)
-        _CONCEPT_REL_SUB_BATCH = max(50, 500 // _scale_factor)
+        # Quality gate failure counters
+        ner_failure_count = 0
+        llm_failure_count = 0
 
-        total_batches = (total_chunks + BATCH_SIZE - 1) // BATCH_SIZE
+        # Dynamic batch scaling: scale_factor grows with document size.
+        # Extraction and Neo4j persistence are DECOUPLED:
+        #
+        # EXTRACT_BATCH_SIZE — how many chunks to extract concurrently
+        #   per iteration.  Extraction is pure Ollama/spaCy (no Neo4j),
+        #   so larger batches are fine — concurrency is managed by the
+        #   shared Ollama pool.  Scales gently: for very large documents
+        #   we still avoid accumulating too many
+        #   concepts in memory before persisting.
+        #
+        # _NEO4J_SUB_BATCH — how many concepts/relationships per
+        #   UNWIND transaction.  Scales down aggressively with
+        #   document size to prevent Neo4j OOM.
+        _scale_factor = max(1, total_chunks // 1000)
+
+        # Extraction batch: start at 100, scale down slowly
+        # (÷ sqrt of scale_factor so it stays large)
+        import math as _math
+        EXTRACT_BATCH_SIZE = max(
+            20,
+            int(100 / _math.sqrt(_scale_factor))
+        )
+
+        # Neo4j sub-batch: scale down aggressively (original formula)
+        _NEO4J_SUB_BATCH = max(25, 100 // _scale_factor)
+
+        total_batches = (
+            (total_chunks + EXTRACT_BATCH_SIZE - 1)
+            // EXTRACT_BATCH_SIZE
+        )
         logger.info(
-            f"Processing {total_chunks} chunks in {total_batches} batches "
-            f"(batch_size={BATCH_SIZE}, sub_batch={_CONCEPT_REL_SUB_BATCH}, "
+            f"Processing {total_chunks} chunks in "
+            f"{total_batches} batches "
+            f"(extract_batch={EXTRACT_BATCH_SIZE}, "
+            f"neo4j_sub_batch={_NEO4J_SUB_BATCH}, "
             f"scale_factor={_scale_factor}) for KG extraction"
         )
 
-        for batch_start in range(0, total_chunks, BATCH_SIZE):
-            batch_end = min(batch_start + BATCH_SIZE, total_chunks)
+        for batch_start in range(0, total_chunks, EXTRACT_BATCH_SIZE):
+            batch_end = min(
+                batch_start + EXTRACT_BATCH_SIZE, total_chunks
+            )
             batch = knowledge_chunks[batch_start:batch_end]
-            batch_num = batch_start // BATCH_SIZE + 1
+            batch_num = (
+                batch_start // EXTRACT_BATCH_SIZE + 1
+            )
 
             # Check if document was deleted mid-processing
             if await _is_document_deleted(document_id):
@@ -1809,13 +2394,24 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
                     f"Document {document_id} deleted during KG processing "
                     f"(detected at batch {batch_num}/{total_batches}). Aborting."
                 )
-                return
+                return {
+                    'ner_failures': ner_failure_count,
+                    'llm_failures': llm_failure_count,
+                    'total_chunks': total_chunks,
+                }
 
             # --- Extract concepts & relationships concurrently (NO per-chunk ConceptNet) ---
-            semaphore = asyncio.Semaphore(MAX_CONCURRENT)
+            # Use asyncio.Semaphore for overall chunk concurrency.  The actual
+            # Ollama call inside each chunk's extraction is submitted through
+            # the shared pool (task_type="kg") for fair share with bridging.
+            # NER, regex, and model-server calls stay on this event loop.
+            import os as _os
+            _kg_concurrency = int(_os.environ.get('OLLAMA_NUM_PARALLEL', '16'))
+            _kg_semaphore = asyncio.Semaphore(_kg_concurrency)
 
             async def process_chunk_with_semaphore(chunk: KnowledgeChunk):
-                async with semaphore:
+                """Process chunk with semaphore-limited concurrency."""
+                async with _kg_semaphore:
                     return await kg_builder.process_knowledge_chunk_extract_only(chunk)
 
             tasks = [process_chunk_with_semaphore(chunk) for chunk in batch]
@@ -1824,17 +2420,44 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
             batch_concepts = []
             batch_relationships = []
             for i, extraction in enumerate(extractions):
-                if isinstance(extraction, Exception):
-                    logger.warning(f"KG extraction failed for chunk {batch_start + i}: {extraction}")
+                if isinstance(extraction, BaseException):
+                    logger.warning(
+                        f"KG extraction failed for chunk "
+                        f"{batch_start + i}: "
+                        f"{type(extraction).__name__}: {extraction}"
+                    )
+                    # Only count as model failures if it's a
+                    # connection/timeout error.  Generic exceptions
+                    # (CancelledError, ValueError, etc.) are not
+                    # model-server outages.
+                    exc_name = type(extraction).__name__
+                    if any(kw in exc_name.lower() for kw in (
+                        'connection', 'timeout', 'unavailable',
+                    )):
+                        ner_failure_count += 1
+                        llm_failure_count += 1
                     continue
-                batch_concepts.extend(extraction.extracted_concepts)
-                batch_relationships.extend(extraction.extracted_relationships)
+                # Unpack (ConceptExtraction, ner_failed, llm_failed) tuple
+                concept_extraction, ner_failed, llm_failed = extraction
+                if ner_failed:
+                    ner_failure_count += 1
+                if llm_failed:
+                    llm_failure_count += 1
+                batch_concepts.extend(concept_extraction.extracted_concepts)
+                batch_relationships.extend(concept_extraction.extracted_relationships)
 
             # --- Batch-level ConceptNet validation (2 Neo4j queries per batch) ---
             validated_concepts, conceptnet_rels, _val_stats = \
                 await kg_builder.validate_batch_concepts(batch_concepts)
             batch_concepts = validated_concepts
             batch_relationships.extend(conceptnet_rels)
+
+            # --- UMLS concept linking (annotate with CUI + semantic type) ---
+            if umls_linker is not None:
+                try:
+                    batch_concepts = await umls_linker.link_concepts(batch_concepts)
+                except Exception as e:
+                    logger.warning(f"UMLS linking failed for batch {batch_num}: {e}")
 
             # --- Generate embeddings for this batch's concepts ---
             # The model server accepts max 1000 texts per request, but KG
@@ -1899,21 +2522,19 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
                     })
 
             if chunk_rows:
-                for sub_start in range(0, len(chunk_rows), _CONCEPT_REL_SUB_BATCH):
-                    sub_batch = chunk_rows[sub_start:sub_start + _CONCEPT_REL_SUB_BATCH]
-                    try:
-                        await kg_service.client.execute_query(
-                            """
-                            UNWIND $rows AS row
-                            MERGE (ch:Chunk {chunk_id: row.chunk_id})
-                            ON CREATE SET ch.source_id = row.source_id,
-                                          ch.created_at = row.created_at
-                            RETURN ch.chunk_id AS chunk_id
-                            """,
-                            {'rows': sub_batch}
-                        )
-                    except Exception as e:
-                        logger.warning(f"Batch Chunk MERGE failed: {e}")
+                for sub_start in range(0, len(chunk_rows), _NEO4J_SUB_BATCH):
+                    sub_batch = chunk_rows[sub_start:sub_start + _NEO4J_SUB_BATCH]
+                    await _execute_with_retry(
+                        kg_service.client,
+                        """
+                        UNWIND $rows AS row
+                        MERGE (ch:Chunk {chunk_id: row.chunk_id})
+                        ON CREATE SET ch.source_id = row.source_id,
+                                      ch.created_at = row.created_at
+                        RETURN ch.chunk_id AS chunk_id
+                        """,
+                        {'rows': sub_batch}
+                    )
 
             # --- Step 2: MERGE Concept nodes (no source_chunks/source_document) ---
             new_concept_rows = []
@@ -1934,7 +2555,7 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
                 new_concept_rows.append(row)
 
             # Batch MERGE new concepts (dynamically scaled sub-batches)
-            CONCEPT_BATCH_SIZE = _CONCEPT_REL_SUB_BATCH
+            CONCEPT_BATCH_SIZE = _NEO4J_SUB_BATCH
             for sub_start in range(0, len(new_concept_rows), CONCEPT_BATCH_SIZE):
                 sub_batch = new_concept_rows[sub_start:sub_start + CONCEPT_BATCH_SIZE]
                 # Separate rows with/without embeddings (different SET clauses)
@@ -1942,51 +2563,63 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
                 rows_no_emb = [r for r in sub_batch if 'embedding' not in r]
 
                 if rows_no_emb:
-                    try:
-                        result = await kg_service.client.execute_query(
-                            """
-                            UNWIND $rows AS row
-                            MERGE (c:Concept {concept_id: row.concept_id})
-                            ON CREATE SET c.name = row.name, c.type = row.type,
-                                          c.confidence = row.confidence,
-                                          c.created_at = row.created_at,
-                                          c.updated_at = row.updated_at
-                            ON MATCH SET c.updated_at = row.updated_at
-                            RETURN c.concept_id AS concept_id, elementId(c) AS node_id
-                            """,
-                            {'rows': rows_no_emb}
-                        )
-                        for rec in (result or []):
-                            cid = rec['concept_id']
-                            nid = rec['node_id']
-                            concept_id_map[cid] = nid
-                            total_concepts_persisted += 1
-                    except Exception as e:
-                        logger.warning(f"Batch concept MERGE (no emb) failed: {e}")
+                    result = await _execute_with_retry(
+                        kg_service.client,
+                        """
+                        UNWIND $rows AS row
+                        MERGE (c:Concept {concept_id: row.concept_id})
+                        ON CREATE SET c.name = row.name, c.type = row.type,
+                                      c.concept_type = row.type,
+                                      c.confidence = row.confidence,
+                                      c.name_lower = toLower(row.name),
+                                      c.created_at = row.created_at,
+                                      c.updated_at = row.updated_at
+                        ON MATCH SET c.updated_at = row.updated_at,
+                                     c.concept_type = CASE WHEN c.concept_type IS NULL
+                                                      THEN row.type
+                                                      ELSE c.concept_type END,
+                                     c.name_lower = CASE WHEN c.name_lower IS NULL
+                                                    THEN toLower(row.name)
+                                                    ELSE c.name_lower END
+                        RETURN c.concept_id AS concept_id, elementId(c) AS node_id
+                        """,
+                        {'rows': rows_no_emb}
+                    )
+                    for rec in (result or []):
+                        cid = rec['concept_id']
+                        nid = rec['node_id']
+                        concept_id_map[cid] = nid
+                        total_concepts_persisted += 1
 
                 if rows_with_emb:
-                    try:
-                        result = await kg_service.client.execute_query(
-                            """
-                            UNWIND $rows AS row
-                            MERGE (c:Concept {concept_id: row.concept_id})
-                            ON CREATE SET c.name = row.name, c.type = row.type,
-                                          c.confidence = row.confidence,
-                                          c.embedding = row.embedding,
-                                          c.created_at = row.created_at,
-                                          c.updated_at = row.updated_at
-                            ON MATCH SET c.updated_at = row.updated_at
-                            RETURN c.concept_id AS concept_id, elementId(c) AS node_id
-                            """,
-                            {'rows': rows_with_emb}
-                        )
-                        for rec in (result or []):
-                            cid = rec['concept_id']
-                            nid = rec['node_id']
-                            concept_id_map[cid] = nid
-                            total_concepts_persisted += 1
-                    except Exception as e:
-                        logger.warning(f"Batch concept MERGE (with emb) failed: {e}")
+                    result = await _execute_with_retry(
+                        kg_service.client,
+                        """
+                        UNWIND $rows AS row
+                        MERGE (c:Concept {concept_id: row.concept_id})
+                        ON CREATE SET c.name = row.name, c.type = row.type,
+                                      c.concept_type = row.type,
+                                      c.confidence = row.confidence,
+                                      c.embedding = row.embedding,
+                                      c.name_lower = toLower(row.name),
+                                      c.created_at = row.created_at,
+                                      c.updated_at = row.updated_at
+                        ON MATCH SET c.updated_at = row.updated_at,
+                                     c.concept_type = CASE WHEN c.concept_type IS NULL
+                                                      THEN row.type
+                                                      ELSE c.concept_type END,
+                                     c.name_lower = CASE WHEN c.name_lower IS NULL
+                                                    THEN toLower(row.name)
+                                                    ELSE c.name_lower END
+                        RETURN c.concept_id AS concept_id, elementId(c) AS node_id
+                        """,
+                        {'rows': rows_with_emb}
+                    )
+                    for rec in (result or []):
+                        cid = rec['concept_id']
+                        nid = rec['node_id']
+                        concept_id_map[cid] = nid
+                        total_concepts_persisted += 1
 
             # Update reverse name map for all new concepts
             for concept in batch_concepts:
@@ -2007,23 +2640,21 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
                             'created_at': now_ts,
                         })
 
-            EF_BATCH_SIZE = _CONCEPT_REL_SUB_BATCH
+            EF_BATCH_SIZE = _NEO4J_SUB_BATCH
             for sub_start in range(0, len(ef_rows), EF_BATCH_SIZE):
                 sub_batch = ef_rows[sub_start:sub_start + EF_BATCH_SIZE]
-                try:
-                    await kg_service.client.execute_query(
-                        """
-                        UNWIND $rows AS row
-                        MATCH (c:Concept {concept_id: row.concept_id})
-                        MATCH (ch:Chunk {chunk_id: row.chunk_id})
-                        MERGE (c)-[r:EXTRACTED_FROM]->(ch)
-                        ON CREATE SET r.created_at = row.created_at
-                        RETURN count(r) AS cnt
-                        """,
-                        {'rows': sub_batch}
-                    )
-                except Exception as e:
-                    logger.warning(f"Batch EXTRACTED_FROM MERGE failed: {e}")
+                await _execute_with_retry(
+                    kg_service.client,
+                    """
+                    UNWIND $rows AS row
+                    MATCH (c:Concept {concept_id: row.concept_id})
+                    MATCH (ch:Chunk {chunk_id: row.chunk_id})
+                    MERGE (c)-[r:EXTRACTED_FROM]->(ch)
+                    ON CREATE SET r.created_at = row.created_at
+                    RETURN count(r) AS cnt
+                    """,
+                    {'rows': sub_batch}
+                )
 
             # --- Persist relationships incrementally (batched UNWIND) ---
             # Group relationships by type (Neo4j requires static rel types in queries)
@@ -2053,30 +2684,29 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
                         'created_at': now_ts,
                     })
 
-            REL_BATCH_SIZE = _CONCEPT_REL_SUB_BATCH
+            REL_BATCH_SIZE = _NEO4J_SUB_BATCH
             for rel_type, rel_rows in rels_by_type.items():
                 for sub_start in range(0, len(rel_rows), REL_BATCH_SIZE):
                     sub_batch = rel_rows[sub_start:sub_start + REL_BATCH_SIZE]
-                    try:
-                        result = await kg_service.client.execute_query(
-                            f"""
-                            UNWIND $rows AS row
-                            MATCH (a) WHERE elementId(a) = row.from_id
-                            MATCH (b) WHERE elementId(b) = row.to_id
-                            MERGE (a)-[r:{rel_type}]->(b)
-                            ON CREATE SET r.confidence = row.confidence,
-                                          r.evidence_chunks = row.evidence_chunks,
-                                          r.source_document = row.source_document,
-                                          r.created_at = row.created_at
-                            ON MATCH SET r.confidence = row.confidence
-                            RETURN count(r) AS cnt
-                            """,
-                            {'rows': sub_batch}
-                        )
+                    result = await _execute_with_retry(
+                        kg_service.client,
+                        f"""
+                        UNWIND $rows AS row
+                        MATCH (a) WHERE elementId(a) = row.from_id
+                        MATCH (b) WHERE elementId(b) = row.to_id
+                        MERGE (a)-[r:{rel_type}]->(b)
+                        ON CREATE SET r.confidence = row.confidence,
+                                      r.evidence_chunks = row.evidence_chunks,
+                                      r.source_document = row.source_document,
+                                      r.created_at = row.created_at
+                        ON MATCH SET r.confidence = row.confidence
+                        RETURN count(r) AS cnt
+                        """,
+                        {'rows': sub_batch}
+                    )
+                    if result:
                         cnt = result[0]['cnt'] if result else 0
                         total_relationships_persisted += cnt
-                    except Exception as e:
-                        logger.warning(f"Batch relationship MERGE ({rel_type}) failed: {e}")
 
             logger.info(
                 f"KG batch {batch_num}/{total_batches}: "
@@ -2090,7 +2720,7 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
             pct = _set_parallel_progress(document_id, 'kg', fraction)
             await _update_job_status_sync(
                 UUID(document_id), 'running', pct,
-                'Updating knowledge graph',
+                _get_parallel_step_label(document_id),
                 metadata={
                     'kg_batch': batch_num,
                     'kg_total_batches': total_batches,
@@ -2105,6 +2735,25 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
             f"KG complete: persisted {total_concepts_persisted} concepts and "
             f"{total_relationships_persisted} relationships for document {document_id}"
         )
+
+        # --- Create SAME_AS edges between Concept and UMLSConcept nodes ---
+        if umls_linker is not None:
+            try:
+                from ..components.knowledge_graph.umls_bridger import UMLSBridger
+
+                umls_bridger = UMLSBridger(neo4j_client=kg_service.client)
+                # Incremental bridging: only bridge concepts from this document
+                doc_concept_names = list(concept_name_to_id.keys())
+                bridge_result = await umls_bridger.bridge_concepts(doc_concept_names)
+                logger.info(
+                    f"UMLS bridging complete for document {document_id}: "
+                    f"{bridge_result.concepts_matched} matched, "
+                    f"{bridge_result.same_as_edges_created} SAME_AS edges, "
+                    f"{bridge_result.unmatched_concepts} unmatched, "
+                    f"{bridge_result.elapsed_seconds}s"
+                )
+            except Exception as e:
+                logger.warning(f"UMLS bridging failed for document {document_id}: {e}")
 
         # Queue background enrichment task
         if all_concept_ids:
@@ -2121,6 +2770,12 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
             )
         else:
             logger.info(f"No concepts to enrich for document {document_id}")
+
+        return {
+            'ner_failures': ner_failure_count,
+            'llm_failures': llm_failure_count,
+            'total_chunks': total_chunks,
+        }
 
     except Exception as e:
         logger.error(f"Error updating knowledge graph: {e}")
@@ -2811,6 +3466,142 @@ async def _mark_enrichment_failed(
 
 
 # Helper functions for async operations in sync tasks
+
+
+async def _store_processing_payload(document_id: str, payload: Dict[str, Any]) -> None:
+    """Store processed document payload in PostgreSQL instead of passing through Celery broker."""
+    import json
+    from uuid import UUID as _UUID
+
+    from ..database.connection import get_async_connection
+    conn = await get_async_connection()
+    try:
+        doc_uuid = _UUID(document_id) if isinstance(document_id, str) else document_id
+        await conn.execute(
+            """
+            INSERT INTO multimodal_librarian.processing_payloads (document_id, payload)
+            VALUES ($1, $2::jsonb)
+            ON CONFLICT (document_id) DO UPDATE SET payload = $2::jsonb, created_at = CURRENT_TIMESTAMP
+            """,
+            doc_uuid, json.dumps(payload)
+        )
+        logger.info(f"Stored processing payload for document {document_id}")
+    finally:
+        await conn.close()
+
+
+async def _retrieve_processing_payload(document_id: str) -> Dict[str, Any]:
+    """Retrieve processed document payload from PostgreSQL."""
+    import json
+    from uuid import UUID as _UUID
+
+    from ..database.connection import get_async_connection
+    conn = await get_async_connection()
+    try:
+        doc_uuid = _UUID(document_id) if isinstance(document_id, str) else document_id
+        row = await conn.fetchrow(
+            "SELECT payload FROM multimodal_librarian.processing_payloads WHERE document_id = $1",
+            doc_uuid
+        )
+        if row is None:
+            raise ValueError(f"No processing payload found for document {document_id}")
+        payload = row['payload']
+        # asyncpg returns JSONB as a string or dict depending on version
+        if isinstance(payload, str):
+            return json.loads(payload)
+        return payload
+    finally:
+        await conn.close()
+
+
+async def _delete_processing_payload(document_id: str) -> None:
+    """Clean up processing payload after processing completes."""
+    from uuid import UUID as _UUID
+
+    from ..database.connection import get_async_connection
+    conn = await get_async_connection()
+    try:
+        doc_uuid = _UUID(document_id) if isinstance(document_id, str) else document_id
+        await conn.execute(
+            "DELETE FROM multimodal_librarian.processing_payloads WHERE document_id = $1",
+            doc_uuid
+        )
+        logger.debug(f"Cleaned up processing payload for document {document_id}")
+    finally:
+        await conn.close()
+
+
+async def _compute_composite_scores(document_id: str) -> None:
+    """Compute composite scores and create RELATED_DOCS edges for a document."""
+    from ..clients.database_factory import get_database_factory
+    from ..services.composite_score_engine import CompositeScoreEngine
+
+    factory = get_database_factory()
+    client = factory.get_graph_client()
+    if not getattr(client, '_is_connected', False):
+        await client.connect()
+
+    engine = CompositeScoreEngine(client)
+    result = await engine.compute_composite_scores(document_id)
+    logger.info(
+        f"Composite scores for {document_id}: "
+        f"{result.edges_discovered} edges, "
+        f"{result.document_pairs} pairs, "
+        f"{result.related_docs_created} RELATED_DOCS, "
+        f"{result.duration_ms:.0f}ms"
+    )
+
+
+async def _record_stage_timing(document_id, stage: str, duration_seconds: float):
+    """Record a pipeline stage's duration in job_metadata.stage_timings."""
+    try:
+        import json
+
+        from ..database.connection import get_async_connection
+        conn = await get_async_connection()
+        try:
+            await conn.execute("""
+                UPDATE multimodal_librarian.processing_jobs
+                SET job_metadata = jsonb_set(
+                    jsonb_set(
+                        COALESCE(job_metadata, '{}'::jsonb),
+                        '{stage_timings}',
+                        COALESCE(job_metadata->'stage_timings', '{}'::jsonb)
+                    ),
+                    ARRAY['stage_timings', $1],
+                    $2::jsonb
+                )
+                WHERE source_id = $3::uuid
+            """, stage, json.dumps(round(duration_seconds, 2)), str(document_id))
+        finally:
+            await conn.close()
+    except Exception as e:
+        logger.warning(f"Failed to record stage timing for {stage}: {e}")
+
+
+async def _persist_quality_gate_data(document_id, quality_gate_dict: Dict[str, Any]):
+    """Persist quality gate evaluation result to job_metadata.quality_gate."""
+    try:
+        import json
+
+        from ..database.connection import get_async_connection
+        conn = await get_async_connection()
+        try:
+            await conn.execute("""
+                UPDATE multimodal_librarian.processing_jobs
+                SET job_metadata = jsonb_set(
+                    COALESCE(job_metadata, '{}'::jsonb),
+                    '{quality_gate}',
+                    $1::jsonb
+                )
+                WHERE source_id = $2::uuid
+            """, json.dumps(quality_gate_dict), str(document_id))
+        finally:
+            await conn.close()
+    except Exception as e:
+        logger.warning(f"Failed to persist quality gate data for {document_id}: {e}")
+
+
 async def _update_job_status_sync(document_id, status: str, progress: float,
                                   step: str, error_message: str = None,
                                   failed_stage: str = None,
@@ -2848,7 +3639,7 @@ async def _update_job_status_sync(document_id, status: str, progress: float,
                 param_idx += 1
 
             if status == 'running':
-                update_fields.append("started_at = NOW()")
+                update_fields.append("started_at = COALESCE(started_at, NOW())")
             elif status in ['completed', 'failed']:
                 update_fields.append("completed_at = NOW()")
             
@@ -2862,10 +3653,18 @@ async def _update_job_status_sync(document_id, status: str, progress: float,
             update_clause = ", ".join(update_fields)
             params.append(str(document_id))
 
+            # Guard: don't let a 'running' update overwrite a terminal
+            # status ('completed' or 'failed').  This prevents a parallel
+            # subtask's progress update from clobbering the failure status
+            # set by another subtask's error handler.
+            status_guard = ""
+            if status == 'running':
+                status_guard = " AND status NOT IN ('completed', 'failed')"
+
             await conn.execute(f"""
                 UPDATE multimodal_librarian.processing_jobs
                 SET {update_clause}
-                WHERE source_id = ${param_idx}
+                WHERE source_id = ${param_idx}{status_guard}
             """, *params)
         finally:
             await conn.close()
@@ -3066,7 +3865,19 @@ async def _store_chunks_in_database(document_id: str, chunks: List[Dict[str, Any
         try:
             # Use a transaction for batch insert
             async with conn.transaction():
+                DELETION_CHECK_INTERVAL = 200  # Check every 200 chunks
                 for i, chunk in enumerate(chunks):
+                    # Periodically check if document was deleted mid-storage
+                    if i > 0 and i % DELETION_CHECK_INTERVAL == 0:
+                        if await _is_document_deleted(document_id):
+                            logger.info(
+                                f"Document {document_id} deleted during chunk storage "
+                                f"(chunk {i}/{total_chunks}), aborting."
+                            )
+                            raise DocumentDeletedError(
+                                f"Document {document_id} was deleted during chunk storage"
+                            )
+
                     # Serialize metadata to JSON string if it's a dict
                     metadata = chunk.get('metadata', {})
                     if isinstance(metadata, dict):
@@ -3139,7 +3950,8 @@ async def _store_chunks_in_database(document_id: str, chunks: List[Dict[str, Any
                             'total_chunks': total_chunks,
                         }
                         if max_page_seen > 0:
-                            meta['current_page'] = max_page_seen
+                            clamped_page = min(max_page_seen, total_pages) if total_pages > 0 else max_page_seen
+                            meta['current_page'] = clamped_page
                         if total_pages > 0:
                             meta['total_pages'] = total_pages
                         await _update_job_status_sync(
@@ -3391,3 +4203,76 @@ def task_failure_handler(sender=None, task_id=None, exception=None,
             logger.error(f"Failed to mark document {document_id} as failed: {e}")
     else:
         logger.warning(f"Could not extract document_id from failed task args: {args}")
+
+
+@worker_ready.connect
+def worker_ready_handler(**kwargs):
+    """Clean up stale Redis task locks when the worker starts.
+
+    On a single-worker deployment, any existing locks are orphaned
+    from a previous worker instance.  On multi-worker deployments,
+    this is still safe because worker_shutdown_handler clears locks
+    when a worker stops — so any locks present at startup of a NEW
+    worker are from a crashed (not gracefully stopped) predecessor.
+
+    We only clear locks that have no heartbeat renewal (i.e., the
+    TTL is decaying, meaning no live task is extending it).  We do
+    this by checking if the lock's remaining TTL is less than half
+    the original TTL (600s), indicating the heartbeat stopped.
+    """
+    try:
+        import redis as _redis
+        broker_url = os.environ.get("CELERY_BROKER_URL", "redis://redis:6379/0")
+        rc = _redis.Redis.from_url(broker_url)
+        cleaned = 0
+        for pattern in ("bridge_lock:*", "kg_lock:*"):
+            for key in rc.scan_iter(match=pattern):
+                ttl = rc.ttl(key)
+                # If TTL < 300s (half of 600s default), the heartbeat
+                # is dead — this lock is orphaned.  If TTL is -1 (no
+                # expiry) or -2 (key gone), also clean up.
+                if ttl < 300:
+                    rc.delete(key)
+                    cleaned += 1
+                    logger.info(
+                        f"Cleaned up stale lock on startup: {key} "
+                        f"(remaining TTL: {ttl}s)"
+                    )
+        rc.close()
+        if cleaned:
+            logger.info(
+                f"Cleaned {cleaned} stale Redis task lock(s) "
+                f"on worker startup"
+            )
+    except Exception as e:
+        logger.warning(f"Redis lock cleanup on startup failed: {e}")
+
+
+@worker_shutdown.connect
+def worker_shutdown_handler(**kwargs):
+    """Gracefully shutdown the shared Ollama pool when the Celery worker stops.
+
+    Requirements: 7.3 - Pool resources properly managed across worker lifecycle.
+    """
+    from ..services.ollama_pool_manager import shutdown_pool
+
+    logger.info("Celery worker shutting down — closing shared Ollama pool")
+    shutdown_pool(wait=True)
+
+    # Clean up all Redis task locks held by this worker.
+    # When the worker shuts down, any in-flight tasks are killed and their
+    # locks become stale.  Clearing them here prevents the next worker
+    # from being blocked by orphaned locks.
+    try:
+        import redis as _redis
+        broker_url = os.environ.get("CELERY_BROKER_URL", "redis://redis:6379/0")
+        rc = _redis.Redis.from_url(broker_url)
+        for pattern in ("bridge_lock:*", "kg_lock:*"):
+            for key in rc.scan_iter(match=pattern):
+                rc.delete(key)
+                logger.info(f"Cleaned up stale lock on shutdown: {key}")
+        rc.close()
+    except Exception as e:
+        logger.warning(f"Redis lock cleanup on shutdown failed: {e}")
+
+    logger.info("Shared Ollama pool shutdown complete")

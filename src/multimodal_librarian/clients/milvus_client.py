@@ -1056,16 +1056,17 @@ class MilvusClient:
             # Try model server first
             if hasattr(self, '_model_server_client') and self._model_server_client is not None:
                 try:
-                    loop = asyncio.get_event_loop()
-                    if not loop.is_running():
-                        embeddings = loop.run_until_complete(
-                            self._model_server_client.generate_embeddings([text.strip()])
-                        )
-                        if embeddings:
-                            embedding = embeddings[0]
-                            if hasattr(embedding, 'tolist'):
-                                return embedding.tolist()
-                            return list(embedding)
+                    embeddings = asyncio.run(
+                        self._model_server_client.generate_embeddings([text.strip()])
+                    )
+                    if embeddings:
+                        embedding = embeddings[0]
+                        if hasattr(embedding, 'tolist'):
+                            return embedding.tolist()
+                        return list(embedding)
+                except RuntimeError:
+                    # Event loop already running — can't use asyncio.run()
+                    pass
                 except Exception as e:
                     logger.warning(f"Model server embedding failed: {e}")
             
@@ -1076,16 +1077,16 @@ class MilvusClient:
             # Try model server again after initialization
             if hasattr(self, '_model_server_client') and self._model_server_client is not None:
                 try:
-                    loop = asyncio.get_event_loop()
-                    if not loop.is_running():
-                        embeddings = loop.run_until_complete(
-                            self._model_server_client.generate_embeddings([text.strip()])
-                        )
-                        if embeddings:
-                            embedding = embeddings[0]
-                            if hasattr(embedding, 'tolist'):
-                                return embedding.tolist()
-                            return list(embedding)
+                    embeddings = asyncio.run(
+                        self._model_server_client.generate_embeddings([text.strip()])
+                    )
+                    if embeddings:
+                        embedding = embeddings[0]
+                        if hasattr(embedding, 'tolist'):
+                            return embedding.tolist()
+                        return list(embedding)
+                except RuntimeError:
+                    pass
                 except Exception as e:
                     logger.warning(f"Model server embedding failed: {e}")
             
@@ -1204,10 +1205,14 @@ class MilvusClient:
                 client = get_model_client()
                 if client is None:
                     # Initialize synchronously
-                    loop = asyncio.get_event_loop()
-                    if not loop.is_running():
-                        loop.run_until_complete(initialize_model_client())
-                        client = get_model_client()
+                    try:
+                        asyncio.run(initialize_model_client())
+                    except RuntimeError:
+                        # Event loop already running — try get_event_loop path
+                        loop = asyncio.get_event_loop()
+                        if not loop.is_running():
+                            loop.run_until_complete(initialize_model_client())
+                    client = get_model_client()
                 
                 if client and client.enabled:
                     self._model_server_client = client
@@ -1235,30 +1240,43 @@ class MilvusClient:
         This method tries the model server first (non-blocking), then falls back
         to local model loading via thread pool if needed.
         """
-        # Try model server first (non-blocking)
-        if not hasattr(self, '_model_server_client') or self._model_server_client is None:
-            try:
-                from .model_server_client import (
-                    get_model_client,
-                    initialize_model_client,
-                )
-                
-                client = get_model_client()
-                if client is None:
-                    await initialize_model_client()
-                    client = get_model_client()
-                
-                if client and client.enabled:
-                    self._model_server_client = client
-                    self._embedding_dimension = 768  # Default for bge-base-en-v1.5
-                    logger.info("Using model server for embeddings (non-blocking)")
-                    return
-            except Exception as e:
-                logger.warning(f"Model server not available: {e}")
-        
-        # Model server client already available
+        # Already have a working model server client
         if hasattr(self, '_model_server_client') and self._model_server_client is not None:
             return
+
+        # Try model server first (non-blocking)
+        try:
+            from .model_server_client import (
+                ModelServerClient,
+                get_model_client,
+                initialize_model_client,
+            )
+
+            # Check global singleton first
+            client = get_model_client()
+            if client is None:
+                # Try async initialization (works when called from async context)
+                try:
+                    await initialize_model_client()
+                    client = get_model_client()
+                except Exception:
+                    pass
+            
+            # If global singleton still unavailable, create a direct client
+            # This handles the case where the global was initialized in a
+            # different process (celery fork) or a now-dead event loop.
+            if client is None or not client.enabled:
+                import os
+                url = os.environ.get('MODEL_SERVER_URL', 'http://model-server:8001')
+                client = ModelServerClient(base_url=url)
+            
+            if client and client.enabled:
+                self._model_server_client = client
+                self._embedding_dimension = 768
+                logger.info("Using model server for embeddings (non-blocking)")
+                return
+        except Exception as e:
+            logger.warning(f"Model server not available: {e}")
         
         # Fallback to local model (blocking, offloaded to thread pool)
         if self._embedding_model is None:
@@ -1794,10 +1812,26 @@ class MilvusClient:
             data = [ids, vector_data, metadata_data]
             
             loop = asyncio.get_event_loop()
-            insert_result = await loop.run_in_executor(None, collection.insert, data)
+            insert_result = await loop.run_in_executor(None, collection.upsert, data)
             
-            # Flush to ensure data is persisted
-            await loop.run_in_executor(None, collection.flush)
+            # Flush to ensure data is persisted (with retry for transient
+            # Milvus datanode ID mismatch errors after container restarts)
+            max_flush_retries = 3
+            for attempt in range(max_flush_retries):
+                try:
+                    await loop.run_in_executor(None, collection.flush)
+                    break
+                except Exception as flush_err:
+                    err_str = str(flush_err)
+                    if "node not match" in err_str and attempt < max_flush_retries - 1:
+                        wait = 5 * (attempt + 1)
+                        logger.warning(
+                            f"Flush failed (attempt {attempt + 1}/{max_flush_retries}), "
+                            f"retrying in {wait}s: {err_str[:120]}"
+                        )
+                        await asyncio.sleep(wait)
+                    else:
+                        raise
             
             logger.info(f"Successfully inserted {len(vectors)} vectors into '{collection_name}'")
             

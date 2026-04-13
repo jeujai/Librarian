@@ -40,7 +40,7 @@ class ModelServerClient:
         self,
         base_url: str = "http://model-server:8001",
         timeout: float = 30.0,
-        max_retries: int = 3,
+        max_retries: int = 5,
         retry_delay: float = 1.0,
         enabled: bool = True
     ):
@@ -134,13 +134,13 @@ class ModelServerClient:
             raise ModelServerUnavailable("Model server is disabled")
         
         url = f"{self.base_url}{path}"
-        session = await self._get_session()
         
         last_error = None
         attempts = self.max_retries if retry else 1
         
         for attempt in range(attempts):
             try:
+                session = await self._get_session()
                 async with session.request(method, url, json=json) as response:
                     if response.status == 503:
                         raise ModelServerUnavailable("Model server not ready")
@@ -152,6 +152,29 @@ class ModelServerClient:
                 last_error = e
                 logger.warning(
                     f"Model server connection failed (attempt {attempt + 1}/{attempts}): {e}"
+                )
+            except aiohttp.ServerDisconnectedError as e:
+                last_error = e
+                # Force a fresh session on next attempt — the TCP connection died
+                if self._session is not None and not self._session.closed:
+                    try:
+                        await self._session.close()
+                    except Exception:
+                        pass
+                self._session = None
+                logger.warning(
+                    f"Model server disconnected (attempt {attempt + 1}/{attempts}): {e}"
+                )
+            except (aiohttp.ClientOSError, ConnectionResetError) as e:
+                last_error = e
+                if self._session is not None and not self._session.closed:
+                    try:
+                        await self._session.close()
+                    except Exception:
+                        pass
+                self._session = None
+                logger.warning(
+                    f"Model server connection reset (attempt {attempt + 1}/{attempts}): {e}"
                 )
             except aiohttp.ClientResponseError as e:
                 last_error = e
@@ -168,11 +191,24 @@ class ModelServerClient:
                 )
             except Exception as e:
                 last_error = e
-                logger.error(f"Unexpected error calling model server: {e}")
-                raise ModelServerError(f"Unexpected error: {e}")
+                err_str = str(e).lower()
+                # Retry on connection-related errors instead of raising immediately
+                if any(s in err_str for s in ("session is closed", "connector is closed", "connection closed")):
+                    if self._session is not None and not self._session.closed:
+                        try:
+                            await self._session.close()
+                        except Exception:
+                            pass
+                    self._session = None
+                    logger.warning(
+                        f"Model server session error (attempt {attempt + 1}/{attempts}): {e}"
+                    )
+                else:
+                    logger.error(f"Unexpected error calling model server: {e}")
+                    raise ModelServerError(f"Unexpected error: {e}")
             
             if attempt < attempts - 1:
-                await asyncio.sleep(self.retry_delay * (attempt + 1))
+                await asyncio.sleep(min(2 ** attempt, 16))
         
         raise ModelServerUnavailable(f"Model server unavailable after {attempts} attempts: {last_error}")
     
@@ -259,6 +295,29 @@ class ModelServerClient:
         
         result = await self._request("POST", "/embeddings", json=request_data)
         return result.get("embeddings", [])
+    
+    async def rerank(self, query: str, documents: List[str]) -> List[float]:
+        """
+        Score query-document pairs via cross-encoder reranking.
+        
+        Args:
+            query: Query text for cross-attention scoring
+            documents: List of document texts to score against the query
+            
+        Returns:
+            List of relevance scores in [0, 1], one per document
+            
+        Raises:
+            ModelServerError: On server-side errors
+            ModelServerUnavailable: On connection/timeout failures or 503
+        """
+        if not documents:
+            return []
+        
+        result = await self._request(
+            "POST", "/rerank", json={"query": query, "documents": documents}
+        )
+        return result.get("scores", [])
     
     async def process_nlp(
         self,

@@ -6,9 +6,11 @@ builds incremental knowledge graphs, and manages knowledge graph construction.
 """
 
 import asyncio
+import json
 import logging
 import math
 import re
+import threading
 import uuid
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
@@ -18,7 +20,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import numpy as np
 
 from ...config import get_settings
-from ...models.core import KnowledgeChunk, RelationshipType
+from ...models.core import ContentType, KnowledgeChunk, RelationshipType
 from ...models.knowledge_graph import (
     ConceptExtraction,
     ConceptNode,
@@ -28,7 +30,18 @@ from ...models.knowledge_graph import (
 )
 from .relation_type_mapper import RelationTypeMapper
 
+# Optional Gemini import for concept extraction failover
+try:
+    import google.generativeai as genai
+    GEMINI_AVAILABLE = True
+except ImportError:
+    GEMINI_AVAILABLE = False
+    genai = None
+
 logger = logging.getLogger(__name__)
+
+# Thread-local storage for reusing event loops in pool worker threads
+_kg_thread_local = threading.local()
 
 # Thread pool for CPU-bound embedding operations
 _kg_executor: Optional[ThreadPoolExecutor] = None
@@ -44,6 +57,54 @@ def _get_kg_executor() -> ThreadPoolExecutor:
         )
         logger.info("Created KG embedding thread pool executor")
     return _kg_executor
+
+
+# ---------------------------------------------------------------------------
+# Domain Prompt Registry & Prompt Template for LLM-based concept extraction
+# ---------------------------------------------------------------------------
+
+DOMAIN_PROMPT_REGISTRY: Dict[ContentType, Dict[str, Any]] = {
+    ContentType.TECHNICAL: {
+        "domain_description": "technical documentation",
+        "concept_types": ["API", "PROTOCOL", "ALGORITHM", "DATA_STRUCTURE", "FRAMEWORK", "DESIGN_PATTERN"],
+    },
+    ContentType.MEDICAL: {
+        "domain_description": "medical/clinical content",
+        "concept_types": ["DISEASE", "DRUG", "PROCEDURE", "ANATOMY", "LAB_TEST", "GENE", "PATHWAY"],
+    },
+    ContentType.LEGAL: {
+        "domain_description": "legal content",
+        "concept_types": ["STATUTE", "CASE_NAME", "DOCTRINE", "PARTY", "JURISDICTION", "REGULATORY_BODY"],
+    },
+    ContentType.ACADEMIC: {
+        "domain_description": "academic/research content",
+        "concept_types": ["THEORY", "METHODOLOGY", "RESEARCHER", "INSTITUTION", "DATASET", "METRIC"],
+    },
+    ContentType.NARRATIVE: {
+        "domain_description": "narrative content",
+        "concept_types": ["CHARACTER", "LOCATION", "EVENT", "THEME", "TIME_PERIOD"],
+    },
+    ContentType.GENERAL: {
+        "domain_description": "general content",
+        "concept_types": ["ENTITY", "TOPIC", "ORGANIZATION", "PERSON", "LOCATION"],
+    },
+}
+
+CONCEPT_EXTRACTION_PROMPT_TEMPLATE = """Extract key concepts from the following {domain_description}.
+Valid concept types: {concept_types}
+
+Return ONLY a JSON array. No explanation, no markdown, no extra text.
+Each element must have "name", "type", and "rationale" fields.
+
+Example output:
+[{{"name": "neural network", "type": "ENTITY", "rationale": "neural network architecture"}}]
+
+Only extract terms explicitly mentioned in the text.
+
+Text:
+{text}
+
+JSON:"""
 
 
 class ConceptExtractor:
@@ -88,12 +149,432 @@ class ConceptExtractor:
             "BE", "OF", "AS",
         }
         
+        # Lazy-initialized OllamaClient (no import-time connection)
+        self._ollama_client = None  # Optional[OllamaClient]
+        
         # Corpus-level collocation frequency cache.
         # Keyed by normalized bigram string (e.g. "knowledge_graph"), storing:
         #   frequency: cumulative count across all documents
         #   doc_count: number of documents the bigram appeared in
         self._collocation_cache: Dict[str, Dict[str, int]] = {}
+
+        # Gemini failover for concept extraction (lazy init)
+        self._gemini_model = None
+        self._gemini_initialized = False
+
+        # Provider statistics for observability
+        self._concept_provider_stats = {
+            'ollama_success': 0,
+            'gemini_fallback': 0,
+            'both_failed': 0,
+        }
     
+    async def _get_ollama_client(self):
+        """Get or initialize the Ollama client (lazy, cached).
+
+        Follows the same lazy-init pattern as
+        ``SmartBridgeGenerator._get_ollama_client`` — the import and
+        availability check happen on first call only.  Returns ``None``
+        when Ollama is unreachable so callers can degrade gracefully.
+
+        Caches negative results via ``_ollama_checked`` sentinel to avoid
+        re-checking availability on every chunk when Ollama is down.
+        """
+        if self._ollama_client is not None:
+            return self._ollama_client
+
+        # Already checked and found unavailable — skip re-check
+        if getattr(self, '_ollama_checked', False):
+            return None
+
+        try:
+            from ...clients.ollama_client import get_ollama_client
+
+            client = get_ollama_client()
+            if await client.is_available():
+                self._ollama_client = client
+                return client
+            else:
+                logger.warning("Ollama not available, LLM concept extraction will be skipped")
+                self._ollama_checked = True
+                return None
+        except Exception as e:
+            logger.warning(f"Failed to initialize Ollama client: {e}")
+            self._ollama_checked = True
+            return None
+
+    # ------------------------------------------------------------------
+    # Gemini lazy initialization for concept extraction failover
+    # ------------------------------------------------------------------
+
+    def _ensure_gemini(self):
+        """Lazily initialize Gemini for concept extraction failover.
+
+        Follows the same lazy-init pattern as
+        ``SmartBridgeGenerator._initialize_gemini``.  Sets
+        ``_gemini_initialized`` to ``True`` even on failure to avoid
+        re-attempting initialization on every call.
+        """
+        if self._gemini_initialized:
+            return
+        self._gemini_initialized = True
+
+        if not GEMINI_AVAILABLE:
+            logger.warning("google-generativeai not installed - Gemini concept extraction unavailable")
+            self._gemini_model = None
+            return
+
+        try:
+            settings = get_settings()
+            api_key = getattr(settings, 'GEMINI_API_KEY', None) or getattr(settings, 'gemini_api_key', None)
+            if not api_key:
+                logger.warning("GEMINI_API_KEY not found - Gemini concept extraction unavailable")
+                self._gemini_model = None
+                return
+
+            genai.configure(api_key=api_key)
+            self._gemini_model = genai.GenerativeModel(
+                model_name="gemini-2.5-flash",
+                generation_config=genai.types.GenerationConfig(
+                    temperature=0.2,
+                    max_output_tokens=1000,
+                ),
+            )
+            logger.info("Initialized Gemini for KG concept extraction failover (lazy init)")
+        except Exception as e:
+            logger.warning(f"Gemini init failed for concept extraction: {e}")
+            self._gemini_model = None
+
+    async def _extract_concepts_gemini(
+        self, text: str, prompt: str
+    ) -> List[ConceptNode]:
+        """Extract concepts via Gemini (failover from Ollama).
+
+        Uses the same prompt, JSON parsing, and rationale filtering as
+        the Ollama path.  Returns ``[]`` if Gemini is unavailable or fails.
+
+        NOTE: Runs the blocking Gemini call in a daemon thread with a hard
+        60-second timeout.  On timeout the daemon thread is abandoned (not
+        joined) so the pool worker is freed immediately.
+        """
+        self._ensure_gemini()
+        if self._gemini_model is None:
+            return []
+
+        try:
+            import concurrent.futures as _cf
+
+            # Use a standalone executor and do NOT use a `with` block —
+            # the context manager calls shutdown(wait=True) which would
+            # block if the Gemini thread is hung.  Instead we fire-and-
+            # forget the executor; the daemon thread will eventually die
+            # when the process exits.
+            pool = _cf.ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="gemini_kg"
+            )
+            future = pool.submit(
+                self._gemini_model.generate_content,
+                prompt,
+                request_options={"timeout": 60},
+            )
+            pool.shutdown(wait=False)  # Don't block; let thread run
+
+            try:
+                response = future.result(timeout=60)
+            except (_cf.TimeoutError, TimeoutError):
+                logger.warning(
+                    "Gemini concept extraction timed out after 60s"
+                )
+                future.cancel()
+                return []
+
+            if not response.candidates or not response.candidates[0].content.parts:
+                logger.debug("Gemini returned no candidates for concept extraction")
+                return []
+
+            response_text = response.candidates[0].content.parts[0].text
+            entries = self._extract_json_array(response_text)
+            if entries is None:
+                logger.debug(
+                    "Gemini returned unparseable response (first 300 chars): %.300s",
+                    response_text,
+                )
+                return []
+
+            grounded = self._filter_by_rationale(entries, text)
+            return grounded  # Return raw dicts; caller builds ConceptNodes
+        except Exception as e:
+            logger.warning("Gemini concept extraction failed: %s", e)
+            return []
+
+    # ------------------------------------------------------------------
+    # Shared prompt builder
+    # ------------------------------------------------------------------
+
+    def _build_concept_prompt(
+        self, text: str, content_type: ContentType
+    ) -> str:
+        """Build the domain-aware concept extraction prompt.
+
+        Shared by both Ollama and Gemini code paths so the same prompt
+        template is used regardless of provider.
+        """
+        config = DOMAIN_PROMPT_REGISTRY[content_type]
+        return CONCEPT_EXTRACTION_PROMPT_TEMPLATE.format(
+            domain_description=config["domain_description"],
+            concept_types=", ".join(config["concept_types"]),
+            text=text[:2000],
+        )
+
+    # ------------------------------------------------------------------
+    # LLM-based concept extraction (Ollama)
+    # ------------------------------------------------------------------
+
+    def _filter_by_rationale(
+        self, candidates: List[Dict], source_text: str
+    ) -> List[Dict]:
+        """Filter LLM concept candidates by rationale grounding.
+
+        Keeps only candidates whose ``rationale`` field is a non-empty string
+        that appears as a case-insensitive substring of *source_text*.
+        """
+        source_lower = source_text.lower()
+        kept: List[Dict] = []
+        for candidate in candidates:
+            rationale = candidate.get("rationale", "")
+            if not rationale or not isinstance(rationale, str) or not rationale.strip():
+                logger.debug(
+                    "Discarding concept %s: empty or missing rationale",
+                    candidate.get("name", "<unknown>"),
+                )
+                continue
+            if rationale.lower() not in source_lower:
+                logger.debug(
+                    "Discarding concept %s: rationale not found in source text",
+                    candidate.get("name", "<unknown>"),
+                )
+                continue
+            kept.append(candidate)
+        return kept
+
+    async def extract_concepts_ollama(
+        self, text: str, content_type: ContentType = ContentType.GENERAL
+    ) -> Tuple[List[ConceptNode], bool]:
+        """Extract concepts via the local Ollama LLM, with Gemini failover.
+
+        Sends a domain-aware prompt to Ollama, parses the JSON response,
+        filters by rationale grounding, and returns ConceptNodes with
+        domain-aware confidence scores.  If Ollama fails, falls back to
+        Gemini using the same prompt.
+
+        Returns ``(concepts, llm_failed)`` where ``llm_failed=True`` when
+        both Ollama fails and Gemini is disabled or also fails.
+        """
+        # Build shared prompt (used by both Ollama and Gemini)
+        prompt = self._build_concept_prompt(text, content_type)
+
+        # Domain-aware confidence
+        if content_type in (ContentType.MEDICAL, ContentType.LEGAL):
+            base_confidence = 0.65
+        else:
+            base_confidence = 0.70
+
+        # --- Try Ollama first ---
+        grounded = await self._try_ollama_extraction(text, prompt)
+
+        if grounded is not None:
+            self._concept_provider_stats['ollama_success'] += 1
+            return (self._build_concept_nodes(grounded, base_confidence), False)
+
+        # --- Ollama failed, try Gemini ---
+        # DISABLED: Gemini failover causes pool worker hangs when running
+        # inside the shared Ollama thread pool.  The gRPC transport used by
+        # google-generativeai is incompatible with the pool's thread-local
+        # event loops, causing indefinite blocks that stall asyncio.gather.
+        # NER + regex still provide concepts when Ollama fails.
+        # Re-enable once Gemini failover uses a pool-safe transport.
+        #
+        # logger.info("Ollama concept extraction failed, falling back to Gemini")
+        # gemini_grounded = await self._extract_concepts_gemini(text, prompt)
+        #
+        # if gemini_grounded:
+        #     self._concept_provider_stats['gemini_fallback'] += 1
+        #     return (self._build_concept_nodes(gemini_grounded, base_confidence), False)
+
+        # Both failed
+        self._concept_provider_stats['both_failed'] += 1
+        return ([], True)
+
+    async def _try_ollama_extraction(
+        self, text: str, prompt: str
+    ) -> Optional[List[Dict]]:
+        """Attempt concept extraction via Ollama.
+
+        Submits only the Ollama HTTP call through the shared pool
+        (task_type="kg") for fair share scheduling with bridge
+        generation.  All other work (JSON parsing, rationale
+        filtering) stays on the caller's event loop.
+
+        Returns a list of grounded candidate dicts on success,
+        an empty list when Ollama responded but produced no usable
+        concepts (unparseable JSON, empty content), or ``None``
+        only on infrastructure failures (pool exhausted, connection
+        error, timeout).
+        """
+        try:
+            # Check availability first (cached negative result avoids
+            # repeated checks when Ollama is down).
+            if getattr(self, '_ollama_checked', False):
+                return None
+
+            from ...services.ollama_pool_manager import (
+                PoolExhaustedError,
+                submit_ollama_work,
+            )
+
+            def _ollama_sync():
+                import asyncio as _aio
+
+                from ...clients.ollama_client import get_ollama_client
+
+                # Reuse a per-thread event loop AND a per-thread
+                # Ollama client.  The httpx AsyncClient inside the
+                # Ollama client binds its internal asyncio primitives
+                # (locks, events) to the loop that created it.
+                # Creating the client on the SAME loop that will
+                # run_until_complete avoids "bound to a different
+                # event loop" errors.
+                loop = getattr(_kg_thread_local, 'event_loop', None)
+                if loop is None or loop.is_closed():
+                    loop = _aio.new_event_loop()
+                    _kg_thread_local.event_loop = loop
+                    # Force a new client for the new loop
+                    _kg_thread_local.ollama_client = None
+
+                client = getattr(_kg_thread_local, 'ollama_client', None)
+                if client is None:
+                    client = get_ollama_client()
+                    _kg_thread_local.ollama_client = client
+
+                return loop.run_until_complete(
+                    client.generate(prompt, temperature=0.2, max_tokens=1000)
+                )
+
+            try:
+                future = submit_ollama_work(
+                    _ollama_sync,
+                    task_type="kg",
+                )
+                response = future.result(timeout=120)
+            except PoolExhaustedError:
+                logger.warning("Ollama pool exhausted for KG extraction")
+                return None
+            except Exception as pool_err:
+                logger.warning("Ollama pool call failed: %s", pool_err)
+                return None
+
+            if not response.is_successful():
+                logger.warning("Ollama concept extraction failed: %s", response.error)
+                return []
+
+            entries = self._extract_json_array(response.content)
+            if entries is None:
+                logger.debug(
+                    "Ollama returned unparseable response (first 300 chars): %.300s",
+                    response.content,
+                )
+                return []
+
+            grounded = self._filter_by_rationale(entries, text)
+            return grounded
+        except Exception as e:
+            logger.warning("Unexpected error in Ollama concept extraction: %s", e)
+            return None
+
+    def _build_concept_nodes(
+        self, grounded: List[Dict], base_confidence: float
+    ) -> List[ConceptNode]:
+        """Convert grounded candidate dicts into ConceptNode instances."""
+        concepts: List[ConceptNode] = []
+        for entry in grounded:
+            name = entry.get("name", "")
+            ctype = entry.get("type", "")
+            if not name or not ctype:
+                continue
+            normalized = self._normalize_concept_name(name)
+            concept = ConceptNode(
+                concept_id=f"{ctype.lower()}_{normalized}",
+                concept_name=name,
+                concept_type=ctype,
+                confidence=base_confidence,
+                source_chunks=[],
+            )
+            concepts.append(concept)
+
+        logger.info("Extracted %d concepts via LLM", len(concepts))
+        return concepts
+
+    @property
+    def concept_provider_stats(self) -> Dict[str, int]:
+        """Expose provider statistics for observability."""
+        return dict(self._concept_provider_stats)
+
+    @staticmethod
+    def _extract_json_array(text: str) -> Optional[List[Dict]]:
+        """Robustly extract a JSON array from LLM output.
+
+        Handles common issues with small models:
+        - Markdown code fences (```json ... ```)
+        - Leading/trailing prose around the JSON
+        - Truncated arrays (attempts to close them)
+
+        Returns the parsed list or ``None`` if extraction fails.
+        """
+        raw = text.strip()
+
+        # Strip markdown fences
+        if "```" in raw:
+            fence_match = re.search(r"```(?:json)?\s*\n?(.*?)```", raw, re.DOTALL)
+            if fence_match:
+                raw = fence_match.group(1).strip()
+
+        # Try direct parse first
+        try:
+            result = json.loads(raw)
+            if isinstance(result, list):
+                return result
+        except json.JSONDecodeError:
+            pass
+
+        # Find the first '[' and try to parse from there
+        bracket_pos = raw.find("[")
+        if bracket_pos == -1:
+            return None
+
+        candidate = raw[bracket_pos:]
+
+        # Try parsing as-is
+        try:
+            result = json.loads(candidate)
+            if isinstance(result, list):
+                return result
+        except json.JSONDecodeError:
+            pass
+
+        # Model may have truncated — try closing the array
+        # Find the last complete object (last '}')
+        last_brace = candidate.rfind("}")
+        if last_brace > 0:
+            truncated = candidate[: last_brace + 1] + "]"
+            try:
+                result = json.loads(truncated)
+                if isinstance(result, list):
+                    return result
+            except json.JSONDecodeError:
+                pass
+
+        return None
+
     @property
     def embedding_model(self):
         """
@@ -107,22 +588,33 @@ class ConceptExtractor:
     
     async def _get_model_server_client(self):
         """Get or initialize the model server client."""
-        if self._model_server_client is None:
-            try:
-                from ...clients.model_server_client import (
-                    get_model_client,
-                    initialize_model_client,
-                )
-                
-                client = get_model_client()
-                if client is None:
+        if self._model_server_client is not None:
+            return self._model_server_client
+
+        try:
+            from ...clients.model_server_client import (
+                ModelServerClient,
+                get_model_client,
+                initialize_model_client,
+            )
+            
+            client = get_model_client()
+            if client is None:
+                try:
                     await initialize_model_client()
                     client = get_model_client()
-                
-                if client and client.enabled:
-                    self._model_server_client = client
-            except Exception as e:
-                logger.warning(f"Model server not available: {e}")
+                except Exception:
+                    pass
+            
+            if client is None or not client.enabled:
+                import os
+                url = os.environ.get('MODEL_SERVER_URL', 'http://model-server:8001')
+                client = ModelServerClient(base_url=url)
+            
+            if client and client.enabled:
+                self._model_server_client = client
+        except Exception as e:
+            logger.warning(f"Model server not available: {e}")
         return self._model_server_client
     
     async def generate_embeddings_async(self, texts: List[str]) -> np.ndarray:
@@ -244,28 +736,42 @@ class ConceptExtractor:
 
         return concepts
     
-    async def extract_concepts_with_ner(self, text: str) -> List[ConceptNode]:
+    # Patterns that indicate a token is code, not a named entity
+    # Used to filter false positives from spaCy NER
+    _code_pattern_filters = [
+        re.compile(r'^[a-z_][a-z0-9_]*\(\)$'),           # function calls: chelsea(), process_data()
+        re.compile(r'^[a-z_][a-z0-9_]*\('),              # function with args: imread(
+        re.compile(r'^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$'),  # snake_case: my_function
+        re.compile(r'^[a-z]+\.[a-z]'),                    # module.attr: os.path
+        re.compile(r'^\$[a-zA-Z]'),                       # shell vars: $PATH
+        re.compile(r'^[a-z]+://', re.IGNORECASE),        # URLs: http://
+    ]
+
+    async def extract_concepts_with_ner(self, text: str) -> Tuple[List[ConceptNode], bool]:
         """Extract concepts using spaCy NER via model server.
 
         Calls ``ModelServerClient.get_entities()`` and converts each spaCy
         entity dict into a :class:`ConceptNode` with ``concept_type`` set to
         the spaCy label and ``confidence`` of 0.85.
 
-        Returns an empty list and logs a warning when the model server is
-        unavailable.
+        Filters out code-like patterns (function calls, snake_case identifiers)
+        that spaCy may incorrectly tag as named entities.
+
+        Returns ``(concepts, ner_failed)`` where ``ner_failed=True`` when the
+        model server is unavailable or ``get_entities`` raises an exception.
         """
         client = await self._get_model_server_client()
         if client is None:
             logger.warning(
                 "Model server unavailable, skipping NER extraction"
             )
-            return []
+            return ([], True)
 
         try:
             entity_lists = await client.get_entities([text])
         except Exception as e:
             logger.warning(f"NER extraction failed: {e}")
-            return []
+            return ([], True)
 
         concepts: List[ConceptNode] = []
         seen: set = set()
@@ -274,6 +780,35 @@ class ConceptExtractor:
             label = entity.get("label", "ENTITY")
             if not name or len(name) < 2:
                 continue
+            
+            # Filter out code-like patterns that spaCy misidentifies as entities
+            # e.g., "chelsea()" is a scikit-image test function, not a person
+            is_code = False
+            for pattern in self._code_pattern_filters:
+                if pattern.match(name):
+                    logger.debug(
+                        f"Filtering NER entity '{name}' (label={label}) - matches code pattern"
+                    )
+                    is_code = True
+                    break
+            
+            # Also filter lowercase single words that appear in code context
+            # (e.g., "chelsea" when followed by "()" in the source text)
+            if not is_code and name.islower() and ' ' not in name:
+                # Check if this appears as a function call in the text
+                func_call_pattern = re.compile(
+                    rf'\b{re.escape(name)}\s*\(', re.IGNORECASE
+                )
+                if func_call_pattern.search(text):
+                    logger.debug(
+                        f"Filtering NER entity '{name}' (label={label}) - "
+                        f"appears as function call in text"
+                    )
+                    is_code = True
+            
+            if is_code:
+                continue
+            
             normalized = self._normalize_concept_name(name)
             concept_id = f"{label.lower()}_{normalized}"
             if concept_id in seen:
@@ -287,32 +822,43 @@ class ConceptExtractor:
                     confidence=0.85,
                 )
             )
-        return concepts
+        return (concepts, False)
 
-    async def extract_all_concepts_async(self, text: str) -> List[ConceptNode]:
-        """Combine NER + regex extraction and deduplicate.
+    async def extract_all_concepts_async(
+        self, text: str, content_type: ContentType = ContentType.GENERAL
+    ) -> Tuple[List[ConceptNode], bool, bool]:
+        """Combine NER + Ollama + regex extraction and deduplicate.
 
-        Merges results from :meth:`extract_concepts_with_ner` (spaCy NER via
-        model server) and :meth:`extract_concepts_regex` (MULTI_WORD,
-        CODE_TERM, ACRONYM + PMI).  Deduplicates by normalized concept name,
-        keeping the higher-confidence entry.
+        Runs :meth:`extract_concepts_with_ner` and
+        :meth:`extract_concepts_ollama` concurrently via ``asyncio.gather``,
+        then :meth:`extract_concepts_regex` synchronously.  Deduplicates by
+        normalized concept name, keeping the higher-confidence entry.
 
-        If the model server is unavailable the result is regex-only (a warning
-        is already logged by :meth:`extract_concepts_with_ner`).
+        Returns ``(concepts, ner_failed, llm_failed)`` so callers can track
+        per-chunk failure flags for the quality gate.
+
+        If the model server or Ollama is unavailable the respective method
+        returns ``([], True)`` and the pipeline continues with the remaining
+        sources.
         """
-        ner_concepts = await self.extract_concepts_with_ner(text)
+        ner_result, ollama_result = await asyncio.gather(
+            self.extract_concepts_with_ner(text),
+            self.extract_concepts_ollama(text, content_type),
+        )
+        ner_concepts, ner_failed = ner_result
+        ollama_concepts, llm_failed = ollama_result
         regex_concepts = self.extract_concepts_regex(text)
 
         # Merge: index by normalized name, keep higher confidence
         merged: Dict[str, ConceptNode] = {}
-        for concept in ner_concepts + regex_concepts:
+        for concept in ner_concepts + regex_concepts + ollama_concepts:
             key = self._normalize_concept_name(concept.concept_name)
             existing = merged.get(key)
             if existing is None or concept.confidence > existing.confidence:
                 merged[key] = concept
-        return list(merged.values())
+        return (list(merged.values()), ner_failed, llm_failed)
 
-    def extract_concepts_llm(self, text: str, chunk_id: str) -> List[ConceptNode]:
+    def extract_concepts_definition_patterns(self, text: str, chunk_id: str) -> List[ConceptNode]:
         """Extract concepts using LLM-based analysis."""
         # This would integrate with an LLM API like OpenAI GPT-4
         # For now, implementing a simplified version
@@ -782,7 +1328,7 @@ class RelationshipExtractor:
                     np.linalg.norm(embeddings[i]) * np.linalg.norm(embeddings[j])
                 )
                 
-                if similarity > 0.8:  # Similarity threshold (raised from 0.6 to reduce relationship explosion)
+                if similarity > 0.85:  # Similarity threshold (raised from 0.8 to reduce noise)
                     relationship = RelationshipEdge(
                         subject_concept=concept1.concept_id,
                         predicate="SIMILAR_TO",
@@ -824,7 +1370,7 @@ class RelationshipExtractor:
                         np.linalg.norm(embeddings[i]) * np.linalg.norm(embeddings[j])
                     )
                     
-                    if similarity > 0.8:  # Similarity threshold (raised from 0.6 to reduce relationship explosion)
+                    if similarity > 0.85:  # Similarity threshold (raised from 0.8 to reduce noise)
                         relationship = RelationshipEdge(
                             subject_concept=concept1.concept_id,
                             predicate="SIMILAR_TO",
@@ -880,22 +1426,33 @@ class KnowledgeGraphBuilder:
     
     async def _get_model_server_client(self):
         """Get or initialize the model server client."""
-        if self._model_server_client is None:
-            try:
-                from ...clients.model_server_client import (
-                    get_model_client,
-                    initialize_model_client,
-                )
-                
-                client = get_model_client()
-                if client is None:
+        if self._model_server_client is not None:
+            return self._model_server_client
+
+        try:
+            from ...clients.model_server_client import (
+                ModelServerClient,
+                get_model_client,
+                initialize_model_client,
+            )
+            
+            client = get_model_client()
+            if client is None:
+                try:
                     await initialize_model_client()
                     client = get_model_client()
-                
-                if client and client.enabled:
-                    self._model_server_client = client
-            except Exception as e:
-                logger.warning(f"Model server not available: {e}")
+                except Exception:
+                    pass
+            
+            if client is None or not client.enabled:
+                import os
+                url = os.environ.get('MODEL_SERVER_URL', 'http://model-server:8001')
+                client = ModelServerClient(base_url=url)
+            
+            if client and client.enabled:
+                self._model_server_client = client
+        except Exception as e:
+            logger.warning(f"Model server not available: {e}")
         return self._model_server_client
 
     def _get_conceptnet_validator(self):
@@ -972,7 +1529,7 @@ class KnowledgeGraphBuilder:
             all_concepts.extend(regex_concepts)
             
             # Method 2: LLM-based extraction
-            llm_concepts = self.concept_extractor.extract_concepts_llm(content, chunk_id)
+            llm_concepts = self.concept_extractor.extract_concepts_definition_patterns(content, chunk_id)
             all_concepts.extend(llm_concepts)
             
             # Method 3: Embedding-based similarity to existing concepts
@@ -1006,7 +1563,7 @@ class KnowledgeGraphBuilder:
             all_concepts.extend(regex_concepts)
             
             # Method 2: LLM-based extraction (sync - pattern matching)
-            llm_concepts = self.concept_extractor.extract_concepts_llm(content, chunk_id)
+            llm_concepts = self.concept_extractor.extract_concepts_definition_patterns(content, chunk_id)
             all_concepts.extend(llm_concepts)
             
             # Method 3: Embedding-based similarity to existing concepts (async - uses model server)
@@ -1187,8 +1744,11 @@ class KnowledgeGraphBuilder:
         try:
             extraction_id = str(uuid.uuid4())
 
-            # Step 1: Extract concepts using combined NER + regex pipeline
-            concepts = await self.concept_extractor.extract_all_concepts_async(chunk.content)
+            # Step 1: Extract concepts using combined NER + Ollama + regex pipeline
+            content_type = getattr(chunk, 'content_type', ContentType.GENERAL)
+            concepts, _ner_failed, _llm_failed = await self.concept_extractor.extract_all_concepts_async(
+                chunk.content, content_type=content_type
+            )
 
             # Add source chunk reference
             for concept in concepts:
@@ -1273,18 +1833,24 @@ class KnowledgeGraphBuilder:
                 confidence_score=0.0
             )
 
-    async def process_knowledge_chunk_extract_only(self, chunk: KnowledgeChunk) -> ConceptExtraction:
+    async def process_knowledge_chunk_extract_only(self, chunk: KnowledgeChunk) -> Tuple[ConceptExtraction, bool, bool]:
         """Extract concepts and relationships from a chunk WITHOUT ConceptNet validation.
 
         Identical to process_knowledge_chunk_async but skips the per-chunk
         ConceptNet validation gate (Step 2). Validation is deferred to
         batch level via validate_batch_concepts().
+
+        Returns ``(extraction, ner_failed, llm_failed)`` so the caller can
+        accumulate per-document failure counters for the quality gate.
         """
         try:
             extraction_id = str(uuid.uuid4())
 
-            # Step 1: Extract concepts using combined NER + regex pipeline
-            concepts = await self.concept_extractor.extract_all_concepts_async(chunk.content)
+            # Step 1: Extract concepts using combined NER + Ollama + regex pipeline
+            content_type = getattr(chunk, 'content_type', ContentType.GENERAL)
+            concepts, ner_failed, llm_failed = await self.concept_extractor.extract_all_concepts_async(
+                chunk.content, content_type=content_type
+            )
             for concept in concepts:
                 concept.add_source_chunk(chunk.id)
 
@@ -1326,17 +1892,17 @@ class KnowledgeGraphBuilder:
                 f"Extracted (no validation) chunk {chunk.id}: "
                 f"{len(concepts)} concepts, {len(relationships)} relationships"
             )
-            return extraction
+            return (extraction, ner_failed, llm_failed)
 
         except Exception as e:
             logger.error(f"Error in extract-only processing: {e}")
-            return ConceptExtraction(
+            return (ConceptExtraction(
                 extraction_id=str(uuid.uuid4()),
                 chunk_id=chunk.id,
                 extracted_concepts=[],
                 extracted_relationships=[],
                 confidence_score=0.0
-            )
+            ), False, False)
 
     async def validate_batch_concepts(
         self, concepts: List[ConceptNode]

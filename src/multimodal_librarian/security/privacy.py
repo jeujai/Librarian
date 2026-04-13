@@ -360,6 +360,19 @@ class PrivacyService:
             kg_service = KnowledgeGraphService()
 
             try:
+                # Step 0: Delete RELATED_DOCS edges involving this document
+                result_rd = kg_service.execute_cypher(
+                    """
+                    MATCH ()-[r:RELATED_DOCS]->()
+                    WHERE r.source_doc_id = $source_id
+                       OR r.target_doc_id = $source_id
+                    DELETE r
+                    RETURN count(r) AS deleted_rd
+                    """,
+                    {"source_id": source_id}
+                )
+                deleted_rd = result_rd[0].get("deleted_rd", 0) if result_rd else 0
+
                 # Step 1: Delete EXTRACTED_FROM relationships to this source's Chunk nodes
                 result_rels = kg_service.execute_cypher(
                     """
@@ -397,7 +410,8 @@ class PrivacyService:
 
                 logger.info(
                     f"Knowledge graph cleanup for source {source_id}: "
-                    f"deleted {deleted_rels} EXTRACTED_FROM rels, "
+                    f"deleted {deleted_rd} RELATED_DOCS, "
+                    f"{deleted_rels} EXTRACTED_FROM rels, "
                     f"{deleted_chunks} Chunk nodes, "
                     f"{deleted_concepts} orphaned Concepts"
                 )

@@ -166,8 +166,8 @@ EXPOSE 8000 5678
 HEALTHCHECK --interval=15s --timeout=10s --start-period=30s --retries=2 \
     CMD curl -f http://localhost:8000/health/simple || exit 1
 
-# Development command with enhanced hot reload
-CMD ["python", "-m", "uvicorn", "multimodal_librarian.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "/app/src", "--reload-include", "*.py", "--reload-include", "*.yaml", "--reload-include", "*.yml", "--reload-include", "*.json", "--reload-exclude", "__pycache__", "--reload-exclude", "*.pyc", "--reload-exclude", "*.pyo", "--reload-exclude", "*.pyd", "--reload-exclude", ".git"]
+# Development command with enhanced hot reload and large file support
+CMD ["python", "-m", "uvicorn", "multimodal_librarian.main:app", "--host", "0.0.0.0", "--port", "8000", "--ws-max-size", "17179869184", "--reload", "--reload-dir", "/app/src", "--reload-include", "*.py", "--reload-include", "*.yaml", "--reload-include", "*.yml", "--reload-include", "*.json", "--reload-exclude", "__pycache__", "--reload-exclude", "*.pyc", "--reload-exclude", "*.pyo", "--reload-exclude", "*.pyd", "--reload-exclude", ".git"]
 
 # =============================================================================
 # PRODUCTION STAGE - Optimized for production deployment
@@ -202,5 +202,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=15s --start-period=120s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/simple', timeout=10).read()" || exit 1
 
-# Run the production application (single worker for debugging startup issues)
-CMD ["python", "-m", "uvicorn", "multimodal_librarian.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run the production application with large file support (single worker for debugging startup issues)
+CMD ["python", "-m", "uvicorn", "multimodal_librarian.main:app", "--host", "0.0.0.0", "--port", "8000", "--ws-max-size", "17179869184"]

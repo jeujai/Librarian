@@ -10,6 +10,9 @@ class UnifiedInterface {
         this.fileHandler = new FileHandler();
         this.currentThreadId = null;
         this.messageHistory = [];
+        this.commandHistory = [];
+        this.commandHistoryIndex = -1;
+        this.commandDraft = '';
         this.documents = [];
         this.currentDocument = null;
         this.searchQuery = '';
@@ -114,6 +117,33 @@ class UnifiedInterface {
             if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
                 e.preventDefault();
                 this.sendMessage();
+            }
+            // Command history: Ctrl+Up to go back, Ctrl+Down to go forward
+            if (e.key === 'ArrowUp' && (e.ctrlKey || e.metaKey)) {
+                e.preventDefault();
+                if (this.commandHistory.length === 0) return;
+                if (this.commandHistoryIndex === -1) {
+                    this.commandDraft = this.messageInput.value;
+                    this.commandHistoryIndex = this.commandHistory.length - 1;
+                } else if (this.commandHistoryIndex > 0) {
+                    this.commandHistoryIndex--;
+                }
+                this.messageInput.value = this.commandHistory[this.commandHistoryIndex];
+                this.autoResizeTextarea();
+                this.updateCharacterCount();
+            }
+            if (e.key === 'ArrowDown' && (e.ctrlKey || e.metaKey)) {
+                e.preventDefault();
+                if (this.commandHistoryIndex === -1) return;
+                if (this.commandHistoryIndex < this.commandHistory.length - 1) {
+                    this.commandHistoryIndex++;
+                    this.messageInput.value = this.commandHistory[this.commandHistoryIndex];
+                } else {
+                    this.commandHistoryIndex = -1;
+                    this.messageInput.value = this.commandDraft;
+                }
+                this.autoResizeTextarea();
+                this.updateCharacterCount();
             }
         });
 
@@ -453,12 +483,20 @@ class UnifiedInterface {
         const citationsDiv = document.createElement('div');
         citationsDiv.className = 'message-citations';
 
-        const title = document.createElement('h4');
-        title.textContent = 'Sources:';
-        title.style.marginBottom = '0.5rem';
-        title.style.fontSize = '0.875rem';
-        title.style.color = '#64748b';
-        citationsDiv.appendChild(title);
+        const toggle = document.createElement('button');
+        toggle.className = 'citations-toggle';
+        toggle.setAttribute('aria-expanded', 'false');
+        toggle.innerHTML = '<span class="citations-arrow">▶</span> Sources:';
+        citationsDiv.appendChild(toggle);
+
+        const citationsList = document.createElement('div');
+        citationsList.className = 'citations-list';
+
+        toggle.addEventListener('click', () => {
+            const expanded = toggle.getAttribute('aria-expanded') === 'true';
+            toggle.setAttribute('aria-expanded', String(!expanded));
+            citationsList.classList.toggle('expanded');
+        });
 
         citations.forEach((citation, index) => {
             const citationDiv = document.createElement('div');
@@ -521,8 +559,10 @@ class UnifiedInterface {
             }
 
             citationDiv.appendChild(text);
-            citationsDiv.appendChild(citationDiv);
+            citationsList.appendChild(citationDiv);
         });
+
+        citationsDiv.appendChild(citationsList);
 
         const contentDiv = messageElement.querySelector('.message-content');
         if (contentDiv) {
@@ -632,6 +672,13 @@ class UnifiedInterface {
         if (!message || !this.wsManager.isConnected()) {
             return;
         }
+
+        // Add to command history buffer
+        if (this.commandHistory.length === 0 || this.commandHistory[this.commandHistory.length - 1] !== message) {
+            this.commandHistory.push(message);
+        }
+        this.commandHistoryIndex = -1;
+        this.commandDraft = '';
 
         // Add user message to chat
         this.addUserMessage(message);
@@ -813,12 +860,20 @@ class UnifiedInterface {
         const citationsDiv = document.createElement('div');
         citationsDiv.className = 'message-citations';
 
-        const title = document.createElement('h4');
-        title.textContent = 'Sources:';
-        title.style.marginBottom = '0.5rem';
-        title.style.fontSize = '0.875rem';
-        title.style.color = '#64748b';
-        citationsDiv.appendChild(title);
+        const toggle = document.createElement('button');
+        toggle.className = 'citations-toggle';
+        toggle.setAttribute('aria-expanded', 'false');
+        toggle.innerHTML = '<span class="citations-arrow">▶</span> Sources:';
+        citationsDiv.appendChild(toggle);
+
+        const citationsList = document.createElement('div');
+        citationsList.className = 'citations-list';
+
+        toggle.addEventListener('click', () => {
+            const expanded = toggle.getAttribute('aria-expanded') === 'true';
+            toggle.setAttribute('aria-expanded', String(!expanded));
+            citationsList.classList.toggle('expanded');
+        });
 
         citations.forEach((citation, index) => {
             const citationDiv = document.createElement('div');
@@ -878,8 +933,10 @@ class UnifiedInterface {
             }
 
             citationDiv.appendChild(text);
-            citationsDiv.appendChild(citationDiv);
+            citationsList.appendChild(citationDiv);
         });
+
+        citationsDiv.appendChild(citationsList);
 
         // Add to last system message
         const lastMessage = this.chatMessages.lastElementChild;
@@ -1245,8 +1302,8 @@ class UnifiedInterface {
                 continue;
             }
 
-            if (file.size > 100 * 1024 * 1024) {
-                this.showToast('error', `${file.name} exceeds 100MB limit`);
+            if (file.size > 10 * 1024 * 1024 * 1024) {
+                this.showToast('error', `${file.name} exceeds 10GB limit`);
                 continue;
             }
 

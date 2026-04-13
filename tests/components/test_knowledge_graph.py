@@ -34,13 +34,13 @@ class TestKnowledgeGraphBuilder:
         concept_names = [c.concept_name for c in concepts]
         assert any("Machine Learning" in name for name in concept_names)
     
-    def test_extract_concepts_llm(self):
+    def test_extract_concepts_definition_patterns(self):
         """Test LLM-based concept extraction."""
         builder = KnowledgeGraphBuilder()
         text = "Photosynthesis is a process used by plants to convert light energy into chemical energy."
         chunk_id = "test_chunk_1"
         
-        concepts = builder.concept_extractor.extract_concepts_llm(text, chunk_id)
+        concepts = builder.concept_extractor.extract_concepts_definition_patterns(text, chunk_id)
         
         assert len(concepts) > 0
         assert all(chunk_id in concept.source_chunks for concept in concepts)

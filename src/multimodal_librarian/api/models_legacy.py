@@ -279,10 +279,10 @@ class ValidationResponse(APIResponse):
 
 class APIConfiguration(BaseModel):
     """API configuration model."""
-    max_file_size: int = 100 * 1024 * 1024  # 100MB
+    max_file_size: int = 10 * 1024 * 1024 * 1024  # 10GB - effectively unlimited
     max_query_length: int = 5000
     max_results_per_query: int = 100
-    websocket_timeout: int = 300  # 5 minutes
+    websocket_timeout: int = 3600  # 1 hour for large uploads
     export_expiry_hours: int = 24
     rate_limit_per_minute: int = 60
 

@@ -426,7 +426,7 @@ class ConversationKnowledgeService:
 
         # Legacy / no-segment path
         if not segments:
-            concepts = (
+            concepts, _ner_failed, _llm_failed = (
                 await self._concept_extractor.extract_all_concepts_async(
                     chunk.content
                 )
@@ -442,7 +442,7 @@ class ConversationKnowledgeService:
             if not content:
                 continue
 
-            extracted = (
+            extracted, _ner_failed, _llm_failed = (
                 await self._concept_extractor.extract_all_concepts_async(
                     content
                 )
@@ -900,11 +900,16 @@ class ConversationKnowledgeService:
             MERGE (c:Concept {concept_id: row.concept_id})
             ON CREATE SET c.name = row.name,
                           c.type = row.type,
+                          c.concept_type = row.type,
                           c.confidence = row.confidence,
+                          c.name_lower = toLower(row.name),
                           c.created_at = row.created_at,
                           c.updated_at = row.updated_at,
                           c.embedding = row.embedding
             ON MATCH SET c.updated_at = row.updated_at,
+                         c.concept_type = CASE WHEN c.concept_type IS NULL
+                                          THEN row.type
+                                          ELSE c.concept_type END,
                          c.embedding = CASE
                            WHEN row.embedding IS NOT NULL
                            THEN row.embedding

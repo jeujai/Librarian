@@ -153,6 +153,7 @@ class DocumentDeletedMessage(BaseModel):
     """
     type: Literal["document_deleted"] = "document_deleted"
     document_id: str
+    filename: Optional[str] = Field(None, description="Original filename for client cache invalidation")
     success: bool
     message: str
     timestamp: datetime = Field(default_factory=datetime.utcnow)
@@ -226,6 +227,71 @@ class RelatedDocsGraphError(BaseModel):
     type: Literal["related_docs_graph_error"] = "related_docs_graph_error"
     document_id: str
     message: str
+
+
+# =============================================================================
+# Processing Status Report Messages
+# =============================================================================
+
+
+class ReportSummary(BaseModel):
+    """
+    Aggregated summary of processing job counts and progress.
+
+    Requirements: 3.2
+    """
+    total_active: int = Field(..., ge=0, description="Count of pending or running jobs")
+    total_completed_recent: int = Field(..., ge=0, description="Count of recently completed jobs")
+    total_failed_recent: int = Field(..., ge=0, description="Count of recently failed jobs")
+    overall_progress: float = Field(
+        ..., ge=0.0, le=100.0, description="Mean progress across active jobs (0.0-100.0)"
+    )
+
+
+class JobDetail(BaseModel):
+    """
+    Detail record for a single processing job.
+
+    Fields are populated based on job status:
+    - All jobs: document_id, document_title, status, current_step,
+      progress_percentage, elapsed_seconds, retry_count
+    - Completed: total_processing_seconds, chunk_count
+    - Failed: error_message, failed_step, retry_available
+
+    Requirements: 2.3, 2.4, 2.5, 3.3
+    """
+    document_id: str = Field(..., description="Source document identifier")
+    document_title: str = Field(..., description="Human-readable document title")
+    status: str = Field(..., description="Job status: pending, running, completed, or failed")
+    current_step: Optional[str] = Field(None, description="Current processing step name")
+    progress_percentage: int = Field(..., ge=0, le=100, description="Progress 0-100")
+    elapsed_seconds: Optional[float] = Field(None, ge=0, description="Seconds since job started")
+    retry_count: int = Field(0, ge=0, description="Number of retries attempted")
+    # Completed job fields
+    total_processing_seconds: Optional[float] = Field(
+        None, ge=0, description="Total wall-clock processing time (completed jobs)"
+    )
+    chunk_count: Optional[int] = Field(
+        None, ge=0, description="Number of chunks produced (completed jobs)"
+    )
+    # Failed job fields
+    error_message: Optional[str] = Field(None, description="Error description (failed jobs)")
+    failed_step: Optional[str] = Field(None, description="Step where failure occurred (failed jobs)")
+    retry_available: bool = Field(False, description="Whether the job can be retried (failed jobs)")
+
+
+class StatusReport(BaseModel):
+    """
+    Full processing status report delivered over WebSocket.
+
+    Requirements: 3.1, 3.4
+    """
+    type: Literal["processing_status_report"] = "processing_status_report"
+    summary: ReportSummary
+    jobs: List[JobDetail]
+    generated_at: datetime = Field(
+        default_factory=datetime.utcnow, description="ISO 8601 report generation timestamp"
+    )
 
 
 # =============================================================================

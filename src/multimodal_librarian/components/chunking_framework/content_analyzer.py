@@ -88,7 +88,16 @@ class AutomatedContentAnalyzer:
             ContentType.MEDICAL: [
                 r'\b(?:patient|diagnosis|treatment|therapy|medication|disease|symptom|clinical|medical)\b',
                 r'\b(?:anatomy|physiology|pathology|pharmacology|surgery|hospital|doctor|nurse)\b',
-                r'\b(?:health|healthcare|medicine|pharmaceutical|therapeutic|diagnostic)\b'
+                r'\b(?:health|healthcare|medicine|pharmaceutical|therapeutic|diagnostic)\b',
+                r'\b(?:orthopaedic|orthopedic|cardiology|oncology|neurology|radiology|pediatric)\b',
+                r'\b(?:epidemiology|prognosis|comorbidity|etiology|chronic|acute|benign|malignant)\b',
+                # Pharmacopoeia and pharmaceutical standards terminology
+                r'\b(?:pharmacopoeia|pharmacopeia|monograph|excipient|formulation|dosage|potency|purity)\b',
+                r'\b(?:assay|titration|chromatography|spectrophotometry|dissolution|bioavailability)\b',
+                r'\b(?:drug|substance|compound|active\s+ingredient|API|impurity|degradation)\b',
+                # Herbal and botanical medicine terminology
+                r'\b(?:herbal|botanical|extract|tincture|decoction|infusion|herb|plant\s+medicine)\b',
+                r'\b(?:contraindication|interaction|adverse|toxicity|efficacy|indication)\b',
             ],
             ContentType.LEGAL: [
                 r'\b(?:law|legal|court|judge|attorney|lawyer|contract|agreement|statute|regulation)\b',

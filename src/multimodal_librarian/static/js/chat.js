@@ -7,8 +7,23 @@ class ChatApp {
         this.wsManager = new WebSocketManager();
         this.currentThreadId = null;
         this.messageHistory = [];
+        this.commandHistory = [];
+        this.commandHistoryIndex = -1;
+        this.commandDraft = '';
         this.activeThreadId = null;
         this.toast = new ToastNotification();
+
+        // Telemetry report state (Requirements: 5.3)
+        this.telemetryDisplayed = false;
+        this.telemetryMessageElement = null;
+        this.telemetryCurrentPage = 1;
+        this.telemetryTotalCount = 0;
+        this.telemetryLimit = 10;
+
+        // Active Jobs report state for live updates
+        this.activeJobsDisplayed = false;
+        this.activeJobsMessageElement = null;
+        this.activeJobsData = [];  // Current jobs data for re-rendering
 
         // Initialize CitationPopup singleton (Requirements: 1.2, 2.2)
         this.initializeCitationPopup();
@@ -261,6 +276,33 @@ class ChatApp {
                 e.preventDefault();
                 this.sendMessage();
             }
+            // Command history: Ctrl+Up to go back, Ctrl+Down to go forward
+            if (e.key === 'ArrowUp' && (e.ctrlKey || e.metaKey)) {
+                e.preventDefault();
+                if (this.commandHistory.length === 0) return;
+                if (this.commandHistoryIndex === -1) {
+                    this.commandDraft = this.messageInput.value;
+                    this.commandHistoryIndex = this.commandHistory.length - 1;
+                } else if (this.commandHistoryIndex > 0) {
+                    this.commandHistoryIndex--;
+                }
+                this.messageInput.value = this.commandHistory[this.commandHistoryIndex];
+                this.autoResizeTextarea();
+                this.updateCharacterCount();
+            }
+            if (e.key === 'ArrowDown' && (e.ctrlKey || e.metaKey)) {
+                e.preventDefault();
+                if (this.commandHistoryIndex === -1) return;
+                if (this.commandHistoryIndex < this.commandHistory.length - 1) {
+                    this.commandHistoryIndex++;
+                    this.messageInput.value = this.commandHistory[this.commandHistoryIndex];
+                } else {
+                    this.commandHistoryIndex = -1;
+                    this.messageInput.value = this.commandDraft;
+                }
+                this.autoResizeTextarea();
+                this.updateCharacterCount();
+            }
         });
 
         this.messageInput.addEventListener('input', () => {
@@ -295,6 +337,18 @@ class ChatApp {
         // Window events
         window.addEventListener('beforeunload', () => {
             this.wsManager.disconnect();
+        });
+
+        // Make inline code elements in system messages clickable as prompts
+        this.chatMessages.addEventListener('click', (e) => {
+            const code = e.target.closest('.system-message .message-content code');
+            if (code) {
+                const text = code.textContent.trim();
+                if (text) {
+                    this.messageInput.value = text;
+                    this.sendMessage();
+                }
+            }
         });
 
         // Listen for conversation document deletion so we can remove
@@ -392,6 +446,10 @@ class ChatApp {
             this.hideProcessingIndicator();
         });
 
+        this.wsManager.on('suggestions', (suggestions) => {
+            this.showSuggestions(suggestions);
+        });
+
         this.wsManager.on('export_ready', (data) => {
             this.handleExportReady(data);
         });
@@ -428,6 +486,43 @@ class ChatApp {
 
         this.wsManager.on('document_upload_error', (data) => {
             this.handleDocumentUploadError(data);
+        });
+
+        // Auto-refresh telemetry on upload completion (Requirements: 5.1, 5.2)
+        // Also update Active Jobs report in real-time
+        this.wsManager.on('active_jobs_update', (data) => {
+            // Update Active Jobs table if displayed
+            if (this.activeJobsDisplayed && this.activeJobsMessageElement && data.job) {
+                this._updateActiveJobsTable(data.job);
+            }
+
+            // Auto-refresh telemetry on upload completion
+            if (data.job && data.job.status === 'completed' && this.telemetryDisplayed) {
+                this.wsManager.send({
+                    type: 'throughput_report_page',
+                    offset: (this.telemetryCurrentPage - 1) * this.telemetryLimit,
+                    limit: this.telemetryLimit
+                });
+            }
+        });
+
+        // Handle initial Active Jobs snapshot
+        this.wsManager.on('active_jobs_snapshot', (data) => {
+            if (this.activeJobsDisplayed && this.activeJobsMessageElement && data.jobs) {
+                this.activeJobsData = data.jobs;
+                this._renderActiveJobsTable();
+            }
+        });
+
+        // Auto-refresh telemetry when a document is deleted
+        this.wsManager.on('document_deleted', (data) => {
+            if (this.telemetryDisplayed) {
+                this.wsManager.send({
+                    type: 'throughput_report_page',
+                    offset: (this.telemetryCurrentPage - 1) * this.telemetryLimit,
+                    limit: this.telemetryLimit
+                });
+            }
         });
     }
 
@@ -1016,12 +1111,20 @@ class ChatApp {
         const citationsDiv = document.createElement('div');
         citationsDiv.className = 'message-citations';
 
-        const title = document.createElement('h4');
-        title.textContent = 'Sources:';
-        title.style.marginBottom = '0.5rem';
-        title.style.fontSize = '0.875rem';
-        title.style.color = '#64748b';
-        citationsDiv.appendChild(title);
+        const toggle = document.createElement('button');
+        toggle.className = 'citations-toggle';
+        toggle.setAttribute('aria-expanded', 'false');
+        toggle.innerHTML = '<span class="citations-arrow">▶</span> Sources:';
+        citationsDiv.appendChild(toggle);
+
+        const citationsList = document.createElement('div');
+        citationsList.className = 'citations-list';
+
+        toggle.addEventListener('click', () => {
+            const expanded = toggle.getAttribute('aria-expanded') === 'true';
+            toggle.setAttribute('aria-expanded', String(!expanded));
+            citationsList.classList.toggle('expanded');
+        });
 
         citations.forEach((citation, index) => {
             const citationDiv = document.createElement('div');
@@ -1104,8 +1207,10 @@ class ChatApp {
                 }
             });
 
-            citationsDiv.appendChild(citationDiv);
+            citationsList.appendChild(citationDiv);
         });
+
+        citationsDiv.appendChild(citationsList);
 
         const contentDiv = messageElement.querySelector('.message-content');
         if (contentDiv) {
@@ -1203,6 +1308,13 @@ class ChatApp {
             return;
         }
 
+        // Add to command history buffer
+        if (this.commandHistory.length === 0 || this.commandHistory[this.commandHistory.length - 1] !== message) {
+            this.commandHistory.push(message);
+        }
+        this.commandHistoryIndex = -1;
+        this.commandDraft = '';
+
         // Add user message to chat
         this.addUserMessage(message);
 
@@ -1263,7 +1375,29 @@ class ChatApp {
         this.hideProcessingIndicator();
 
         if (data.response) {
-            this.addSystemMessage(data.response.text_content || data.response);
+            const isTelemetry = data.metadata && data.metadata.throughput_report;
+
+            if (isTelemetry && this.telemetryMessageElement) {
+                // In-place replacement: update existing telemetry message
+                const contentDiv = this.telemetryMessageElement.querySelector('.message-content');
+                if (contentDiv) {
+                    contentDiv.innerHTML = '';
+                    if (typeof MarkdownRenderer !== 'undefined') {
+                        this._renderMarkdownContent(contentDiv, data.response.text_content || data.response, []);
+                    } else {
+                        const p = document.createElement('p');
+                        p.textContent = data.response.text_content || data.response;
+                        contentDiv.appendChild(p);
+                    }
+                }
+            } else {
+                // Normal: append new message
+                this.addSystemMessage(data.response.text_content || data.response);
+            }
+
+            const lastMsg = isTelemetry && this.telemetryMessageElement
+                ? this.telemetryMessageElement
+                : this.chatMessages.lastElementChild;
 
             // Handle multimedia content
             if (data.response.visualizations) {
@@ -1276,7 +1410,225 @@ class ChatApp {
             if (data.response.knowledge_citations) {
                 this.addCitations(data.response.knowledge_citations);
             }
+
+            // Track telemetry state (Requirements: 3.1, 5.3, 5.4)
+            if (isTelemetry) {
+                this.telemetryDisplayed = true;
+                this.telemetryMessageElement = lastMsg;
+                this.telemetryTotalCount = data.metadata.total_count || 0;
+                const offset = data.metadata.offset || 0;
+                const limit = data.metadata.limit || this.telemetryLimit;
+                this.telemetryLimit = limit;
+                this.telemetryCurrentPage = Math.floor(offset / limit) + 1;
+
+                // Page clamping on auto-refresh (Requirement: 5.5)
+                const newTotalPages = Math.ceil(this.telemetryTotalCount / this.telemetryLimit);
+                if (newTotalPages > 0 && this.telemetryCurrentPage > newTotalPages) {
+                    this.telemetryCurrentPage = newTotalPages;
+                } else if (newTotalPages === 0) {
+                    this.telemetryCurrentPage = 1;
+                }
+
+                // Render pagination controls
+                this._renderTelemetryPagination(lastMsg);
+
+                // Attach model failure popup to throughput report tables
+                if (data.metadata.quality_gate_data &&
+                    typeof window.ModelFailurePopup !== 'undefined') {
+                    window.ModelFailurePopup.attachToTable(
+                        lastMsg, data.metadata.quality_gate_data
+                    );
+                }
+            } else {
+                this.telemetryDisplayed = false;
+                this.telemetryMessageElement = null;
+            }
+
+            // Track Active Jobs report state for live updates
+            const isStatusReport = data.metadata && data.metadata.status_report;
+            if (isStatusReport) {
+                this.activeJobsDisplayed = true;
+                this.activeJobsMessageElement = lastMsg;
+                this.activeJobsData = [];  // Will be populated by active_jobs_snapshot
+            } else if (!isTelemetry) {
+                // Reset Active Jobs state when showing other content
+                this.activeJobsDisplayed = false;
+                this.activeJobsMessageElement = null;
+                this.activeJobsData = [];
+            }
         }
+    }
+
+    /**
+     * Render pagination controls below the telemetry table.
+     * Matches the DocumentListPanel inline pagination pattern.
+     * Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6
+     */
+    _renderTelemetryPagination(messageElement) {
+        if (!messageElement) return;
+
+        // Remove any existing pagination controls
+        const existing = messageElement.querySelector('.telemetry-pagination');
+        if (existing) existing.remove();
+
+        const totalPages = Math.ceil(this.telemetryTotalCount / this.telemetryLimit);
+        if (totalPages <= 1) return;
+
+        const currentPage = this.telemetryCurrentPage;
+
+        const paginationDiv = document.createElement('div');
+        paginationDiv.className = 'telemetry-pagination';
+
+        const firstBtn = document.createElement('button');
+        firstBtn.className = 'pagination-btn';
+        firstBtn.textContent = '\u00AB';
+        firstBtn.setAttribute('aria-label', 'First page');
+        firstBtn.disabled = currentPage === 1;
+
+        const prevBtn = document.createElement('button');
+        prevBtn.className = 'pagination-btn';
+        prevBtn.textContent = '\u2039';
+        prevBtn.setAttribute('aria-label', 'Previous page');
+        prevBtn.disabled = currentPage === 1;
+
+        const pageInfo = document.createElement('span');
+        pageInfo.className = 'page-info';
+        pageInfo.textContent = `${currentPage}/${totalPages}`;
+
+        const nextBtn = document.createElement('button');
+        nextBtn.className = 'pagination-btn';
+        nextBtn.textContent = '\u203A';
+        nextBtn.setAttribute('aria-label', 'Next page');
+        nextBtn.disabled = currentPage === totalPages;
+
+        const lastBtn = document.createElement('button');
+        lastBtn.className = 'pagination-btn';
+        lastBtn.textContent = '\u00BB';
+        lastBtn.setAttribute('aria-label', 'Last page');
+        lastBtn.disabled = currentPage === totalPages;
+
+        const sendPage = (targetPage) => {
+            const offset = (targetPage - 1) * this.telemetryLimit;
+            this.wsManager.send({
+                type: 'throughput_report_page',
+                offset: offset,
+                limit: this.telemetryLimit
+            });
+        };
+
+        firstBtn.addEventListener('click', () => sendPage(1));
+        prevBtn.addEventListener('click', () => sendPage(Math.max(1, currentPage - 1)));
+        nextBtn.addEventListener('click', () => sendPage(Math.min(totalPages, currentPage + 1)));
+        lastBtn.addEventListener('click', () => sendPage(totalPages));
+
+        paginationDiv.appendChild(firstBtn);
+        paginationDiv.appendChild(prevBtn);
+        paginationDiv.appendChild(pageInfo);
+        paginationDiv.appendChild(nextBtn);
+        paginationDiv.appendChild(lastBtn);
+
+        const contentDiv = messageElement.querySelector('.message-content');
+        if (contentDiv) {
+            contentDiv.appendChild(paginationDiv);
+        }
+    }
+
+    /**
+     * Update the Active Jobs table with a single job update.
+     * Merges the update into activeJobsData and re-renders the table.
+     */
+    _updateActiveJobsTable(jobUpdate) {
+        if (!jobUpdate || !jobUpdate.document_id) return;
+
+        // Find and update or add the job in our data
+        const existingIndex = this.activeJobsData.findIndex(
+            j => j.document_id === jobUpdate.document_id
+        );
+
+        if (jobUpdate.status === 'completed' || jobUpdate.status === 'failed') {
+            // Remove completed/failed jobs from active list
+            if (existingIndex >= 0) {
+                this.activeJobsData.splice(existingIndex, 1);
+            }
+        } else {
+            // Update or add the job
+            if (existingIndex >= 0) {
+                this.activeJobsData[existingIndex] = jobUpdate;
+            } else {
+                this.activeJobsData.push(jobUpdate);
+            }
+        }
+
+        this._renderActiveJobsTable();
+    }
+
+    /**
+     * Render the Active Jobs table from activeJobsData.
+     * Updates the message element in place.
+     */
+    _renderActiveJobsTable() {
+        if (!this.activeJobsMessageElement) return;
+
+        const contentDiv = this.activeJobsMessageElement.querySelector('.message-content');
+        if (!contentDiv) return;
+
+        // Build markdown table
+        let markdown = '';
+
+        if (this.activeJobsData.length === 0) {
+            markdown = 'No active processing jobs.';
+        } else {
+            markdown = '**Active Jobs**\n\n';
+            markdown += '| Document | Status | Step | Progress | Elapsed | Retries |\n';
+            markdown += '|----------|--------|------|----------|---------|----------|\n';
+
+            for (const job of this.activeJobsData) {
+                const title = this._truncateText(job.document_title || 'Unknown', 30);
+                const status = job.status || 'running';
+                const step = job.current_step || '—';
+                const progress = `${job.progress_percentage || 0}%`;
+                const elapsed = this._formatElapsed(job.elapsed_seconds);
+                const retries = job.retry_count || 0;
+
+                markdown += `| ${title} | ${status} | ${step} | ${progress} | ${elapsed} | ${retries} |\n`;
+
+                // Add substage rows if present
+                if (job.substages && job.substages.length > 0) {
+                    for (const substage of job.substages) {
+                        markdown += `| | | ↳ ${substage.label} | ${substage.percentage}% | | |\n`;
+                    }
+                }
+            }
+        }
+
+        // Re-render the content
+        if (typeof MarkdownRenderer !== 'undefined') {
+            this._renderMarkdownContent(contentDiv, markdown, []);
+        } else {
+            contentDiv.textContent = markdown;
+        }
+    }
+
+    /**
+     * Truncate text to a maximum length with ellipsis.
+     */
+    _truncateText(text, maxLen) {
+        if (!text || text.length <= maxLen) return text || '';
+        return text.substring(0, maxLen - 1) + '…';
+    }
+
+    /**
+     * Format elapsed seconds as human-readable string.
+     */
+    _formatElapsed(seconds) {
+        if (seconds === null || seconds === undefined) return '—';
+        if (seconds < 60) return `${Math.round(seconds)}s`;
+        const mins = Math.floor(seconds / 60);
+        const secs = Math.round(seconds % 60);
+        if (mins < 60) return `${mins}m ${secs}s`;
+        const hours = Math.floor(mins / 60);
+        const remainMins = mins % 60;
+        return `${hours}h ${remainMins}m`;
     }
 
     /**
@@ -1353,15 +1705,20 @@ class ChatApp {
 
         // Handle different content types
         if (typeof content === 'string') {
-            // Convert line breaks to paragraphs
-            const paragraphs = content.split('\n\n');
-            paragraphs.forEach(paragraph => {
-                if (paragraph.trim()) {
-                    const p = document.createElement('p');
-                    p.textContent = paragraph.trim();
-                    contentDiv.appendChild(p);
-                }
-            });
+            // Use markdown renderer when available for rich formatting
+            if (typeof MarkdownRenderer !== 'undefined') {
+                this._renderMarkdownContent(contentDiv, content, []);
+            } else {
+                // Fallback: convert line breaks to paragraphs
+                const paragraphs = content.split('\n\n');
+                paragraphs.forEach(paragraph => {
+                    if (paragraph.trim()) {
+                        const p = document.createElement('p');
+                        p.textContent = paragraph.trim();
+                        contentDiv.appendChild(p);
+                    }
+                });
+            }
         } else {
             contentDiv.appendChild(content);
         }
@@ -1411,12 +1768,20 @@ class ChatApp {
         const citationsDiv = document.createElement('div');
         citationsDiv.className = 'message-citations';
 
-        const title = document.createElement('h4');
-        title.textContent = 'Sources:';
-        title.style.marginBottom = '0.5rem';
-        title.style.fontSize = '0.875rem';
-        title.style.color = '#64748b';
-        citationsDiv.appendChild(title);
+        const toggle = document.createElement('button');
+        toggle.className = 'citations-toggle';
+        toggle.setAttribute('aria-expanded', 'false');
+        toggle.innerHTML = '<span class="citations-arrow">▶</span> Sources:';
+        citationsDiv.appendChild(toggle);
+
+        const citationsList = document.createElement('div');
+        citationsList.className = 'citations-list';
+
+        toggle.addEventListener('click', () => {
+            const expanded = toggle.getAttribute('aria-expanded') === 'true';
+            toggle.setAttribute('aria-expanded', String(!expanded));
+            citationsList.classList.toggle('expanded');
+        });
 
         citations.forEach((citation, index) => {
             const citationDiv = document.createElement('div');
@@ -1499,8 +1864,10 @@ class ChatApp {
                 }
             });
 
-            citationsDiv.appendChild(citationDiv);
+            citationsList.appendChild(citationDiv);
         });
+
+        citationsDiv.appendChild(citationsList);
 
         // Add to last system message
         const lastMessage = this.chatMessages.lastElementChild;
@@ -1529,6 +1896,35 @@ class ChatApp {
      */
     hideProcessingIndicator() {
         this.processingIndicator.style.display = 'none';
+    }
+
+    /**
+     * Show clickable suggestion buttons below the last message
+     */
+    showSuggestions(suggestions) {
+        if (!suggestions || !suggestions.length) return;
+
+        const container = document.createElement('div');
+        container.className = 'suggestion-chips';
+        container.style.cssText = 'display:flex;flex-wrap:wrap;gap:0.5rem;padding:0.5rem 1.25rem;';
+
+        suggestions.forEach(text => {
+            const btn = document.createElement('button');
+            btn.textContent = text;
+            btn.className = 'suggestion-chip';
+            btn.style.cssText = 'background:#f1f5f9;border:1px solid #e2e8f0;border-radius:1rem;padding:0.35rem 0.85rem;font-size:0.85rem;cursor:pointer;color:#334155;transition:background 0.15s;';
+            btn.addEventListener('mouseenter', () => { btn.style.background = '#e2e8f0'; });
+            btn.addEventListener('mouseleave', () => { btn.style.background = '#f1f5f9'; });
+            btn.addEventListener('click', () => {
+                this.messageInput.value = text;
+                this.sendMessage();
+                container.remove();
+            });
+            container.appendChild(btn);
+        });
+
+        this.chatMessages.appendChild(container);
+        this.scrollToBottom();
     }
 
     /**

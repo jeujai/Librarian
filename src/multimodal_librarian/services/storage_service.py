@@ -313,8 +313,9 @@ class StorageService:
         Returns:
             Tuple[bool, str]: (is_valid, error_message)
         """
-        # Check file size (100MB limit)
-        max_size = 100 * 1024 * 1024  # 100MB
+        # Check file size against config setting
+        from ..config.config import get_settings
+        max_size = get_settings().max_file_size
         if len(file_data) > max_size:
             return False, f"File size exceeds maximum ({max_size // (1024*1024)}MB)"
         

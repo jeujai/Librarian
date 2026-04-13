@@ -344,6 +344,23 @@ class DocumentManager:
             logger.warning(f"Could not get failed stage for document {document_id}: {e}")
             return None
     
+    async def get_document_filename(self, document_id: UUID) -> Optional[str]:
+        """
+        Get the filename for a document by ID.
+
+        Args:
+            document_id: Document identifier
+
+        Returns:
+            The original filename, or None if not found.
+        """
+        try:
+            document = await self.upload_service.get_document(document_id)
+            return document.filename if document else None
+        except Exception as e:
+            logger.debug(f"Could not get filename for {document_id}: {e}")
+            return None
+
     async def delete_document_completely(self, document_id: UUID) -> Dict[str, Any]:
         """
         Delete document and all associated data from every store.
@@ -417,8 +434,42 @@ class DocumentManager:
                 await self.processing_service.cancel_processing(
                     document_id
                 )
-            except Exception:
-                pass  # best-effort
+            except Exception as cancel_err:
+                logger.warning(
+                    f"Cancellation failed for document {doc_id}: "
+                    f"{cancel_err}"
+                )
+                results['errors'].append(
+                    f"Cancellation: {cancel_err}"
+                )
+
+            # Clean up Redis task locks for this document
+            # (prevents stale locks from blocking reprocessing)
+            try:
+                import redis
+                redis_client = redis.Redis(
+                    host='redis', port=6379, db=0,
+                    socket_connect_timeout=2,
+                )
+                lock_keys = [
+                    f"bridge_lock:{doc_id}",
+                    f"kg_lock:{doc_id}",
+                ]
+                deleted_locks = 0
+                for key in lock_keys:
+                    if redis_client.delete(key):
+                        deleted_locks += 1
+                if deleted_locks:
+                    logger.info(
+                        f"Cleaned up {deleted_locks} Redis task "
+                        f"lock(s) for document {doc_id}"
+                    )
+                redis_client.close()
+            except Exception as redis_err:
+                logger.debug(
+                    f"Redis lock cleanup failed for {doc_id}: "
+                    f"{redis_err}"
+                )
 
             # 1. Milvus — delete vectors
             #    Conversation chunks are stored with source_id = UUID5.
@@ -607,13 +658,13 @@ class DocumentManager:
 
             return await asyncio.wait_for(
                 self._delete_from_neo4j_inner(document_id, results),
-                timeout=30,
+                timeout=300,
             )
         except asyncio.TimeoutError:
             logger.warning(
-                f"Neo4j deletion timed out after 30s for {document_id}"
+                f"Neo4j deletion timed out after 300s for {document_id}"
             )
-            results['errors'].append("Neo4j: timed out after 30s")
+            results['errors'].append("Neo4j: timed out after 300s")
             return 0
         except Exception as e:
             logger.warning(f"Neo4j deletion failed: {e}")
@@ -629,6 +680,19 @@ class DocumentManager:
             kg = KnowledgeGraphService()
             await kg.client.connect()
             try:
+                # Step 0: Delete RELATED_DOCS edges involving this document
+                res_rd = await kg.client.execute_write_query(
+                    """
+                    MATCH ()-[r:RELATED_DOCS]->()
+                    WHERE r.source_doc_id = $doc_id
+                       OR r.target_doc_id = $doc_id
+                    DELETE r
+                    RETURN count(r) AS deleted_rd
+                    """,
+                    {"doc_id": document_id},
+                )
+                deleted_rd = res_rd[0]["deleted_rd"] if res_rd else 0
+
                 # Step 1: Delete EXTRACTED_FROM relationships to this source's Chunk nodes
                 res_rels = await kg.client.execute_write_query(
                     """
@@ -676,9 +740,10 @@ class DocumentManager:
                 except Exception:
                     pass
 
-                total = deleted_rels + deleted_chunks + deleted_concepts
+                total = deleted_rd + deleted_rels + deleted_chunks + deleted_concepts
                 logger.info(
-                    f"Neo4j: deleted {deleted_rels} EXTRACTED_FROM rels, "
+                    f"Neo4j: deleted {deleted_rd} RELATED_DOCS, "
+                    f"{deleted_rels} EXTRACTED_FROM rels, "
                     f"{deleted_chunks} Chunk nodes, "
                     f"{deleted_concepts} orphaned Concepts "
                     f"for {document_id}"

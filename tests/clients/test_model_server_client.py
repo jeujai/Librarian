@@ -29,7 +29,7 @@ class TestModelServerClient:
         
         assert client.base_url == "http://model-server:8001"
         assert client.timeout == 30.0
-        assert client.max_retries == 3
+        assert client.max_retries == 5
         assert client.retry_delay == 1.0
         assert client.enabled is True
         assert client._session is None

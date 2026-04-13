@@ -184,6 +184,11 @@ body {
     animation: fadeIn 0.3s ease-out;
 }
 
+/* Allow messages containing tables to expand to full width */
+.message:has(table) {
+    max-width: 100%;
+}
+
 @keyframes fadeIn {
     from {
         opacity: 0;
@@ -298,6 +303,14 @@ body {
     border-radius: 3px;
     font-size: 0.9em;
     font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    cursor: pointer;
+    color: #3b82f6;
+    transition: background 0.15s;
+}
+
+.system-message .message-content code:hover {
+    background: #e0e7ff;
+    text-decoration: underline;
 }
 
 .system-message .message-content pre {
@@ -314,6 +327,36 @@ body {
     padding: 0;
     color: inherit;
     font-size: 0.85em;
+}
+
+/* Status report tables */
+.system-message .message-content table.status-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0.5em 0;
+    font-size: 0.85em;
+}
+
+.system-message .message-content table.status-table th,
+.system-message .message-content table.status-table td {
+    border: 1px solid #e2e8f0;
+    padding: 0.4em 0.6em;
+    text-align: left;
+    white-space: nowrap;
+}
+
+.system-message .message-content table.status-table th {
+    background: #f1f5f9;
+    font-weight: 600;
+    color: #475569;
+}
+
+.system-message .message-content table.status-table tr:nth-child(even) {
+    background: #f8fafc;
+}
+
+.system-message .message-content table.status-table td:nth-child(4) {
+    text-align: right;
 }
 
 /* Message Media */
@@ -370,6 +413,42 @@ body {
     margin-top: 1rem;
     padding-top: 1rem;
     border-top: 1px solid #e2e8f0;
+}
+
+.citations-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    background: none;
+    border: none;
+    padding: 0;
+    margin-bottom: 0.5rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #64748b;
+    cursor: pointer;
+}
+
+.citations-toggle:hover {
+    color: #3b82f6;
+}
+
+.citations-toggle .citations-arrow {
+    display: inline-block;
+    font-size: 0.65rem;
+    transition: transform 0.2s ease;
+}
+
+.citations-toggle[aria-expanded="true"] .citations-arrow {
+    transform: rotate(90deg);
+}
+
+.citations-list {
+    display: none;
+}
+
+.citations-list.expanded {
+    display: block;
 }
 
 .citation {
@@ -1772,6 +1851,17 @@ body {
     text-align: center;
 }
 
+/* Telemetry Report Pagination */
+.telemetry-pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid #e2e8f0;
+}
+
 /* Document Stats */
 .document-stats {
     padding: 4px 12px 8px 36px;
@@ -2038,6 +2128,10 @@ body {
         background: #1e293b;
         border-color: #334155;
         color: #94a3b8;
+    }
+
+    .telemetry-pagination {
+        border-color: #334155;
     }
 
     .document-stats-toggle {

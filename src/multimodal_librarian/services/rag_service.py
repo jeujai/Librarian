@@ -31,6 +31,7 @@ from typing import (
 from uuid import uuid4
 
 from ..components.kg_retrieval.query_decomposer import QueryDecomposer
+from ..components.kg_retrieval.relevance_detector import compute_chunk_noun_score
 from ..components.knowledge_graph.kg_builder import KnowledgeGraphBuilder
 from ..components.knowledge_graph.kg_query_engine import KnowledgeGraphQueryEngine
 from ..config import get_settings
@@ -177,7 +178,7 @@ class QueryProcessor:
 
         Returns:
             (intent, enhanced_query)
-            - intent: "search", "web_search", or "no_search"
+            - intent: "search", "web_search", "status_report", or "no_search"
             - enhanced_query: A rewritten query when context resolution was applied,
               or None if the original query should be used as-is.
         """
@@ -201,10 +202,20 @@ User message: "{query}"
 Reply with EXACTLY one line in one of these formats:
 SEARCH: <rewritten query optimized for document search>
 WEB_SEARCH: <rewritten query optimized for web search>
+STATUS_REPORT
+THROUGHPUT_REPORT
+ENRICHMENT_REPORT
+FAILED_UPLOADS_REPORT
+SYSTEM_COMMANDS
 NO_SEARCH
 
 Use SEARCH when the user is asking a factual, topical, or analytical question that could be answered or enriched by documents in the library. Even if the conversation context already contains a previous answer to a similar question, the user may be re-asking to get a cited, document-backed response — always use SEARCH in that case.
 Use WEB_SEARCH only for questions explicitly about current events, breaking news, or clearly time-sensitive information that a static document library cannot answer.
+Use STATUS_REPORT when the user is asking about document processing status, upload progress, job status, or processing statistics. Examples: "show me upload stats", "what's processing?", "any uploads running?", "how are my documents doing?", "processing status". Do NOT use STATUS_REPORT for questions about document content — only for questions about the processing pipeline itself.
+Use THROUGHPUT_REPORT when the user is asking about upload telemetry, processing throughput, performance metrics, processing times, or speed of document uploads. Examples: "upload telemetry", "Show me upload telemetry", "upload telemetry stats", "how long did processing take?", "how fast were documents processed?". Do NOT use THROUGHPUT_REPORT for questions about document content.
+Use ENRICHMENT_REPORT when the user is asking about knowledge graph enrichment status, enrichment results, concept enrichment, YAGO/ConceptNet hits, or enrichment metrics. Examples: "show me the enrichments", "enrichment status", "show enrichment results", "how did enrichment go?", "concept enrichment stats", "YAGO hits", "ConceptNet enrichment". Do NOT use ENRICHMENT_REPORT for questions about document content.
+Use FAILED_UPLOADS_REPORT when the user is asking about failed uploads, upload errors, processing failures, or documents that failed to process. Examples: "show me failed uploads", "what uploads failed?", "failed documents", "upload errors", "processing failures", "which documents had errors?". Do NOT use FAILED_UPLOADS_REPORT for questions about document content.
+Use SYSTEM_COMMANDS when the user is asking what system commands, instrumentation, reports, or admin tools are available. Examples: "show me available system instrumentation", "what reports can I run?", "system commands", "what admin tools are available?", "show me available commands", "help with system reports".
 Use NO_SEARCH ONLY for greetings ("hi", "hello"), farewells ("bye", "thanks"), or meta-questions about the assistant itself ("what can you do?"). Nothing else qualifies as NO_SEARCH.
 
 When in doubt, use SEARCH. If the user message is already a good search query, repeat it after SEARCH:.
@@ -223,6 +234,26 @@ Reply with only one line, nothing else."""
             if answer.upper().startswith("NO_SEARCH"):
                 logger.info(f"Query classified as NO_SEARCH: '{query}'")
                 return "no_search", None
+
+            if answer.upper().startswith("STATUS_REPORT"):
+                logger.info(f"Query classified as STATUS_REPORT: '{query}'")
+                return "status_report", None
+
+            if answer.upper().startswith("THROUGHPUT_REPORT"):
+                logger.info(f"Query classified as THROUGHPUT_REPORT: '{query}'")
+                return "throughput_report", None
+
+            if answer.upper().startswith("ENRICHMENT_REPORT"):
+                logger.info(f"Query classified as ENRICHMENT_REPORT: '{query}'")
+                return "enrichment_report", None
+
+            if answer.upper().startswith("FAILED_UPLOADS_REPORT"):
+                logger.info(f"Query classified as FAILED_UPLOADS_REPORT: '{query}'")
+                return "failed_uploads_report", None
+
+            if answer.upper().startswith("SYSTEM_COMMANDS"):
+                logger.info(f"Query classified as SYSTEM_COMMANDS: '{query}'")
+                return "system_commands", None
 
             if answer.upper().startswith("WEB_SEARCH:"):
                 rewritten = answer[len("WEB_SEARCH:"):].strip().strip('"')
@@ -854,6 +885,8 @@ class RAGService:
                         "has_proper_noun_gap": v.query_term_coverage.has_proper_noun_gap,
                         "has_cooccurrence_gap": v.query_term_coverage.has_cooccurrence_gap,
                         "key_nouns": v.query_term_coverage.key_nouns,
+                        "adaptive_threshold": v.query_term_coverage.adaptive_threshold,
+                        "detected_domain": v.query_term_coverage.detected_domain,
                     },
                 }
             
@@ -1249,6 +1282,7 @@ SOURCES:
 Instructions:
 - Use the provided sources to answer the user's question
 - Always cite sources using the format [Source X] when referencing information
+- IMPORTANT: Only reference sources that actually appear above. Do NOT fabricate or hallucinate source numbers beyond what is provided
 - Sources may come from the user's document library or from web search — use all of them
 - If knowledge graph insights are provided, use them to enhance your understanding
 - If the sources don't fully answer the question, say so and provide what information you can
@@ -1528,17 +1562,33 @@ Instructions:
                 relevance_detected_irrelevant = not verdict.is_relevant
                 tc = verdict.query_term_coverage
                 logger.info(
-                    f"Relevance detection: is_relevant={verdict.is_relevant}, "
-                    f"factor={verdict.confidence_adjustment_factor}, "
-                    f"semantic_floor={verdict.score_distribution.is_semantic_floor}, "
-                    f"low_specificity={verdict.concept_specificity.is_low_specificity}, "
-                    f"proper_noun_gap={tc.has_proper_noun_gap}, "
-                    f"cooccurrence_gap={tc.has_cooccurrence_gap}, "
+                    f"Relevance detection: "
+                    f"is_relevant={verdict.is_relevant}, "
+                    f"factor="
+                    f"{verdict.confidence_adjustment_factor}, "
+                    f"semantic_floor="
+                    f"{verdict.score_distribution.is_semantic_floor}, "
+                    f"low_specificity="
+                    f"{verdict.concept_specificity.is_low_specificity}, "
+                    f"proper_noun_count="
+                    f"{len(tc.proper_nouns)}, "
+                    f"adaptive_threshold="
+                    f"{tc.adaptive_threshold:.2f}, "
+                    f"coverage_ratio="
+                    f"{tc.coverage_ratio:.2f}, "
+                    f"detected_domain="
+                    f"{tc.detected_domain}, "
+                    f"has_proper_noun_gap="
+                    f"{tc.has_proper_noun_gap}, "
+                    f"has_cooccurrence_gap="
+                    f"{tc.has_cooccurrence_gap}, "
                     f"proper_nouns={tc.proper_nouns}, "
                     f"key_nouns={tc.key_nouns}, "
                     f"uncovered={tc.uncovered_nouns}, "
-                    f"scores=[{', '.join(f'{c.final_score:.4f}' for c in rc_chunks[:5])}], "
-                    f"concepts={len(query_decomposition.concept_matches)}"
+                    f"scores=["
+                    f"{', '.join(f'{c.final_score:.4f}' for c in rc_chunks[:5])}], "
+                    f"concepts="
+                    f"{len(query_decomposition.concept_matches)}"
                 )
             except Exception as e:
                 logger.warning(f"Relevance detection failed, using original logic: {e}")
@@ -1598,23 +1648,30 @@ Instructions:
                 and tc.has_cooccurrence_gap
                 and tc.key_nouns
             ):
-                # Co-occurrence drop: only keep chunks containing
-                # ALL key PROPN tokens (not just one).
-                key_nouns_lower = [
-                    kn.lower() for kn in tc.key_nouns
-                ]
+                # Co-occurrence drop: retain chunks meeting adaptive
+                # threshold instead of requiring ALL key nouns.
+                adaptive_thresh = tc.adaptive_threshold
+                for c in librarian_chunks:
+                    c.metadata['chunk_noun_score'] = compute_chunk_noun_score(
+                        c.content or "", tc.key_nouns,
+                    )
                 kept = [
                     c for c in librarian_chunks
-                    if all(
-                        kn in (c.content or "").lower()
-                        for kn in key_nouns_lower
-                    )
+                    if c.metadata['chunk_noun_score'] >= adaptive_thresh
                 ]
+                if not kept and librarian_chunks:
+                    # Fallback: retain top chunks by chunk_noun_score
+                    librarian_chunks.sort(
+                        key=lambda c: c.metadata.get('chunk_noun_score', 0.0),
+                        reverse=True,
+                    )
+                    kept = librarian_chunks[:self.web_search_result_count_threshold]
                 dropped = len(librarian_chunks) - len(kept)
                 logger.info(
-                    f"Co-occurrence drop: kept {len(kept)}, "
+                    f"Co-occurrence drop (adaptive): kept {len(kept)}, "
                     f"dropped {dropped} librarian chunks "
-                    f"(key_nouns: {key_nouns_lower})"
+                    f"(key_nouns: {[kn.lower() for kn in tc.key_nouns]}, "
+                    f"adaptive_threshold: {adaptive_thresh:.2f})"
                 )
                 librarian_chunks = kept
             elif (
@@ -1652,11 +1709,8 @@ Instructions:
 
         # Per-chunk key-noun filter: even when the batch-level relevance
         # verdict is "relevant" (because at least one chunk genuinely matches),
-        # individual chunks that don't contain ALL key nouns are noise.
-        # E.g. "Who is the President of Venezuela?" — a book page mentioning
-        # "president" in an unrelated context should be dropped even though
-        # the conversation chunk that actually discusses Venezuela kept the
-        # batch verdict as is_relevant=True.
+        # individual chunks that don't meet the adaptive threshold are noise.
+        # Uses graduated scoring instead of requiring ALL key nouns.
         tc = (
             self._last_relevance_verdict.query_term_coverage
             if self._last_relevance_verdict is not None
@@ -1667,24 +1721,143 @@ Instructions:
             and len(tc.key_nouns) >= 2
             and librarian_chunks
         ):
-            key_nouns_lower = [kn.lower() for kn in tc.key_nouns]
+            adaptive_thresh = tc.adaptive_threshold
             before_count = len(librarian_chunks)
-            librarian_chunks = [
+            # Compute chunk_noun_score for any chunks that don't have it yet
+            for c in librarian_chunks:
+                if 'chunk_noun_score' not in c.metadata:
+                    c.metadata['chunk_noun_score'] = compute_chunk_noun_score(
+                        c.content or "", tc.key_nouns,
+                    )
+            kept = [
                 c for c in librarian_chunks
-                if all(kn in (c.content or "").lower() for kn in key_nouns_lower)
+                if c.metadata['chunk_noun_score'] >= adaptive_thresh
             ]
-            dropped = before_count - len(librarian_chunks)
+            if not kept and librarian_chunks:
+                # Fallback: retain top chunks by chunk_noun_score
+                librarian_chunks.sort(
+                    key=lambda c: c.metadata.get('chunk_noun_score', 0.0),
+                    reverse=True,
+                )
+                kept = librarian_chunks[:self.web_search_result_count_threshold]
+            dropped = before_count - len(kept)
             if dropped > 0:
                 logger.info(
-                    f"Per-chunk key-noun filter: kept {len(librarian_chunks)}, "
-                    f"dropped {dropped} chunks missing key nouns {key_nouns_lower}"
+                    f"Per-chunk key-noun filter (adaptive): "
+                    f"kept {len(kept)}, "
+                    f"dropped {dropped} chunks below "
+                    f"adaptive_threshold {adaptive_thresh:.2f} "
+                    f"(key_nouns: "
+                    f"{[kn.lower() for kn in tc.key_nouns]})"
+                )
+            # Log per-chunk noun scores for observability
+            for c in kept:
+                logger.info(
+                    f"Chunk noun score: "
+                    f"chunk_id={c.chunk_id}, "
+                    f"chunk_noun_score="
+                    f"{c.metadata.get('chunk_noun_score', 0.0):.2f}, "
+                    f"similarity_score="
+                    f"{c.similarity_score:.4f}"
+                )
+            librarian_chunks = kept
+
+        # Web search trigger based on surviving chunk count after
+        # adaptive threshold filtering (Requirements 6.1, 6.2, 6.3, 6.4, 6.5).
+        # This is an independent signal — existing thin/irrelevant triggers above
+        # remain active.
+        if (
+            tc is not None
+            and tc.key_nouns
+            and self.searxng_client is not None
+            and self.searxng_enabled
+        ):
+            adaptive_thresh = tc.adaptive_threshold
+            surviving_count = sum(
+                1 for c in librarian_chunks
+                if c.metadata.get('chunk_noun_score', 0.0)
+                >= adaptive_thresh
+            )
+            if surviving_count < self.web_search_result_count_threshold:
+                logger.info(
+                    f"Adaptive web search trigger: "
+                    f"{surviving_count} chunks above "
+                    f"adaptive_threshold "
+                    f"{adaptive_thresh:.2f} < threshold "
+                    f"{self.web_search_result_count_threshold}"
+                    f", triggering web search"
+                )
+                try:
+                    web_results = await self.searxng_client.search(
+                        query, max_results=self.searxng_max_results,
+                    )
+                    adaptive_web_chunks = self._convert_web_results(web_results)
+                    web_chunks.extend(adaptive_web_chunks)
+                except Exception as e:
+                    logger.warning(f"SearXNG web search (adaptive trigger) failed: {e}")
+            else:
+                logger.info(
+                    f"Adaptive web search not triggered: "
+                    f"{surviving_count} chunks above "
+                    f"adaptive_threshold "
+                    f"{adaptive_thresh:.2f} >= threshold "
+                    f"{self.web_search_result_count_threshold}"
                 )
 
-        # Merge and sort — LIBRARIAN wins ties via stable sort key (Req 2.4, 2.5)
+        # Dedup-aware thin results check: ContextPreparer collapses
+        # conversation chunks by document_id, so 4 raw chunks from
+        # 2 conversation threads become 2 citations.  Count effective
+        # unique citations and trigger web search if below threshold.
+        if (
+            librarian_chunks
+            and not web_chunks
+            and self.searxng_client is not None
+            and self.searxng_enabled
+        ):
+            seen_conv_ids: set = set()
+            effective_count = 0
+            for c in librarian_chunks:
+                src_type = (
+                    c.metadata.get('source_type', '')
+                    if c.metadata else ''
+                )
+                if src_type == 'conversation':
+                    if c.document_id not in seen_conv_ids:
+                        seen_conv_ids.add(c.document_id)
+                        effective_count += 1
+                else:
+                    effective_count += 1
+            if effective_count < self.web_search_result_count_threshold:
+                logger.info(
+                    f"Dedup-aware thin results trigger: "
+                    f"{len(librarian_chunks)} raw chunks -> "
+                    f"{effective_count} effective citations "
+                    f"< threshold "
+                    f"{self.web_search_result_count_threshold}"
+                    f", triggering web search"
+                )
+                try:
+                    web_results = await self.searxng_client.search(
+                        query,
+                        max_results=self.searxng_max_results,
+                    )
+                    web_chunks = self._convert_web_results(
+                        web_results,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"SearXNG web search "
+                        f"(dedup-aware trigger) "
+                        f"failed: {e}"
+                    )
+
+        # Merge and sort — primary: final_score DESC, secondary: chunk_noun_score DESC,
+        # tertiary: LIBRARIAN wins ties (Req 2.4, 2.5, 3.3, 4.1, 4.2, 4.3)
         all_chunks = librarian_chunks + web_chunks
         all_chunks.sort(
             key=lambda c: (
                 c.similarity_score,
+                c.metadata.get('chunk_noun_score', 0.0),
                 c.source_type == SearchSourceType.LIBRARIAN.value,
             ),
             reverse=True,

@@ -51,6 +51,8 @@ const MarkdownRenderer = (() => {
         let codeBlockContent = [];
         let inList = false;
         let listType = null; // 'ul' or 'ol'
+        let inTable = false;
+        let tableRows = [];
 
         function closeList() {
             if (inList) {
@@ -58,6 +60,36 @@ const MarkdownRenderer = (() => {
                 inList = false;
                 listType = null;
             }
+        }
+
+        function closeTable() {
+            if (inTable && tableRows.length > 0) {
+                htmlParts.push(renderTable(tableRows));
+                tableRows = [];
+                inTable = false;
+            }
+        }
+
+        function renderTable(rows) {
+            // Filter out separator rows (|---|---|)
+            const dataRows = rows.filter(r => !r.match(/^\|[\s\-:|]+\|$/));
+            if (dataRows.length === 0) return '';
+
+            let html = '<table class="status-table">';
+            dataRows.forEach((row, idx) => {
+                const cells = row.split('|').filter((_, i, arr) => i > 0 && i < arr.length - 1);
+                if (idx === 0) {
+                    html += '<thead><tr>';
+                    cells.forEach(c => { html += '<th>' + applyInlineFormatting(escapeHtml(c.trim())) + '</th>'; });
+                    html += '</tr></thead><tbody>';
+                } else {
+                    html += '<tr>';
+                    cells.forEach(c => { html += '<td>' + applyInlineFormatting(escapeHtml(c.trim())) + '</td>'; });
+                    html += '</tr>';
+                }
+            });
+            html += '</tbody></table>';
+            return html;
         }
 
         for (let i = 0; i < lines.length; i++) {
@@ -81,9 +113,10 @@ const MarkdownRenderer = (() => {
                 continue;
             }
 
-            // Blank line — close list, add spacing
+            // Blank line — close list, close table, add spacing
             if (line.trim() === '') {
                 closeList();
+                closeTable();
                 // Don't add empty paragraphs for consecutive blank lines
                 continue;
             }
@@ -125,13 +158,23 @@ const MarkdownRenderer = (() => {
                 continue;
             }
 
+            // Table rows: | col1 | col2 | or |---|---|
+            if (line.trim().startsWith('|') && line.trim().endsWith('|')) {
+                closeList();
+                inTable = true;
+                tableRows.push(line.trim());
+                continue;
+            }
+
             // Regular paragraph
             closeList();
+            closeTable();
             htmlParts.push('<p>' + applyInlineFormatting(escapeHtml(line)) + '</p>');
         }
 
         // Close any open structures
         closeList();
+        closeTable();
         if (inCodeBlock) {
             htmlParts.push('<pre><code>' + escapeHtml(codeBlockContent.join('\n')) + '</code></pre>');
         }

@@ -100,6 +100,32 @@ class DuplicateChecker {
     }
 
     /**
+     * Remove a document from the cache after deletion.
+     * @param {string} filename
+     * @param {string} [documentId] - Optional document ID for precise removal
+     */
+    removeDocument(filename, documentId) {
+        if (filename) {
+            this.cachedFilenames.delete(filename.toLowerCase());
+        }
+        if (documentId) {
+            this.documents = this.documents.filter(d => d.document_id !== documentId);
+        } else if (filename) {
+            this.documents = this.documents.filter(d => d.filename !== filename);
+        }
+    }
+
+    /**
+     * Force a full refresh of the cache from the server.
+     * @returns {Promise<void>}
+     */
+    async refresh() {
+        this.loaded = false;
+        this.loading = false;
+        await this.fetchUploadedFilenames();
+    }
+
+    /**
      * Get the cached document objects (for the UploadedFilesPanel).
      * @returns {Object[]}
      */

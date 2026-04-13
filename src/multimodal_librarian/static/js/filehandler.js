@@ -4,7 +4,8 @@
 
 class FileHandler {
     constructor() {
-        this.maxFileSize = 100 * 1024 * 1024; // 100MB
+        // Max file size - effectively unlimited (10GB)
+        this.maxFileSize = 10 * 1024 * 1024 * 1024; // 10GB
         this.supportedTypes = {
             'application/pdf': 'PDF',
             'text/plain': 'TXT',

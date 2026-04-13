@@ -95,7 +95,8 @@ class Neo4jClient:
         initial_address_resolution_timeout: int = 5,
         keep_alive: bool = True,
         encrypted: bool = False,
-        trust: bool = True
+        trust: bool = True,
+        write_timeout: int = 300
     ):
         """
         Initialize Neo4j client with connection configuration.
@@ -113,6 +114,7 @@ class Neo4jClient:
             keep_alive: Enable TCP keep-alive
             encrypted: Enable TLS encryption (False for local development)
             trust: Trust server certificates (True for local development)
+            write_timeout: Client-side timeout in seconds for write operations (default 300s)
         """
         self.uri = uri
         self.user = user
@@ -128,6 +130,7 @@ class Neo4jClient:
         self.keep_alive = keep_alive
         self.encrypted = encrypted
         self.trust = trust
+        self.write_timeout = write_timeout
         
         # Connection state
         self.driver: Optional[AsyncDriver] = None
@@ -280,12 +283,16 @@ class Neo4jClient:
             "CREATE INDEX concept_id_index IF NOT EXISTS FOR (c:Concept) ON (c.concept_id)",
             "CREATE INDEX concept_source_document_index IF NOT EXISTS FOR (c:Concept) ON (c.source_document)",
             "CREATE INDEX concept_type_index IF NOT EXISTS FOR (c:Concept) ON (c.type)",
+            # Case-insensitive lookup index (avoids toLower(c.name) full scans)
+            "CREATE INDEX concept_name_lower IF NOT EXISTS FOR (c:Concept) ON (c.name_lower)",
             "CREATE INDEX document_id_index IF NOT EXISTS FOR (d:Document) ON (d.document_id)",
             # Unique constraint for data integrity
             "CREATE CONSTRAINT concept_id_unique IF NOT EXISTS FOR (c:Concept) REQUIRE c.concept_id IS UNIQUE",
             # Chunk node constraint and index for graph-native chunk relationships
             "CREATE CONSTRAINT chunk_id_unique IF NOT EXISTS FOR (ch:Chunk) REQUIRE ch.chunk_id IS UNIQUE",
             "CREATE INDEX chunk_source_id IF NOT EXISTS FOR (ch:Chunk) ON (ch.source_id)",
+            # UMLS synonym index for fast synonym lookups
+            "CREATE INDEX umls_synonym_name IF NOT EXISTS FOR (s:UMLSSynonym) ON (s.name)",
         ]
         
         # Vector index uses a separate procedure call (idempotent - Neo4j ignores if exists)
@@ -693,11 +700,13 @@ class Neo4jClient:
         query: str,
         sanitized_params: Dict[str, Any]
     ) -> SearchResults:
-        """Execute a write query within a session transaction."""
+        """Execute a write query within a session transaction with transient retry."""
         async with self.driver.session(
             database=self.database
         ) as session:
             start_time = time.time()
+            max_retries = 3
+            retry_count = 0
 
             async def write_transaction(tx):
                 result = await tx.run(query, sanitized_params)
@@ -732,14 +741,40 @@ class Neo4jClient:
                     records.append(record_dict)
                 return records
 
-            records = await session.execute_write(write_transaction)
-            execution_time = time.time() - start_time
-            logger.debug(
-                f"Executed Neo4j write query in "
-                f"{execution_time:.3f}s, "
-                f"returned {len(records)} records"
-            )
-            return records
+            while retry_count < max_retries:
+                try:
+                    records = await session.execute_write(write_transaction)
+                    execution_time = time.time() - start_time
+                    logger.debug(
+                        f"Executed Neo4j write query in "
+                        f"{execution_time:.3f}s, "
+                        f"returned {len(records)} records"
+                    )
+                    return records
+
+                except TransientError as e:
+                    retry_count += 1
+                    if retry_count >= max_retries:
+                        raise QueryError(
+                            f"Write query failed after "
+                            f"{max_retries} retries",
+                            query=query,
+                            parameters=sanitized_params,
+                            query_type="WRITE",
+                            original_exception=e
+                        )
+                    await asyncio.sleep(
+                        0.1 * (2 ** retry_count)
+                    )
+                    logger.warning(
+                        f"Retrying write query due to "
+                        f"transient error "
+                        f"(attempt {retry_count}): {e}"
+                    )
+
+                except Exception as e:
+                    # Non-transient error, don't retry
+                    raise
 
     async def _execute_write_with_reconnect(
         self,
@@ -876,8 +911,11 @@ class Neo4jClient:
         sanitized_params = self._sanitize_parameters(parameters)
         
         try:
-            return await self._execute_write_with_reconnect(
-                query, sanitized_params
+            return await asyncio.wait_for(
+                self._execute_write_with_reconnect(
+                    query, sanitized_params
+                ),
+                timeout=self.write_timeout
             )
         except Neo4jError as e:
             logger.error(f"Neo4j write query error: {e}")
@@ -889,10 +927,10 @@ class Neo4jClient:
                 original_exception=e
             )
         except asyncio.TimeoutError as e:
-            logger.error(f"Neo4j write query timeout: {e}")
+            logger.error(f"Neo4j write query timeout after {self.write_timeout}s")
             raise TimeoutError(
-                f"Write query execution timed out",
-                timeout_duration=self.connection_acquisition_timeout,
+                f"Write query execution timed out after {self.write_timeout}s",
+                timeout_duration=self.write_timeout,
                 operation_type="write_query_execution",
                 original_exception=e
             )

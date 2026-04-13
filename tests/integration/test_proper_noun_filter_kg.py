@@ -36,13 +36,8 @@ from src.multimodal_librarian.models.kg_retrieval import (
     RetrievalSource,
     RetrievedChunk,
 )
-from src.multimodal_librarian.services.kg_retrieval_service import (
-    KGRetrievalService,
-)
-from src.multimodal_librarian.services.rag_service import (
-    DocumentChunk,
-    RAGService,
-)
+from src.multimodal_librarian.services.kg_retrieval_service import KGRetrievalService
+from src.multimodal_librarian.services.rag_service import DocumentChunk, RAGService
 
 logger = logging.getLogger(__name__)
 
@@ -265,6 +260,7 @@ class TestFilteredSetPassedToReranker:
                 .assert_called_once_with(
                     sample_chunks,
                     "Tell me about Venezuela",
+                    adaptive_threshold=1.0,
                 )
 
             # Reranker got the FILTERED set (2), not full (5)
@@ -359,7 +355,7 @@ class TestFilterCallOrder:
     ):
         call_order: List[str] = []
 
-        def _filter_side_effect(chunks, query):
+        def _filter_side_effect(chunks, query, adaptive_threshold=1.0):
             call_order.append("filter")
             return None
 
@@ -378,7 +374,7 @@ class TestFilterCallOrder:
             call_order.append("stage1")
             return (sample_chunks, {})
 
-        async def _rerank(chunks, query, top_k):
+        async def _rerank(chunks, query, top_k, **kwargs):
             call_order.append("rerank")
             return chunks[:3]
 

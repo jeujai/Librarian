@@ -109,7 +109,7 @@ a single source of truth for dependency injection.
 """
 
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
 
 from fastapi import Depends, HTTPException, WebSocket
 from fastapi.params import Depends as DependsParam
@@ -143,6 +143,7 @@ if TYPE_CHECKING:
     from ...components.vector_store.vector_store import VectorStore
     from ...components.yago import YagoLocalClient
     from ...logging.database_query_logger import DatabaseQueryLogger
+    from ...services.active_jobs_dispatcher import ActiveJobsDispatcher
     from ...services.ai_service import AIService
     from ...services.ai_service_cached import CachedAIService
     from ...services.conversation_knowledge_service import ConversationKnowledgeService
@@ -234,9 +235,19 @@ _searxng_client: Optional["SearXNGClient"] = None
 _processing_status_service: Optional["ProcessingStatusService"] = None
 
 # =============================================================================
+# Status Report Service cached instance
+# =============================================================================
+_status_report_service: Optional["StatusReportService"] = None
+
+# =============================================================================
 # Relation Type Registry cached instance
 # =============================================================================
 _relation_type_registry: Optional["RelationTypeRegistry"] = None
+
+# =============================================================================
+# Active Jobs Dispatcher cached instance
+# =============================================================================
+_active_jobs_dispatcher: Optional["ActiveJobsDispatcher"] = None
 
 # =============================================================================
 # Conversation Knowledge Service cached instance
@@ -281,6 +292,7 @@ class ConnectionManager:
         self.active_connections: Dict[str, WebSocket] = {}
         self.user_threads: Dict[str, str] = {}  # connection_id -> thread_id
         self.conversation_history: Dict[str, List[Dict[str, str]]] = {}
+        self._active_jobs_subscribers: Set[str] = set()  # connection IDs subscribed to active jobs updates
         
         # Services are injected separately, not in __init__
         self._rag_service: Optional["RAGService"] = None
@@ -333,7 +345,22 @@ class ConnectionManager:
             del self.user_threads[connection_id]
         if connection_id in self.conversation_history:
             del self.conversation_history[connection_id]
+        self._active_jobs_subscribers.discard(connection_id)
         logger.info(f"WebSocket connection closed: {connection_id}")
+    
+    def subscribe_active_jobs(self, connection_id: str) -> None:
+        """Register a connection to receive Active Jobs update messages."""
+        self._active_jobs_subscribers.add(connection_id)
+        logger.info(f"Connection {connection_id} subscribed to active jobs updates")
+
+    def unsubscribe_active_jobs(self, connection_id: str) -> None:
+        """Remove a connection from Active Jobs update delivery."""
+        self._active_jobs_subscribers.discard(connection_id)
+        logger.info(f"Connection {connection_id} unsubscribed from active jobs updates")
+
+    def get_active_jobs_subscribers(self) -> Set[str]:
+        """Return the current set of connection IDs subscribed to active jobs."""
+        return set(self._active_jobs_subscribers)
     
     async def send_personal_message(self, message: dict, connection_id: str):
         """Send a message to a specific connection."""
@@ -1643,6 +1670,10 @@ async def get_relevance_detector() -> "RelevanceDetector":
                 variance_threshold=settings.relevance_variance_threshold,
                 specificity_threshold=settings.relevance_specificity_threshold,
                 spacy_nlp=spacy_nlp,
+                base_threshold_floor=settings.adaptive_threshold_floor,
+                medical_threshold=settings.adaptive_medical_threshold,
+                legal_threshold=settings.adaptive_legal_threshold,
+                small_query_noun_limit=settings.adaptive_small_query_noun_limit,
             )
             logger.info(
                 "RelevanceDetector initialized successfully via DI"
@@ -2698,6 +2729,8 @@ def clear_all_caches():
     global _relation_type_registry
     global _searxng_client
     global _umls_client
+    global _status_report_service
+    global _active_jobs_dispatcher
     
     # Disconnect OpenSearch if connected
     if _opensearch_client is not None:
@@ -2781,6 +2814,12 @@ def clear_all_caches():
 
     # Clear UMLS client cache
     _umls_client = None
+
+    # Clear StatusReportService cache
+    _status_report_service = None
+
+    # Clear ActiveJobsDispatcher cache
+    _active_jobs_dispatcher = None
 
     logger.info("All dependency caches cleared")
 
@@ -3322,6 +3361,106 @@ def clear_processing_status_service_cache():
 
 
 # =============================================================================
+# Status Report Service Dependencies
+# =============================================================================
+
+
+async def get_status_report_service(
+    db_client: "RelationalStoreClient" = Depends(get_relational_client),
+    processing_status_service: Optional["ProcessingStatusService"] = Depends(
+        get_processing_status_service_optional
+    ),
+) -> "StatusReportService":
+    """
+    FastAPI dependency for StatusReportService.
+
+    Lazily creates and caches the status report service on first use.
+    The service aggregates processing job data from PostgreSQL and
+    in-memory tracking to produce structured status reports.
+
+    Args:
+        db_client: RelationalStoreClient for PostgreSQL queries (injected)
+        processing_status_service: Optional ProcessingStatusService for
+            in-memory progress augmentation (injected)
+
+    Returns:
+        StatusReportService instance
+
+    Raises:
+        HTTPException: If service creation fails (503 Service Unavailable)
+
+    Validates: Requirements 4.3
+    """
+    global _status_report_service
+
+    if _status_report_service is None:
+        try:
+            from ...services.status_report_service import StatusReportService
+
+            logger.info("Initializing StatusReportService via DI (lazy)")
+            _status_report_service = StatusReportService(
+                db_client=db_client,
+                processing_status_service=processing_status_service,
+            )
+            logger.info("StatusReportService initialized successfully via DI")
+        except Exception as e:
+            logger.error(f"Failed to initialize StatusReportService: {e}")
+            raise HTTPException(
+                status_code=503,
+                detail="Status report service unavailable",
+            )
+
+    return _status_report_service
+
+
+async def get_status_report_service_optional(
+    db_client: Optional["RelationalStoreClient"] = Depends(get_relational_client_optional),
+    processing_status_service: Optional["ProcessingStatusService"] = Depends(
+        get_processing_status_service_optional
+    ),
+) -> Optional["StatusReportService"]:
+    """
+    Optional StatusReportService dependency - returns None if unavailable.
+
+    Use this for endpoints that can function without status report capabilities,
+    enabling graceful degradation.
+
+    Args:
+        db_client: Optional RelationalStoreClient (injected)
+        processing_status_service: Optional ProcessingStatusService (injected)
+
+    Returns:
+        StatusReportService instance or None if unavailable
+    """
+    if db_client is None:
+        logger.warning("StatusReportService unavailable: no relational client")
+        return None
+
+    try:
+        global _status_report_service
+
+        if _status_report_service is None:
+            from ...services.status_report_service import StatusReportService
+
+            _status_report_service = StatusReportService(
+                db_client=db_client,
+                processing_status_service=processing_status_service,
+            )
+
+        return _status_report_service
+    except Exception as e:
+        logger.warning(f"StatusReportService not available: {e}")
+        return None
+
+
+def clear_status_report_service_cache():
+    """Clear cached StatusReportService instance."""
+    global _status_report_service
+    _status_report_service = None
+    logger.debug("Cleared StatusReportService cache")
+
+
+# =============================================================================
 # Relation Type Registry Dependencies
 # =============================================================================
 
@@ -3587,3 +3726,85 @@ async def get_kg_query_engine_optional(
     except Exception as e:
         logger.warning(f"KG query engine error, returning None: {e}")
         return None
+
+
+# =============================================================================
+# Active Jobs Dispatcher Dependencies
+# =============================================================================
+
+
+async def get_active_jobs_dispatcher(
+    connection_manager: "ConnectionManager" = Depends(get_connection_manager),
+    processing_status_service: Optional["ProcessingStatusService"] = Depends(
+        get_processing_status_service_optional
+    ),
+    status_report_service: Optional["StatusReportService"] = Depends(
+        get_status_report_service_optional
+    ),
+) -> "ActiveJobsDispatcher":
+    """
+    FastAPI dependency for ActiveJobsDispatcher.
+
+    Lazily creates and caches the dispatcher singleton on first use.
+    The dispatcher fans out real-time progress events to WebSocket
+    connections subscribed to active-jobs updates.
+
+    Args:
+        connection_manager: ConnectionManager for broadcasting (injected)
+        processing_status_service: Optional PSS for in-memory tracking (injected)
+        status_report_service: Optional SRS for snapshot generation (injected)
+
+    Returns:
+        ActiveJobsDispatcher instance
+
+    Validates: Requirements 2.1
+    """
+    global _active_jobs_dispatcher
+
+    if _active_jobs_dispatcher is None:
+        from ...services.active_jobs_dispatcher import ActiveJobsDispatcher
+
+        logger.info("Initializing ActiveJobsDispatcher via DI (lazy)")
+        _active_jobs_dispatcher = ActiveJobsDispatcher(
+            connection_manager=connection_manager,
+            processing_status_service=processing_status_service,
+            status_report_service=status_report_service,
+        )
+        logger.info("ActiveJobsDispatcher initialized successfully via DI")
+
+    return _active_jobs_dispatcher
+
+
+async def get_active_jobs_dispatcher_optional(
+    connection_manager: Optional["ConnectionManager"] = Depends(get_connection_manager),
+    processing_status_service: Optional["ProcessingStatusService"] = Depends(
+        get_processing_status_service_optional
+    ),
+    status_report_service: Optional["StatusReportService"] = Depends(
+        get_status_report_service_optional
+    ),
+) -> Optional["ActiveJobsDispatcher"]:
+    """
+    Optional ActiveJobsDispatcher dependency — returns None if unavailable.
+
+    Returns:
+        ActiveJobsDispatcher instance or None if unavailable
+    """
+    if connection_manager is None:
+        return None
+    try:
+        return await get_active_jobs_dispatcher(
+            connection_manager=connection_manager,
+            processing_status_service=processing_status_service,
+            status_report_service=status_report_service,
+        )
+    except Exception as e:
+        logger.warning(f"ActiveJobsDispatcher not available: {e}")
+        return None
+
+
+def clear_active_jobs_dispatcher_cache():
+    """Clear cached ActiveJobsDispatcher instance."""
+    global _active_jobs_dispatcher
+    _active_jobs_dispatcher = None
+    logger.debug("Cleared ActiveJobsDispatcher cache")

@@ -114,16 +114,21 @@ class ConceptNetValidator:
     async def get_relationships_for_concepts(
         self, concept_names: List[str],
     ) -> List[RelationshipEdge]:
-        """Batch-fetch ConceptNet rels between concepts."""
+        """Batch-fetch ConceptNet rels between concepts.
+
+        Uses UNWIND to drive the match from the indexed side,
+        letting Neo4j use the index on ``a.name`` via the
+        property match ``{name: n}`` for each source node.
+        """
         if not concept_names:
             return []
         lower_names = [n.lower() for n in concept_names]
         query = (
-            "MATCH (a:ConceptNetConcept)"
+            "UNWIND $names AS n "
+            "MATCH (a:ConceptNetConcept {name: n})"
             "-[r:ConceptNetRelation]->"
             "(b:ConceptNetConcept) "
-            "WHERE a.name IN $names "
-            "AND b.name IN $names "
+            "WHERE b.name IN $names "
             "RETURN a.name AS source, "
             "r.relation_type AS rel_type, "
             "r.weight AS weight, "

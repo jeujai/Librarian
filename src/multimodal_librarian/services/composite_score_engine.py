@@ -8,6 +8,7 @@ into document-pair scores stored as RELATED_DOCS edges in Neo4j.
 
 import logging
 import math
+import re
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -66,18 +67,6 @@ class CompositeScoreEngine:
     # Relationship type weights (Requirement 2.2)
     TYPE_WEIGHTS: Dict[str, float] = {
         "SAME_AS": 1.0,
-        "Synonym": 0.80,
-        "SimilarTo": 0.70,
-        "IsA": 0.65,
-        "PartOf": 0.60,
-        "UsedFor": 0.55,
-        "CapableOf": 0.55,
-        "Causes": 0.55,
-        "HasProperty": 0.50,
-        "AtLocation": 0.50,
-        "HasPrerequisite": 0.50,
-        "MotivatedByGoal": 0.45,
-        "RelatedTo": 0.40,
     }
 
     # Default type weight for unknown relationship types
@@ -88,16 +77,128 @@ class CompositeScoreEngine:
     W_EMBEDDING: float = 0.45
     W_CN: float = 0.15
 
-    # Aggregation weights (Requirement 3.1)
-    W_AVG_EDGE: float = 0.7
-    W_DENSITY: float = 0.3
+    # Minimum per-edge score to include in aggregation.
+    # Edges below this threshold are noise (e.g. RelatedTo with
+    # no embedding similarity) and are discarded before
+    # document-pair scoring.
+    MIN_EDGE_SCORE: float = 0.35
 
-    # Qualifying relationship types for edge discovery
+    # Minimum embedding similarity for an edge to qualify.
+    # Concept pairs with near-zero cosine similarity are
+    # coincidental matches via ConceptNet, not genuine
+    # semantic relationships.
+    MIN_EMBEDDING_SIMILARITY: float = 0.4
+
+    # Aggregation weights (Requirement 3.1)
+    # Edge quality dominates; density is a minor signal to avoid
+    # inflated scores from many low-quality generic-concept edges.
+    W_AVG_EDGE: float = 0.85
+    W_DENSITY: float = 0.15
+
+    # Minimum number of qualifying edges for a document pair
+    # to be considered related at all.
+    MIN_EDGES_FOR_PAIR: int = 5
+
+    # Qualifying relationship types for edge discovery.
+    # Only SAME_AS (YAGO-bridged exact entity matches) is used.
+    # All ConceptNet types (RelatedTo, SimilarTo, Synonym, IsA,
+    # PartOf, UsedFor, etc.) are too noisy for single-word
+    # concepts — e.g. "research" UsedFor "book", "only" IsA
+    # "single", "clinical" SimilarTo "Objective".
     QUALIFYING_REL_TYPES = [
-        "SAME_AS", "IsA", "PartOf", "RelatedTo", "UsedFor", "CapableOf",
-        "HasProperty", "AtLocation", "Causes", "HasPrerequisite",
-        "MotivatedByGoal", "Synonym", "SimilarTo",
+        "SAME_AS",
     ]
+
+    # Minimum token count for concept names in cross-doc edges.
+    # Single-word SAME_AS matches often have bad YAGO
+    # disambiguation (e.g. "Ali" → "Ali the rapper",
+    # "Appendix" → "Appendix the band").  Multi-token names
+    # like "machine learning", "neural network" are reliable.
+    MIN_CONCEPT_TOKENS: int = 2
+
+    # Concept types considered generic (not proper nouns).
+    # Edges where BOTH concepts are generic are filtered out to
+    # avoid noise from broad ConceptNet relationships like
+    # "large" → "Big" or "down" → "Deep".
+    #
+    # Approach: whitelist types that are genuinely domain-specific.
+    # spaCy NER often misclassifies common words (e.g. "Deep" as
+    # NORP, "START" as PRODUCT), so we can't trust NER tags alone.
+    # Only UMLS semantic types and select NER types with multi-token
+    # names are considered proper nouns.
+    DOMAIN_CONCEPT_TYPES: frozenset = frozenset({
+        # UMLS semantic types (always domain-specific)
+        "Disease or Syndrome",
+        "Bacterium",
+        "Virus",
+        "Eukaryote",
+        "Organic Chemical",
+        "ORGANISM",
+        "TREATMENT",
+        # NER types that are reliable when multi-token
+        "ORG",
+        "PERSON",
+        "GPE",
+        "LOC",
+        "FAC",
+        "LAW",
+        "WORK_OF_ART",
+        "EVENT",
+        "LANGUAGE",
+        # Topic-level concepts from extraction
+        "TOPIC",
+    })
+
+    # Known generic filler phrases that are never domain-specific.
+    GARBAGE_PHRASES: frozenset = frozenset({
+        "less than", "more than", "more than two",
+        "information about", "such as", "as well",
+        "due to", "based on", "according to",
+        "in order", "at least", "up to",
+        "each of", "one of",
+    })
+
+    # Pre-compiled regex patterns for garbage concept names.
+    _GARBAGE_PATTERNS = [
+        # PDF artifact characters
+        re.compile(r'[?+=]'),
+        # Hyphenation breaks
+        re.compile(r'\w+- \w+'),
+        # Table/figure references
+        re.compile(
+            r'^(table|figure|fig)\s+\d', re.IGNORECASE,
+        ),
+        # Time expressions
+        re.compile(
+            r'^\d+\s+(years?|days?|months?'
+            r'|weeks?|hours?|minutes?)$',
+            re.IGNORECASE,
+        ),
+        # Stage/phase labels
+        re.compile(
+            r'^(stage|phase|step|grade|level|type)\s+\d',
+            re.IGNORECASE,
+        ),
+        # Citations
+        re.compile(r'\bet\s+al\.?$', re.IGNORECASE),
+    ]
+
+    @staticmethod
+    def _is_garbage_concept_name(name: str) -> bool:
+        """Return True if *name* matches any garbage concept pattern.
+
+        Checks exact-match against ``GARBAGE_PHRASES`` (case-insensitive)
+        and regex-match against ``_GARBAGE_PATTERNS``.
+        """
+        if not name:
+            return False
+        lower = name.strip().lower()
+        if lower in CompositeScoreEngine.GARBAGE_PHRASES:
+            return True
+        for pat in CompositeScoreEngine._GARBAGE_PATTERNS:
+            if pat.search(name):
+                return True
+        return False
 
     def __init__(self, kg_client: Any) -> None:
         """
@@ -157,127 +258,244 @@ class CompositeScoreEngine:
     # Maximum edges to sample per target document for scoring.
     # Keeps the query result set bounded while still producing
     # representative composite scores.
-    MAX_EDGES_PER_TARGET_DOC: int = 500
+    MAX_EDGES_PER_TARGET_DOC: int = 200
 
-    async def _discover_cross_doc_edges(self, document_id: str) -> List[dict]:
-        """Query Neo4j for cross-document concept pairs involving document_id.
+    async def _discover_cross_doc_edges(
+        self, document_id: str
+    ) -> List[dict]:
+        """Discover cross-document edges via shared concept name overlap.
 
-        Gets all other document source_ids from Chunk nodes, then for each
-        target document fetches a capped sample of concept-pair edges.
-        This avoids the expensive full-graph traversal that times out on
-        large documents.
+        Uses a single bulk Cypher query to find concepts that share the
+        same normalised name (lower-case) across documents.  Only
+        multi-token concept names are considered (MIN_CONCEPT_TOKENS)
+        to filter out generic single-word matches like "data", "model".
 
-        Conversation documents (source_type='CONVERSATION') are excluded
-        from both source and target to avoid spurious RELATED_DOCS edges
-        caused by generic concept overlap.
+        Conversation documents are excluded from both source and target.
+        Per-target-doc results are capped at MAX_EDGES_PER_TARGET_DOC.
         """
-        rel_types = self.QUALIFYING_REL_TYPES
         edge_cap = self.MAX_EDGES_PER_TARGET_DOC
 
-        # Check if the source document is a conversation — skip entirely
+        # --- Exclude conversation documents ---
         conversation_doc_ids: set = set()
         try:
             from ..database.connection import get_async_connection
             conn = await get_async_connection()
             try:
                 row = await conn.fetchrow(
-                    "SELECT source_type::text FROM multimodal_librarian.knowledge_sources "
+                    "SELECT source_type::text "
+                    "FROM multimodal_librarian.knowledge_sources "
                     "WHERE id::text = $1",
                     document_id,
                 )
-                if row and (row["source_type"] or "").upper() == "CONVERSATION":
+                if row and (
+                    row["source_type"] or ""
+                ).upper() == "CONVERSATION":
                     logger.info(
-                        f"Skipping composite scoring for conversation document {document_id}"
+                        "Skipping composite scoring for "
+                        f"conversation document {document_id}"
                     )
                     return []
 
-                # Also get all conversation source_ids to exclude as targets
                 conv_rows = await conn.fetch(
-                    "SELECT id::text AS doc_id FROM multimodal_librarian.knowledge_sources "
+                    "SELECT id::text AS doc_id "
+                    "FROM multimodal_librarian.knowledge_sources "
                     "WHERE source_type::text = 'CONVERSATION'"
                 )
-                conversation_doc_ids = {r["doc_id"] for r in conv_rows}
+                conversation_doc_ids = {
+                    r["doc_id"] for r in conv_rows
+                }
             finally:
                 await conn.close()
         except Exception as e:
-            logger.warning(f"Failed to check conversation status: {e}")
+            logger.warning(
+                f"Failed to check conversation status: {e}"
+            )
 
-        # Get all other document IDs from Chunk nodes (fast indexed query)
-        other_docs_query = """
-        MATCH (ch:Chunk)
-        WHERE ch.source_id <> $doc_id
-          AND ch.source_id <> 'conceptnet'
-        RETURN DISTINCT ch.source_id AS doc_id
+        # --- Bulk concept-name overlap query ---
+        # Finds concepts in the source document that share the
+        # same normalised name with concepts in other documents.
+        # Only multi-token names are matched (the WHERE clause
+        # requires a space in the name).  Results are grouped
+        # by target document and capped.
+        t_start = time.time()
+        overlap_query = """
+        MATCH (ch1:Chunk {source_id: $doc_id})
+              <-[:EXTRACTED_FROM]-(c1:Concept)
+        WHERE c1.name CONTAINS ' '
+        WITH c1, c1.name_lower AS norm_name
+        MATCH (c2:Concept {name_lower: norm_name})
+        WHERE c2.concept_id <> c1.concept_id
+        WITH c1, c2
+        MATCH (c2)-[:EXTRACTED_FROM]->(ch2:Chunk)
+        WHERE ch2.source_id <> $doc_id
+          AND ch2.source_id <> 'conceptnet'
+        WITH DISTINCT
+             c1.concept_id AS src_id,
+             c2.concept_id AS tgt_id,
+             c1.name AS src_name,
+             c2.name AS tgt_name,
+             c1.concept_type AS src_type,
+             c2.concept_type AS tgt_type,
+             ch2.source_id AS tgt_doc
+        RETURN src_id, tgt_id, src_name, tgt_name,
+               src_type, tgt_type,
+               tgt_doc,
+               $doc_id AS src_doc,
+               'SAME_AS' AS rel_type
+        LIMIT $total_cap
         """
-        other_results = await self._kg.execute_query(
-            other_docs_query, {"doc_id": document_id}
-        )
-        target_doc_ids = [
-            r["doc_id"] for r in (other_results or [])
-            if r["doc_id"] not in conversation_doc_ids
-        ]
 
-        if not target_doc_ids:
-            logger.info(
-                f"No other documents found for cross-doc "
-                f"scoring of {document_id}"
+        total_cap = edge_cap * 40  # generous cap for bulk
+        try:
+            results = await self._kg.execute_query(
+                overlap_query,
+                {
+                    "doc_id": document_id,
+                    "total_cap": total_cap,
+                },
+            )
+        except Exception as e:
+            logger.warning(
+                f"Concept overlap query failed for "
+                f"{document_id}: {e}"
             )
             return []
 
-        # For each target doc, fetch capped edges with embeddings
-        per_doc_query = """
-        MATCH (ch1:Chunk {source_id: $doc_id})
-              <-[:EXTRACTED_FROM]-(c1:Concept)
-              -[r]-(c2:Concept)
-              -[:EXTRACTED_FROM]->(ch2:Chunk {source_id: $tgt_doc})
-        WHERE type(r) IN $rel_types
-        WITH DISTINCT c1, c2,
-             type(r) AS rel_type, r.weight AS cn_weight
-        LIMIT $edge_cap
-        RETURN c1.concept_id AS src_id,
-               $doc_id AS src_doc,
-               c1.embedding AS src_emb,
-               c2.concept_id AS tgt_id,
-               $tgt_doc AS tgt_doc,
-               c2.embedding AS tgt_emb,
-               rel_type,
-               cn_weight
+        elapsed_phase1 = time.time() - t_start
+
+        # --- Deduplicate and cap per target doc ---
+        seen: set = set()
+        per_doc_count: Dict[str, int] = {}
+        candidates: list = []
+
+        for record in (results or []):
+            tgt_doc = record["tgt_doc"]
+
+            # Skip conversation documents
+            if tgt_doc in conversation_doc_ids:
+                continue
+
+            # --- Garbage concept filtering ---
+            src_name = record.get("src_name", "")
+            tgt_name = record.get("tgt_name", "")
+
+            # Layer 1: garbage name patterns
+            if (self._is_garbage_concept_name(src_name)
+                    or self._is_garbage_concept_name(
+                        tgt_name)):
+                continue
+
+            # Layer 2: concept_type gate — require at
+            # least one concept with a domain-specific type
+            src_type = record.get("src_type")
+            tgt_type = record.get("tgt_type")
+            src_is_domain = (
+                src_type in self.DOMAIN_CONCEPT_TYPES
+            )
+            tgt_is_domain = (
+                tgt_type in self.DOMAIN_CONCEPT_TYPES
+            )
+            if not src_is_domain and not tgt_is_domain:
+                continue
+
+            # Per-target-doc cap
+            doc_cnt = per_doc_count.get(tgt_doc, 0)
+            if doc_cnt >= edge_cap:
+                continue
+
+            key = (record["src_id"], record["tgt_id"])
+            if key in seen:
+                continue
+            seen.add(key)
+
+            per_doc_count[tgt_doc] = doc_cnt + 1
+            candidates.append({
+                "src_id": record["src_id"],
+                "src_doc": record.get(
+                    "src_doc", document_id
+                ),
+                "tgt_id": record["tgt_id"],
+                "tgt_doc": tgt_doc,
+                "rel_type": "SAME_AS",
+                "cn_weight": None,
+                "embedding_similarity": 0.0,
+            })
+
+        if not candidates:
+            logger.info(
+                f"No concept overlap found for "
+                f"{document_id} ({elapsed_phase1:.2f}s)"
+            )
+            return candidates
+
+        # --- Phase 2: cosine similarity for candidates ---
+        phase2_query = """
+        UNWIND $pairs AS pair
+        MATCH (c1:Concept {concept_id: pair.src_id})
+        MATCH (c2:Concept {concept_id: pair.tgt_id})
+        RETURN pair.src_id AS src_id,
+               pair.tgt_id AS tgt_id,
+               CASE
+                 WHEN c1.embedding IS NOT NULL
+                      AND c2.embedding IS NOT NULL
+                      AND size(c1.embedding) > 0
+                      AND size(c2.embedding) > 0
+                 THEN gds.similarity.cosine(
+                          c1.embedding, c2.embedding)
+                 ELSE 0.0
+               END AS embedding_similarity
         """
 
-        seen: set = set()
-        edges: list = []
-        for tgt_doc in target_doc_ids:
-            try:
-                params = {
-                    "doc_id": document_id,
-                    "tgt_doc": tgt_doc,
-                    "rel_types": rel_types,
-                    "edge_cap": edge_cap,
+        for batch_start in range(
+            0, len(candidates), edge_cap
+        ):
+            batch = candidates[
+                batch_start:batch_start + edge_cap
+            ]
+            pairs = [
+                {
+                    "src_id": c["src_id"],
+                    "tgt_id": c["tgt_id"],
                 }
-                results = await self._kg.execute_query(
-                    per_doc_query, params
-                )
-                for record in (results or []):
-                    key = (
-                        record["src_id"],
-                        record["tgt_id"],
-                        record["rel_type"],
+                for c in batch
+            ]
+            try:
+                phase2_results = (
+                    await self._kg.execute_query(
+                        phase2_query, {"pairs": pairs}
                     )
-                    if key not in seen:
-                        seen.add(key)
-                        edges.append(record)
-            except Exception as e:
+                )
+                sim_lookup: Dict[
+                    Tuple[str, str], float
+                ] = {}
+                for rec in (phase2_results or []):
+                    sim_lookup[
+                        (rec["src_id"], rec["tgt_id"])
+                    ] = float(
+                        rec.get(
+                            "embedding_similarity", 0.0
+                        )
+                    )
+                for c in batch:
+                    pk = (c["src_id"], c["tgt_id"])
+                    if pk in sim_lookup:
+                        c["embedding_similarity"] = (
+                            sim_lookup[pk]
+                        )
+            except Exception as e2:
                 logger.warning(
-                    f"Failed to fetch edges for "
-                    f"target doc {tgt_doc}: {e}"
+                    f"Phase 2 cosine batch failed: {e2}"
                 )
 
+        elapsed_total = time.time() - t_start
+        target_count = len(per_doc_count)
         logger.info(
-            f"Discovered {len(edges)} cross-document edges "
-            f"for document {document_id} "
-            f"({len(target_doc_ids)} target docs)"
+            f"Discovered {len(candidates)} cross-document "
+            f"edges for document {document_id} "
+            f"({target_count} target docs, "
+            f"{elapsed_total:.2f}s)"
         )
-        return edges
+        return candidates
 
     @staticmethod
     def _cosine_similarity(vec_a: Optional[List[float]], vec_b: Optional[List[float]]) -> float:
@@ -297,17 +515,71 @@ class CompositeScoreEngine:
 
         return dot / (norm_a * norm_b)
 
+    # NER types that require multi-token names to be trusted.
+    # Single-word NER tags are often spaCy misclassifications
+    # (e.g. "Deep" as NORP, "START" as PRODUCT).
+    _NER_TYPES_NEED_MULTI_TOKEN: frozenset = frozenset({
+        "GPE", "LOC", "FAC",
+        "LAW", "WORK_OF_ART", "EVENT", "NORP",
+        "PRODUCT", "LANGUAGE", "TOPIC",
+    })
+
+    # NER types trusted even for single-token names.
+    # ORG and PERSON are rarely misclassified by spaCy
+    # and are strong signals for cross-doc relatedness
+    # (e.g. "Google", "OpenAI", "Python").
+    _NER_TYPES_ALWAYS_TRUSTED: frozenset = frozenset({
+        "ORG", "PERSON",
+    })
+
+    # UMLS semantic types are always domain-specific regardless
+    # of token count (e.g. single-word disease names are valid).
+    _UMLS_TYPES: frozenset = frozenset({
+        "Disease or Syndrome", "Bacterium", "Virus",
+        "Eukaryote", "Organic Chemical", "ORGANISM",
+        "TREATMENT",
+    })
+
+    @classmethod
+    def _is_domain_concept(
+        cls, concept_type: str, concept_name: str
+    ) -> bool:
+        """Check if a concept is domain-specific enough for
+        cross-document edge discovery.
+
+        UMLS types are always accepted.  ORG/PERSON NER types
+        are accepted even for single tokens.  Other NER types
+        and multi-word CODE_TERMs are accepted only if the
+        concept name has multiple tokens (to filter out
+        single-word noise like "print", "Big", "Deep").
+        """
+        if concept_type in cls._UMLS_TYPES:
+            return True
+        if concept_type in cls._NER_TYPES_ALWAYS_TRUSTED:
+            return True
+        # Multi-token names are accepted for any type —
+        # compound terms like "neural networks", "machine
+        # learning", "the United States" are domain-specific
+        # regardless of their NER/CODE_TERM classification.
+        if " " in (concept_name or "").strip():
+            return True
+        return False
+
     def _compute_edge_score(self, edge: dict) -> EdgeScore:
         """Compute per-edge score using the three-signal formula.
 
         Formula: edge_score = clamp(type_weight * 0.4 + embedding_similarity * 0.45 + cn_weight * 0.15, 0.0, 1.0)
+
+        Embedding similarity is pre-computed in the Cypher query
+        (via gds.similarity.cosine) to avoid transferring large
+        embedding vectors over the wire.
         """
         rel_type = edge["rel_type"]
         type_weight = self.TYPE_WEIGHTS.get(rel_type, self.DEFAULT_TYPE_WEIGHT)
 
-        # Cosine similarity (default 0.0 if embeddings missing)
-        embedding_similarity = self._cosine_similarity(
-            edge.get("src_emb"), edge.get("tgt_emb")
+        # Cosine similarity pre-computed in Cypher query
+        embedding_similarity = float(
+            edge.get("embedding_similarity", 0.0) or 0.0
         )
 
         # CN weight normalization
@@ -362,13 +634,24 @@ class CompositeScoreEngine:
     ) -> List[DocumentPairScore]:
         """Group edge scores by document pair and compute aggregate scores.
 
-        Formula: doc_score = clamp(avg_edge_score * 0.7 + neighborhood_density * 0.3, 0.0, 1.0)
-        neighborhood_density = min(edge_count / min(concept_count_a, concept_count_b), 1.0)
-        Uses 1 as denominator if concept count is 0.
+        Formula: doc_score = clamp(avg_edge_score * 0.85 + neighborhood_density * 0.15, 0.0, 1.0)
+        neighborhood_density = min(edge_count / sqrt(concept_count_a * concept_count_b), 1.0)
+
+        Edges are filtered before aggregation:
+        - edge_score must be >= MIN_EDGE_SCORE
+        - embedding_similarity must be >= MIN_EMBEDDING_SIMILARITY
+        Pairs with fewer than MIN_EDGES_FOR_PAIR qualifying edges are dropped.
         """
+        # Filter edges: discard low-quality / low-similarity edges
+        qualified = [
+            es for es in edge_scores
+            if es.edge_score >= self.MIN_EDGE_SCORE
+            and es.embedding_similarity >= self.MIN_EMBEDDING_SIMILARITY
+        ]
+
         # Group by sorted document pair to avoid (A,B) vs (B,A) duplicates
         pair_edges: Dict[Tuple[str, str], List[EdgeScore]] = defaultdict(list)
-        for es in edge_scores:
+        for es in qualified:
             sorted_ids = sorted([es.source_document_id, es.target_document_id])
             pair_key: Tuple[str, str] = (sorted_ids[0], sorted_ids[1])
             pair_edges[pair_key].append(es)
@@ -378,13 +661,19 @@ class CompositeScoreEngine:
 
         for (doc_a, doc_b), edges in pair_edges.items():
             edge_count = len(edges)
+
+            # Require minimum number of qualifying edges
+            if edge_count < self.MIN_EDGES_FOR_PAIR:
+                continue
+
             avg_edge_score = sum(e.edge_score for e in edges) / edge_count
 
             count_a = concept_counts.get(doc_a, 0)
             count_b = concept_counts.get(doc_b, 0)
-            min_concepts = min(count_a, count_b)
-            denominator = max(min_concepts, 1)  # avoid division by zero
-            neighborhood_density = min(edge_count / denominator, 1.0)
+            # Geometric mean: sqrt(a * b) — fairer than min() when
+            # document sizes differ significantly
+            geo_mean = math.sqrt(max(count_a, 1) * max(count_b, 1))
+            neighborhood_density = min(edge_count / geo_mean, 1.0)
 
             raw_score = avg_edge_score * self.W_AVG_EDGE + neighborhood_density * self.W_DENSITY
             doc_score = max(0.0, min(raw_score, 1.0))
@@ -463,6 +752,8 @@ class CompositeScoreEngine:
             row = {
                 "src_concept_id": best_a,
                 "tgt_concept_id": best_b,
+                "src_doc_id": ps.doc_id_a,
+                "tgt_doc_id": ps.doc_id_b,
                 "score": ps.score,
                 "edge_count": ps.edge_count,
                 "avg_edge_score": ps.avg_edge_score,
@@ -473,6 +764,8 @@ class CompositeScoreEngine:
             rows_reverse.append({
                 "src_concept_id": best_b,
                 "tgt_concept_id": best_a,
+                "src_doc_id": ps.doc_id_b,
+                "tgt_doc_id": ps.doc_id_a,
                 "score": ps.score,
                 "edge_count": ps.edge_count,
                 "avg_edge_score": ps.avg_edge_score,
@@ -489,7 +782,9 @@ class CompositeScoreEngine:
             r.edge_count = row.edge_count,
             r.avg_edge_score = row.avg_edge_score,
             r.neighborhood_density = row.neighborhood_density,
-            r.computed_at = row.computed_at
+            r.computed_at = row.computed_at,
+            r.source_doc_id = row.src_doc_id,
+            r.target_doc_id = row.tgt_doc_id
         RETURN count(r) AS cnt
         """
 

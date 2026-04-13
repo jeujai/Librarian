@@ -109,7 +109,7 @@ services:
       - UPLOAD_DIR=${UPLOAD_DIR:-/app/uploads}
       - MEDIA_DIR=${MEDIA_DIR:-/app/media}
       - EXPORT_DIR=${EXPORT_DIR:-/app/exports}
-      - MAX_FILE_SIZE=${MAX_FILE_SIZE:-52428800}  # 50MB for faster processing
+      - MAX_FILE_SIZE=${MAX_FILE_SIZE:-10737418240}  # 10GB - effectively unlimited
       
       # Processing settings (optimized for development)
       - CHUNK_SIZE=${CHUNK_SIZE:-256}  # Smaller chunks for faster processing

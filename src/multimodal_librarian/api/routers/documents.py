@@ -82,7 +82,7 @@ async def upload_document(
     """
     Upload a PDF document with enhanced validation and S3 storage.
     
-    - **file**: PDF file to upload (max 100MB)
+    - **file**: PDF file to upload (max 300MB)
     - **title**: Optional document title (defaults to filename)
     - **description**: Optional document description
     - **user_id**: User identifier for document ownership
@@ -102,11 +102,14 @@ async def upload_document(
                 detail="Only PDF and TXT files are supported"
             )
         
-        # Check file size before reading (100MB limit)
-        if hasattr(file, 'size') and file.size and file.size > 100 * 1024 * 1024:
+        # Check file size before reading (uses config setting)
+        from ...config.config import get_settings
+        settings = get_settings()
+        if hasattr(file, 'size') and file.size and file.size > settings.max_file_size:
+            max_mb = settings.max_file_size // (1024 * 1024)
             raise HTTPException(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail="File size exceeds 100MB limit"
+                detail=f"File size exceeds {max_mb}MB limit"
             )
         
         # Read file content

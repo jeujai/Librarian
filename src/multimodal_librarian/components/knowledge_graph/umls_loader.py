@@ -11,7 +11,7 @@ and UMLS_ prefixed relationships for namespace isolation.
 """
 
 from dataclasses import dataclass
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 import structlog
 
@@ -48,7 +48,9 @@ class UMLSStats:
     concept_count: int
     semantic_type_count: int
     relationship_count: int
-    loaded_tier: str  # "none", "lite", "full"
+    same_as_count: int = 0
+    has_semantic_type_count: int = 0
+    loaded_tier: str = "none"  # "none", "lite", "full"
     umls_version: Optional[str] = None
     load_timestamp: Optional[str] = None
 
@@ -132,8 +134,17 @@ class UMLSLoader:
                 "FOR (c:UMLSConcept) ON (c.preferred_name)"
             ),
             (
+                "CREATE INDEX umls_concept_lower_name "
+                "IF NOT EXISTS "
+                "FOR (c:UMLSConcept) ON (c.lower_name)"
+            ),
+            (
                 "CREATE INDEX umls_semtype_id IF NOT EXISTS "
                 "FOR (s:UMLSSemanticType) ON (s.type_id)"
+            ),
+            (
+                "CREATE INDEX umls_synonym_name IF NOT EXISTS "
+                "FOR (s:UMLSSynonym) ON (s.name)"
             ),
         ]
         for query in index_queries:
@@ -399,7 +410,9 @@ class UMLSLoader:
                 f"MRSTY file not found: {mrsty_path}"
             )
 
-        # --- Version replacement: remove previous data if exists ---
+        # --- Version replacement: remove previous concept data ---
+        # Only remove concepts and their edges; preserve semantic types
+        # and relationship defs loaded from SRDEF in an earlier step.
         meta_result = await self._neo4j.execute_query(
             "MATCH (m:UMLSMetadata {singleton: true}) "
             "RETURN m.loaded_tier AS loaded_tier, "
@@ -411,11 +424,12 @@ class UMLSLoader:
         ):
             prev_version = meta_result[0].get("umls_version")
             logger.info(
-                "umls_version_replacement",
+                "umls_concept_data_replacement",
                 previous_version=prev_version,
-                message="Removing previous UMLS data before import",
+                message="Removing previous concept data before import "
+                "(preserving semantic types and relationship defs)",
             )
-            await self.remove_all_umls_data()
+            await self._remove_concept_data()
 
         # Set import_status to in_progress
         now_iso = datetime.now(timezone.utc).isoformat()
@@ -566,7 +580,9 @@ class UMLSLoader:
         UNWIND $concepts AS c
         MERGE (n:UMLSConcept {cui: c.cui})
         SET n.preferred_name = c.preferred_name,
+            n.lower_name = toLower(c.preferred_name),
             n.synonyms = c.synonyms,
+            n.lower_synonyms = [s IN c.synonyms | toLower(s)],
             n.source_vocabulary = c.source_vocabulary,
             n.suppressed = c.suppressed
         RETURN count(n) as count
@@ -626,6 +642,60 @@ class UMLSLoader:
             nodes_created=nodes_created,
             batches_completed=batches_completed,
             batches_failed=batches_failed,
+        )
+
+        # --- Pass 2b: Create UMLSSynonym nodes and HAS_SYNONYM relationships ---
+        synonym_nodes_created = 0
+        synonym_rels_created = 0
+
+        create_synonyms_query = """
+        UNWIND $items AS item
+        MATCH (u:UMLSConcept {cui: item.cui})
+        UNWIND item.lower_synonyms AS syn
+        MERGE (s:UMLSSynonym {name: syn})
+        MERGE (u)-[:HAS_SYNONYM]->(s)
+        RETURN count(DISTINCT s) as syn_count,
+               count(*) as rel_count
+        """
+
+        # Prepare batch items with lowercased synonyms
+        synonym_items = [
+            {
+                "cui": entry["cui"],
+                "lower_synonyms": [s.lower() for s in entry["synonyms"]],
+            }
+            for entry in concept_list
+            if entry["synonyms"]
+        ]
+
+        for i in range(0, len(synonym_items), batch_size):
+            batch = synonym_items[i : i + batch_size]
+            batch_num = i // batch_size + 1
+            try:
+                result = await self._execute_batch_with_retry(
+                    create_synonyms_query, {"items": batch}
+                )
+                if result:
+                    synonym_nodes_created += result[0].get(
+                        "syn_count", 0
+                    )
+                    synonym_rels_created += result[0].get(
+                        "rel_count", 0
+                    )
+                batches_completed += 1
+            except Exception as exc:
+                batches_failed += 1
+                logger.error(
+                    "synonym_batch_failed",
+                    batch_num=batch_num,
+                    batch_size=len(batch),
+                    error=str(exc),
+                )
+
+        logger.info(
+            "synonym_nodes_loaded",
+            synonym_nodes_created=synonym_nodes_created,
+            synonym_relationships_created=synonym_rels_created,
         )
 
         # --- Pass 3: Parse MRSTY and create HAS_SEMANTIC_TYPE edges ---
@@ -713,8 +783,9 @@ class UMLSLoader:
 
         elapsed = time.time() - start_time
         load_result = LoadResult(
-            nodes_created=nodes_created,
-            relationships_created=relationships_created,
+            nodes_created=nodes_created + synonym_nodes_created,
+            relationships_created=relationships_created
+            + synonym_rels_created,
             batches_completed=batches_completed,
             batches_failed=batches_failed,
             elapsed_seconds=round(elapsed, 3),
@@ -725,6 +796,114 @@ class UMLSLoader:
             nodes_created=load_result.nodes_created,
             relationships_created=load_result.relationships_created,
             batches_completed=load_result.batches_completed,
+            elapsed_seconds=load_result.elapsed_seconds,
+        )
+
+        return load_result
+
+    async def load_definitions(
+        self,
+        mrdef_path: str,
+        source_vocabs: Optional[List[str]] = None,
+        batch_size: int = 5000,
+    ) -> LoadResult:
+        """Load definitions from MRDEF.RRF onto existing UMLSConcept nodes.
+
+        Parses MRDEF pipe-delimited file, aggregates the first definition
+        per CUI (after optional vocab filtering), and batch-updates
+        UMLSConcept nodes with a ``definition`` property.
+
+        Args:
+            mrdef_path: Path to the MRDEF.RRF file.
+            source_vocabs: Optional list of source vocabularies to filter.
+                If None, all vocabularies are included.
+            batch_size: Number of definitions per transaction (default 5000).
+
+        Returns:
+            LoadResult with count of nodes updated.
+
+        Raises:
+            FileNotFoundError: If MRDEF file does not exist.
+        """
+        import time
+
+        from multimodal_librarian.components.knowledge_graph.rrf_parser import (
+            parse_mrdef,
+        )
+
+        start_time = time.time()
+
+        source_vocabs_set = (
+            set(source_vocabs) if source_vocabs else None
+        )
+
+        # Aggregate first definition per CUI
+        definitions: dict = {}
+        for row in parse_mrdef(mrdef_path, source_vocabs_set):
+            if row.cui not in definitions:
+                definitions[row.cui] = row.definition
+
+        logger.info(
+            "mrdef_parsed",
+            unique_cuis_with_definitions=len(definitions),
+        )
+
+        # Batch update UMLSConcept nodes
+        def_list = [
+            {"cui": cui, "definition": defn}
+            for cui, defn in definitions.items()
+        ]
+        nodes_updated = 0
+        batches_completed = 0
+        batches_failed = 0
+
+        update_def_query = """
+        UNWIND $items AS item
+        MATCH (c:UMLSConcept {cui: item.cui})
+        SET c.definition = item.definition
+        RETURN count(c) AS count
+        """
+
+        for i in range(0, len(def_list), batch_size):
+            batch = def_list[i : i + batch_size]
+            batch_num = i // batch_size + 1
+            try:
+                result = await self._execute_batch_with_retry(
+                    update_def_query, {"items": batch}
+                )
+                count = result[0]["count"] if result else 0
+                nodes_updated += count
+                batches_completed += 1
+
+                # Update last_batch_number for progress tracking
+                await self._neo4j.execute_write_query(
+                    "MERGE (m:UMLSMetadata {singleton: true}) "
+                    "SET m.last_batch_number = $batch_num",
+                    {"batch_num": batch_num},
+                )
+            except Exception as exc:
+                batches_failed += 1
+                logger.error(
+                    "definition_batch_failed",
+                    batch_num=batch_num,
+                    batch_size=len(batch),
+                    error=str(exc),
+                )
+
+        elapsed = time.time() - start_time
+        load_result = LoadResult(
+            nodes_created=nodes_updated,
+            relationships_created=0,
+            batches_completed=batches_completed,
+            batches_failed=batches_failed,
+            elapsed_seconds=round(elapsed, 3),
+        )
+
+        logger.info(
+            "definitions_loaded",
+            nodes_updated=nodes_updated,
+            batches_completed=batches_completed,
+            batches_failed=batches_failed,
             elapsed_seconds=load_result.elapsed_seconds,
         )
 
@@ -1083,7 +1262,7 @@ class UMLSLoader:
 
         recommended_vocabs = None
         if not fits_in_budget:
-            recommended_vocabs = ["SNOMEDCT_US", "MSH", "RXNORM"]
+            recommended_vocabs = ["SNOMEDCT_US", "MSH", "RXNORM", "ICD10CM", "HPO", "LNC"]
 
         logger.info(
             "umls_dry_run_complete",
@@ -1099,6 +1278,50 @@ class UMLSLoader:
             estimated_memory_mb=round(estimated_memory_mb, 2),
             recommended_vocabs=recommended_vocabs,
             fits_in_budget=fits_in_budget,
+        )
+
+    async def _remove_concept_data(self) -> None:
+        """Remove only concept-level UMLS data, preserving SRDEF data.
+
+        Deletes UMLSConcept nodes and their edges (UMLS_REL,
+        HAS_SEMANTIC_TYPE, SAME_AS) but keeps UMLSSemanticType,
+        UMLSRelationshipDef, and UMLS_SEMANTIC_REL intact so that
+        load_concepts can re-link concepts to existing semantic types.
+        """
+        concept_delete_queries = [
+            (
+                "MATCH ()-[r:UMLS_REL]->() DELETE r",
+                "umls_rel_relationships",
+            ),
+            (
+                "MATCH ()-[r:HAS_SEMANTIC_TYPE]->() DELETE r",
+                "has_semantic_type_relationships",
+            ),
+            (
+                "MATCH ()-[r:SAME_AS]->() DELETE r",
+                "same_as_relationships",
+            ),
+            (
+                "MATCH ()-[r:HAS_SYNONYM]->() DELETE r",
+                "has_synonym_relationships",
+            ),
+            (
+                "MATCH (n:UMLSSynonym) DETACH DELETE n",
+                "umls_synonym_nodes",
+            ),
+            (
+                "MATCH (n:UMLSConcept) DETACH DELETE n",
+                "umls_concept_nodes",
+            ),
+        ]
+
+        for query, label in concept_delete_queries:
+            await self._neo4j.execute_write_query(query, {})
+            logger.info("umls_concept_data_deleted", target=label)
+
+        logger.info(
+            "umls_concept_data_removed",
+            message="Semantic types and relationship defs preserved",
         )
 
     async def remove_all_umls_data(self) -> None:
@@ -1127,6 +1350,14 @@ class UMLSLoader:
                 "has_semantic_type_relationships",
             ),
             (
+                "MATCH ()-[r:HAS_SYNONYM]->() DELETE r",
+                "has_synonym_relationships",
+            ),
+            (
+                "MATCH (n:UMLSSynonym) DETACH DELETE n",
+                "umls_synonym_nodes",
+            ),
+            (
                 "MATCH (n:UMLSConcept) DETACH DELETE n",
                 "umls_concept_nodes",
             ),
@@ -1149,6 +1380,120 @@ class UMLSLoader:
             logger.info("umls_data_deleted", target=label)
 
         logger.info("umls_all_data_removed")
+
+    async def remove_all_umls_data_with_counts(
+        self, include_same_as: bool = True
+    ) -> Dict[str, int]:
+        """Remove all UMLS data from Neo4j, returning per-category counts.
+
+        Deletes in order: relationships first, then nodes, to avoid
+        constraint violations. Each category is deleted in batches
+        of 50 000 with count tracking.
+
+        Args:
+            include_same_as: If True, also delete SAME_AS edges
+                between UMLSConcept and Concept nodes.
+
+        Returns:
+            Dict mapping category name to total deleted count.
+        """
+        delete_specs = [
+            (
+                "MATCH ()-[r:UMLS_REL]->() "
+                "WITH r LIMIT 50000 DELETE r "
+                "RETURN count(r) AS count",
+                "UMLS_REL",
+            ),
+            (
+                "MATCH ()-[r:UMLS_SEMANTIC_REL]->() "
+                "WITH r LIMIT 50000 DELETE r "
+                "RETURN count(r) AS count",
+                "UMLS_SEMANTIC_REL",
+            ),
+            (
+                "MATCH ()-[r:HAS_SEMANTIC_TYPE]->() "
+                "WITH r LIMIT 50000 DELETE r "
+                "RETURN count(r) AS count",
+                "HAS_SEMANTIC_TYPE",
+            ),
+            (
+                "MATCH ()-[r:HAS_SYNONYM]->() "
+                "WITH r LIMIT 50000 DELETE r "
+                "RETURN count(r) AS count",
+                "HAS_SYNONYM",
+            ),
+        ]
+
+        if include_same_as:
+            delete_specs.append(
+                (
+                    "MATCH ()-[r:SAME_AS]->() "
+                    "WITH r LIMIT 50000 DELETE r "
+                    "RETURN count(r) AS count",
+                    "SAME_AS",
+                )
+            )
+
+        # Node deletions (after relationships)
+        delete_specs.extend([
+            (
+                "MATCH (n:UMLSSynonym) "
+                "WITH n LIMIT 50000 DETACH DELETE n "
+                "RETURN count(n) AS count",
+                "UMLSSynonym",
+            ),
+            (
+                "MATCH (n:UMLSConcept) "
+                "WITH n LIMIT 50000 DETACH DELETE n "
+                "RETURN count(n) AS count",
+                "UMLSConcept",
+            ),
+            (
+                "MATCH (n:UMLSSemanticType) "
+                "WITH n LIMIT 50000 DETACH DELETE n "
+                "RETURN count(n) AS count",
+                "UMLSSemanticType",
+            ),
+            (
+                "MATCH (n:UMLSRelationshipDef) "
+                "WITH n LIMIT 50000 DETACH DELETE n "
+                "RETURN count(n) AS count",
+                "UMLSRelationshipDef",
+            ),
+            (
+                "MATCH (n:UMLSMetadata) "
+                "WITH n LIMIT 50000 DETACH DELETE n "
+                "RETURN count(n) AS count",
+                "UMLSMetadata",
+            ),
+        ])
+
+        counts: Dict[str, int] = {}
+
+        for query, label in delete_specs:
+            total_deleted = 0
+            while True:
+                result = await self._neo4j.execute_write_query(
+                    query, {}
+                )
+                batch_count = (
+                    result[0]["count"] if result else 0
+                )
+                total_deleted += batch_count
+                if batch_count == 0:
+                    break
+
+            counts[label] = total_deleted
+            logger.info(
+                "umls_data_deleted_with_count",
+                target=label,
+                deleted=total_deleted,
+            )
+
+        logger.info(
+            "umls_all_data_removed_with_counts", counts=counts
+        )
+        return counts
 
     async def get_umls_stats(self) -> UMLSStats:
         """Return statistics about loaded UMLS data.
@@ -1190,6 +1535,27 @@ class UMLSLoader:
             else 0
         )
 
+        # Count SAME_AS edges
+        same_as_result = await self._neo4j.execute_query(
+            "MATCH ()-[r:SAME_AS]->() RETURN count(r) AS count"
+        )
+        same_as_count = (
+            same_as_result[0]["count"]
+            if same_as_result
+            else 0
+        )
+
+        # Count HAS_SEMANTIC_TYPE edges
+        hst_result = await self._neo4j.execute_query(
+            "MATCH ()-[r:HAS_SEMANTIC_TYPE]->() "
+            "RETURN count(r) AS count"
+        )
+        has_semantic_type_count = (
+            hst_result[0]["count"]
+            if hst_result
+            else 0
+        )
+
         # Get metadata
         meta_result = await self._neo4j.execute_query(
             "MATCH (m:UMLSMetadata {singleton: true}) "
@@ -1212,6 +1578,8 @@ class UMLSLoader:
             concept_count=concept_count,
             semantic_type_count=semantic_type_count,
             relationship_count=relationship_count,
+            has_semantic_type_count=has_semantic_type_count,
+            same_as_count=same_as_count,
             loaded_tier=loaded_tier,
         )
 
@@ -1219,10 +1587,133 @@ class UMLSLoader:
             concept_count=concept_count,
             semantic_type_count=semantic_type_count,
             relationship_count=relationship_count,
+            same_as_count=same_as_count,
+            has_semantic_type_count=has_semantic_type_count,
             loaded_tier=loaded_tier,
             umls_version=umls_version,
             load_timestamp=load_timestamp,
         )
+
+    async def check_neo4j_config(self) -> Dict[str, Any]:
+        """Query Neo4j configuration and assess readiness for UMLS import.
+
+        Checks heap size, page cache size, and database store size
+        against recommended minimums for the targeted vocabulary set.
+
+        Returns:
+            Dict with ``current``, ``recommended``, ``sufficient``,
+            and optionally ``docker_compose_recommendations`` keys.
+        """
+        recommended = {
+            "heap_size_gb": 5,
+            "page_cache_size_gb": 3,
+        }
+
+        current: Dict[str, Any] = {
+            "heap_size": "unknown",
+            "page_cache_size": "unknown",
+        }
+        sufficient = True
+
+        try:
+            # Try Neo4j 5.x procedure
+            config_result = await self._neo4j.execute_query(
+                "CALL dbms.listConfig() "
+                "YIELD name, value "
+                "WHERE name IN ["
+                "'server.memory.heap.max_size', "
+                "'server.memory.pagecache.size', "
+                "'dbms.memory.heap.max_size', "
+                "'dbms.memory.pagecache.size'"
+                "] RETURN name, value"
+            )
+        except Exception:
+            config_result = []
+
+        heap_bytes = 0
+        page_cache_bytes = 0
+
+        for row in config_result:
+            name = row.get("name", "")
+            value = str(row.get("value", "0"))
+            parsed = self._parse_memory_value(value)
+
+            if "heap" in name:
+                current["heap_size"] = value
+                heap_bytes = parsed
+            elif "pagecache" in name:
+                current["page_cache_size"] = value
+                page_cache_bytes = parsed
+
+        heap_gb = heap_bytes / (1024 ** 3)
+        page_cache_gb = page_cache_bytes / (1024 ** 3)
+
+        issues = []
+        if heap_gb < recommended["heap_size_gb"]:
+            sufficient = False
+            issues.append(
+                f"Heap {heap_gb:.1f} GB < "
+                f"{recommended['heap_size_gb']} GB recommended"
+            )
+        if page_cache_gb < recommended["page_cache_size_gb"]:
+            sufficient = False
+            issues.append(
+                f"Page cache {page_cache_gb:.1f} GB < "
+                f"{recommended['page_cache_size_gb']} GB "
+                "recommended"
+            )
+
+        result: Dict[str, Any] = {
+            "current": current,
+            "recommended": recommended,
+            "sufficient": sufficient,
+        }
+
+        if not sufficient:
+            result["issues"] = issues
+            result["docker_compose_recommendations"] = {
+                "NEO4J_server_memory_heap_max__size": "6g",
+                "NEO4J_server_memory_pagecache_size": "3g",
+            }
+
+        logger.info(
+            "neo4j_config_checked",
+            sufficient=sufficient,
+            current=current,
+        )
+
+        return result
+
+    @staticmethod
+    def _parse_memory_value(value: str) -> int:
+        """Parse a Neo4j memory config string to bytes.
+
+        Handles suffixes: g/G (GiB), m/M (MiB), k/K (KiB).
+        Returns 0 for unparseable values.
+        """
+        value = value.strip()
+        if not value:
+            return 0
+
+        multipliers = {
+            "g": 1024 ** 3,
+            "m": 1024 ** 2,
+            "k": 1024,
+        }
+
+        suffix = value[-1].lower()
+        if suffix in multipliers:
+            try:
+                return int(
+                    float(value[:-1]) * multipliers[suffix]
+                )
+            except ValueError:
+                return 0
+
+        try:
+            return int(value)
+        except ValueError:
+            return 0
 
     async def resume_import(
         self,
@@ -1381,7 +1872,9 @@ class UMLSLoader:
         UNWIND $concepts AS c
         MERGE (n:UMLSConcept {cui: c.cui})
         SET n.preferred_name = c.preferred_name,
+            n.lower_name = toLower(c.preferred_name),
             n.synonyms = c.synonyms,
+            n.lower_synonyms = [s IN c.synonyms | toLower(s)],
             n.source_vocabulary = c.source_vocabulary,
             n.suppressed = c.suppressed
         RETURN count(n) as count
@@ -1494,3 +1987,151 @@ class UMLSLoader:
         )
 
         return load_result
+
+
+    async def migrate_synonyms(
+        self, batch_size: int = 5000
+    ) -> LoadResult:
+        """Create UMLSSynonym nodes from existing UMLSConcept lower_synonyms.
+
+        Reads the lower_synonyms list property from each existing
+        UMLSConcept node in batches, then MERGEs corresponding
+        UMLSSynonym nodes and HAS_SYNONYM relationships. Uses MERGE
+        for idempotent execution (safe to run multiple times).
+
+        Args:
+            batch_size: Number of UMLSConcept nodes to process per
+                batch (default 5000).
+
+        Returns:
+            LoadResult with counts of synonym nodes and relationships
+            created, plus batch success/failure counts.
+        """
+        import time
+
+        start_time = time.time()
+        nodes_created = 0
+        relationships_created = 0
+        batches_completed = 0
+        batches_failed = 0
+
+        # Count total UMLSConcept nodes for progress logging
+        count_result = await self._neo4j.execute_query(
+            "MATCH (u:UMLSConcept) RETURN count(u) AS total"
+        )
+        total_concepts = (
+            count_result[0]["total"] if count_result else 0
+        )
+        logger.info(
+            "migrate_synonyms_start",
+            total_concepts=total_concepts,
+            batch_size=batch_size,
+        )
+
+        # Process UMLSConcept nodes in batches using SKIP/LIMIT
+        offset = 0
+        batch_num = 0
+
+        while offset < total_concepts:
+            batch_num += 1
+
+            # Read a batch of CUIs with their lower_synonyms
+            read_query = (
+                "MATCH (u:UMLSConcept) "
+                "WHERE u.lower_synonyms IS NOT NULL "
+                "AND size(u.lower_synonyms) > 0 "
+                "RETURN u.cui AS cui, u.lower_synonyms AS lower_synonyms "
+                "SKIP $skip LIMIT $limit"
+            )
+            try:
+                batch_data = await self._neo4j.execute_query(
+                    read_query,
+                    {"skip": offset, "limit": batch_size},
+                )
+            except Exception as exc:
+                batches_failed += 1
+                logger.error(
+                    "migrate_synonyms_read_failed",
+                    batch_num=batch_num,
+                    offset=offset,
+                    error=str(exc),
+                )
+                offset += batch_size
+                continue
+
+            if not batch_data:
+                break
+
+            # Prepare items for MERGE
+            items = [
+                {
+                    "cui": row["cui"],
+                    "lower_synonyms": row["lower_synonyms"],
+                }
+                for row in batch_data
+            ]
+
+            merge_query = (
+                "UNWIND $items AS item "
+                "MATCH (u:UMLSConcept {cui: item.cui}) "
+                "UNWIND item.lower_synonyms AS syn "
+                "MERGE (s:UMLSSynonym {name: syn}) "
+                "MERGE (u)-[:HAS_SYNONYM]->(s) "
+                "RETURN count(DISTINCT s) AS syn_count, "
+                "count(*) AS rel_count"
+            )
+
+            try:
+                result = await self._execute_batch_with_retry(
+                    merge_query, {"items": items}
+                )
+                if result:
+                    nodes_created += result[0].get("syn_count", 0)
+                    relationships_created += result[0].get(
+                        "rel_count", 0
+                    )
+                batches_completed += 1
+            except Exception as exc:
+                batches_failed += 1
+                logger.error(
+                    "migrate_synonyms_batch_failed",
+                    batch_num=batch_num,
+                    batch_size=len(items),
+                    error=str(exc),
+                )
+
+            offset += batch_size
+
+            if batch_num % 10 == 0:
+                elapsed = time.time() - start_time
+                logger.info(
+                    "migrate_synonyms_progress",
+                    batch_num=batch_num,
+                    offset=offset,
+                    total_concepts=total_concepts,
+                    nodes_created=nodes_created,
+                    relationships_created=relationships_created,
+                    elapsed_seconds=round(elapsed, 1),
+                )
+
+        elapsed = time.time() - start_time
+        load_result = LoadResult(
+            nodes_created=nodes_created,
+            relationships_created=relationships_created,
+            batches_completed=batches_completed,
+            batches_failed=batches_failed,
+            elapsed_seconds=round(elapsed, 3),
+        )
+
+        logger.info(
+            "migrate_synonyms_complete",
+            nodes_created=load_result.nodes_created,
+            relationships_created=load_result.relationships_created,
+            batches_completed=load_result.batches_completed,
+            batches_failed=load_result.batches_failed,
+            elapsed_seconds=load_result.elapsed_seconds,
+        )
+
+        return load_result
+
+

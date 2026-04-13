@@ -38,9 +38,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Constants for validation
-MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024  # 100MB
+# Import settings for validation constants
+from ...config.config import get_settings
+
 SUPPORTED_MIME_TYPES = ["application/pdf"]
+
+# Export max file size for tests - dynamically fetched from settings
+# This is effectively unlimited (10GB) to allow large file uploads
+MAX_FILE_SIZE_BYTES = get_settings().max_file_size
 
 
 async def handle_chat_document_upload(
@@ -92,13 +97,15 @@ async def handle_chat_document_upload(
             return
         
         # Validate file size (Requirement 1.5)
-        if upload_msg.file_size > MAX_FILE_SIZE_BYTES:
+        settings = get_settings()
+        if upload_msg.file_size > settings.max_file_size:
+            max_mb = settings.max_file_size // (1024 * 1024)
             logger.warning(f"Rejected oversized file: {upload_msg.filename} ({upload_msg.file_size} bytes)")
             await _send_upload_error(
                 manager, connection_id,
                 filename=upload_msg.filename,
                 error_code=DocumentUploadErrorCodes.FILE_TOO_LARGE,
-                error_message=f"File exceeds 100MB limit. Please upload a smaller file."
+                error_message=f"File exceeds {max_mb}MB limit. Please upload a smaller file."
             )
             return
         
@@ -567,6 +574,23 @@ async def handle_document_stats_request(
                 stats['relationship_breakdown'] = breakdown
         except Exception as e:
             logger.debug(f"Neo4j relationship breakdown failed for {document_id}: {e}")
+
+        # UMLS linked concept stats
+        try:
+            result = await client.execute_query(
+                "MATCH (ch:Chunk) WHERE ch.source_id IN $ids "
+                "MATCH (ch)<-[:EXTRACTED_FROM]-(c:Concept)-[:SAME_AS]->(u:UMLSConcept) "
+                "RETURN count(DISTINCT c) AS umls_linked, "
+                "count(DISTINCT u) AS umls_concepts",
+                {"ids": neo4j_ids},
+            )
+            for row in (result or []):
+                linked = row.get('umls_linked', 0)
+                if linked > 0:
+                    stats['umls_linked_count'] = linked
+                    stats['umls_concept_count'] = row.get('umls_concepts', 0)
+        except Exception as e:
+            logger.debug(f"Neo4j UMLS stats failed for {document_id}: {e}")
     except Exception as e:
         logger.debug(f"KG stats unavailable for {document_id}: {e}")
 
@@ -617,6 +641,14 @@ async def handle_document_delete_request(
 
         logger.info(f"Deleting document {document_id} for connection {connection_id}")
 
+        # Look up filename before deletion so we can include it in the response
+        # for client-side cache invalidation.
+        doc_filename = None
+        try:
+            doc_filename = await document_manager.get_document_filename(document_id)
+        except Exception:
+            pass  # Non-critical — deletion proceeds without it
+
         # Delete document completely from all stores
         deletion_results = await document_manager.delete_document_completely(document_id)
 
@@ -651,6 +683,7 @@ async def handle_document_delete_request(
         # Send response
         response = DocumentDeletedMessage(
             document_id=str(document_id),
+            filename=doc_filename,
             success=success,
             message=message
         )
@@ -904,15 +937,11 @@ async def handle_related_docs_graph(
             "  RETURN collect(DISTINCT id(c1)) AS src_ids "
             "} "
             "MATCH (c1)-[r:RELATED_DOCS]->(c2) "
-            "WHERE id(c1) IN src_ids AND NOT id(c2) IN src_ids "
-            "WITH c2, max(r.score) AS best_score, "
-            "     sum(r.edge_count) AS total_ec "
-            "MATCH (c2)-[:EXTRACTED_FROM]->(ch2:Chunk) "
-            "WITH DISTINCT ch2.source_id AS related_doc_id, "
-            "     best_score, total_ec "
-            "RETURN related_doc_id, "
-            "  max(best_score) AS score, "
-            "  sum(total_ec) AS edge_count",
+            "WHERE id(c1) IN src_ids "
+            "  AND r.source_doc_id = $doc_id "
+            "RETURN r.target_doc_id AS related_doc_id, "
+            "  max(r.score) AS score, "
+            "  sum(r.edge_count) AS edge_count",
             {"doc_id": neo4j_doc_id},
         )
     except Exception as exc:

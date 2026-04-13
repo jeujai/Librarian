@@ -393,6 +393,11 @@ body {
     animation: fadeIn 0.3s ease-out;
 }
 
+/* Allow messages containing tables to expand to full width */
+.message:has(table) {
+    max-width: 100%;
+}
+
 @keyframes fadeIn {
     from {
         opacity: 0;
@@ -449,6 +454,7 @@ body {
     box-shadow: var(--shadow-md);
     border: 1px solid var(--gray-200);
     line-height: 1.6;
+    overflow-x: auto;
 }
 
 .user-message .message-content {
@@ -467,6 +473,42 @@ body {
     margin-top: var(--spacing-md);
     padding-top: var(--spacing-md);
     border-top: 1px solid var(--gray-200);
+}
+
+.citations-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    background: none;
+    border: none;
+    padding: 0;
+    margin-bottom: var(--spacing-sm);
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    color: var(--gray-500);
+    cursor: pointer;
+}
+
+.citations-toggle:hover {
+    color: var(--primary);
+}
+
+.citations-toggle .citations-arrow {
+    display: inline-block;
+    font-size: 0.65rem;
+    transition: transform 0.2s ease;
+}
+
+.citations-toggle[aria-expanded="true"] .citations-arrow {
+    transform: rotate(90deg);
+}
+
+.citations-list {
+    display: none;
+}
+
+.citations-list.expanded {
+    display: block;
 }
 
 .citation {

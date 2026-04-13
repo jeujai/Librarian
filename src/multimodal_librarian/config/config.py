@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     require_auth: bool = Field(default=False, description="Require authentication for API access")
     allowed_origins: list = Field(default=["*"], description="Allowed CORS origins")
     rate_limit_per_minute: int = Field(default=60, description="Rate limit per minute per IP")
-    websocket_timeout: int = Field(default=300, description="WebSocket timeout in seconds")
+    websocket_timeout: int = Field(default=3600, description="WebSocket timeout in seconds (1 hour for large uploads)")
     
     # Encryption settings
     encryption_key: Optional[str] = Field(default=None, description="Base64 encoded encryption key")
@@ -105,7 +105,7 @@ class Settings(BaseSettings):
     upload_dir: str = Field(default="uploads", description="Directory for uploaded files")
     media_dir: str = Field(default="media", description="Directory for generated media")
     export_dir: str = Field(default="exports", description="Directory for exported files")
-    max_file_size: int = Field(default=100 * 1024 * 1024, description="Maximum file size in bytes (100MB)")
+    max_file_size: int = Field(default=10 * 1024 * 1024 * 1024, description="Maximum file size in bytes (10GB - effectively unlimited)")
     
     # Processing settings
     chunk_size: int = Field(default=512, description="Default chunk size for text processing")
@@ -246,6 +246,24 @@ class Settings(BaseSettings):
             "web results without capping everything to 1.0. A value of 1.15 "
             "turns a 0.82 into 0.943, preserving score differentiation."
         ),
+    )
+
+    # Adaptive proper noun coverage thresholds
+    adaptive_threshold_floor: float = Field(
+        default=0.70,
+        description="Minimum coverage ratio floor for adaptive threshold calculation",
+    )
+    adaptive_medical_threshold: float = Field(
+        default=0.95,
+        description="Minimum coverage threshold for medical domain queries",
+    )
+    adaptive_legal_threshold: float = Field(
+        default=0.90,
+        description="Minimum coverage threshold for legal domain queries",
+    )
+    adaptive_small_query_noun_limit: int = Field(
+        default=2,
+        description="Queries with this many or fewer proper nouns require 100% coverage",
     )
 
     # Relevance detection thresholds

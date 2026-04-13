@@ -111,7 +111,7 @@ class AWSNativeConfig(BaseSettings):
     s3_media_prefix: str = Field(default="media", description="S3 media prefix")
     s3_export_prefix: str = Field(default="exports", description="S3 export prefix")
     s3_backup_prefix: str = Field(default="backups", description="S3 backup prefix")
-    max_file_size: int = Field(default=104857600, description="Max file size in bytes (100MB)")
+    max_file_size: int = Field(default=10 * 1024 * 1024 * 1024, description="Max file size in bytes (10GB - effectively unlimited)")
     max_files_per_upload: int = Field(default=10, description="Max files per upload")
     
     # Security Configuration

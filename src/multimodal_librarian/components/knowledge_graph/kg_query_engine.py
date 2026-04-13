@@ -148,7 +148,7 @@ class KnowledgeGraphQueryEngine:
         try:
             query = """
             MATCH (c:Concept)
-            WHERE toLower(c.name) CONTAINS toLower($name)
+            WHERE c.name_lower CONTAINS toLower($name)
             RETURN c.concept_id as concept_id, 
                    c.name as name, 
                    c.type as type,
@@ -197,7 +197,7 @@ class KnowledgeGraphQueryEngine:
             # See: Conversation Knowledge Integration spec, Requirements 5.2.
             query = f"""
             MATCH (start:Concept)
-            WHERE toLower(start.name) CONTAINS toLower($concept_name)
+            WHERE start.name_lower CONTAINS toLower($concept_name)
             WITH start LIMIT 1
             MATCH path = (start)-[r:{rel_filter}*1..{max_hops}]-(related:Concept)
             WHERE related <> start
@@ -248,8 +248,8 @@ class KnowledgeGraphQueryEngine:
         try:
             query = f"""
             MATCH (start:Concept), (end:Concept)
-            WHERE toLower(start.name) CONTAINS toLower($start_name)
-              AND toLower(end.name) CONTAINS toLower($end_name)
+            WHERE start.name_lower CONTAINS toLower($start_name)
+              AND end.name_lower CONTAINS toLower($end_name)
               AND start <> end
             WITH start, end LIMIT 1
             MATCH path = shortestPath((start)-[*1..{max_hops}]-(end))
@@ -779,28 +779,25 @@ class KnowledgeGraphQueryEngine:
     async def _get_landing_view(
         self, client, source_id: str,
     ) -> dict[str, Any]:
-        """Return top 10 concepts by semantic degree for a source.
+        """Return top 10 concepts by extraction frequency for a source.
 
-        Excludes EXTRACTED_FROM edges from the degree count (they are
-        structural, not semantic) and filters out common stop words.
+        Uses frequency (how many times a concept was extracted from this
+        document's chunks) rather than global degree, so the landing view
+        shows concepts most relevant to THIS document.
 
-        Optimized: deduplicates concepts first (a concept linked to N
-        chunks was counted N times), then uses pattern comprehension
-        for degree instead of OPTIONAL MATCH + count.
+        Filters out common stop words and URL-like patterns.
         """
         query = """
         MATCH (ch:Chunk {source_id: $source_id})
               <-[:EXTRACTED_FROM]-(c:Concept)
         WHERE size(c.name) > 2
-        WITH DISTINCT c
-        WITH c, size([(c)-[]->(:Concept) | 1]) AS degree
-        ORDER BY degree DESC
+          AND NOT c.name =~ '(?i)^(https?|www|com|org|net|edu|gov|io)$'
+          AND NOT c.name =~ '(?i)^[a-z0-9.-]+\\.(com|org|net|edu|gov|io)$'
+          AND NOT c.name =~ '^Page$'
+        WITH c.name AS name, c.type AS concept_type, count(*) AS freq
+        ORDER BY freq DESC
         LIMIT 50
-        OPTIONAL MATCH (c)-[:EXTRACTED_FROM]->(ch2:Chunk)
-        WITH c, degree,
-             collect(DISTINCT ch2.source_id) AS source_ids
-        RETURN c.name AS name, source_ids,
-               c.type AS concept_type, degree
+        RETURN name, concept_type, freq
         """
         results = await client.execute_query(
             query, {"source_id": source_id},
@@ -813,12 +810,9 @@ class KnowledgeGraphQueryEngine:
                 continue
             nodes.append({
                 "name": name,
-                "source_document": (
-                    r["source_ids"][0]
-                    if r.get("source_ids") else None
-                ),
+                "source_document": source_id,
                 "concept_type": r.get("concept_type"),
-                "degree": r["degree"],
+                "degree": r["freq"],  # Use frequency as "degree" for display
             })
             if len(nodes) >= 10:
                 break
@@ -847,11 +841,11 @@ class KnowledgeGraphQueryEngine:
         # so that clicking a cross-source node works (Requirement 14.4).
         nodes_query = """
         OPTIONAL MATCH (local:Concept)
-        WHERE toLower(local.name) = toLower($focus_concept)
+        WHERE local.name_lower = toLower($focus_concept)
           AND EXISTS { MATCH (local)-[:EXTRACTED_FROM]->(lch:Chunk {source_id: $source_id}) }
         WITH local LIMIT 1
         OPTIONAL MATCH (any:Concept)
-        WHERE toLower(any.name) = toLower($focus_concept)
+        WHERE any.name_lower = toLower($focus_concept)
           AND local IS NULL
         WITH coalesce(local, any) AS focus
         WHERE focus IS NOT NULL
