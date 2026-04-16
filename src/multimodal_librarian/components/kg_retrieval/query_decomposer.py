@@ -33,10 +33,23 @@ ACTION_WORDS: Set[str] = {
     'confirmed', 'verified', 'documented', 'recorded', 'highlighted',
     'examined', 'investigated', 'explored', 'studied', 'reviewed',
     'assessed', 'evaluated', 'measured', 'tested', 'compared',
+    'scrutinized', 'scrutinize', 'scrutinizing', 'scrutinised', 'scrutinising',
+    'witnessed', 'witness', 'witnessing',
     'observe', 'find', 'discover', 'note', 'report',
     'identify', 'analyze', 'conclude', 'determine', 'see',
     'mention', 'state', 'describe', 'explain', 'discuss',
     'show', 'demonstrate', 'reveal', 'indicate', 'suggest',
+    'examine', 'look', 'looked', 'looking', 'seen', 'shown',
+    'review', 'reviewing', 'approach', 'approached', 'approaching',
+    'consider', 'considered', 'considering',
+    'check', 'checked', 'checking',
+    'inspect', 'inspected', 'inspecting',
+    'monitor', 'monitored', 'monitoring',
+    'watch', 'watched', 'watching',
+    'detect', 'detected', 'detecting',
+    'notice', 'noticed', 'noticing',
+    'recognize', 'recognized', 'recognizing',
+    'perceive', 'perceived', 'perceiving',
 }
 
 # Common subject reference patterns
@@ -51,6 +64,109 @@ SUBJECT_PATTERNS: Set[str] = {
     'our analysis', 'our research', 'our findings', 'our study',
     'this research', 'this study', 'this analysis', 'this report',
 }
+
+# Common pronouns used in generic verb phrases (e.g., "we observe", "they found")
+COMMON_PRONOUNS: Set[str] = {
+    'we', 'they', 'i', 'he', 'she', 'it', 'you', 'one',
+    'our', 'their', 'my', 'his', 'her', 'its', 'your',
+}
+
+# All generic words: action words + pronouns + common filler words
+# Used to detect generic verb-derived concept names
+GENERIC_WORDS: Set[str] = ACTION_WORDS | COMMON_PRONOUNS | {
+    'the', 'a', 'an', 'that', 'this', 'these', 'those',
+    'is', 'are', 'was', 'were', 'be', 'been', 'being',
+    'has', 'have', 'had', 'do', 'does', 'did', 'done',
+    'can', 'could', 'will', 'would', 'shall', 'should',
+    'may', 'might', 'must', 'to', 'of', 'in', 'for',
+    'on', 'with', 'at', 'by', 'from', 'about', 'into',
+    'not', 'no', 'also', 'very', 'much', 'more', 'most',
+    'some', 'any', 'all', 'each', 'every', 'both',
+    'team', 'group', 'method', 'way', 'thing', 'things',
+    'work', 'works', 'working', 'worked',
+    'use', 'used', 'using', 'uses',
+    'make', 'made', 'making', 'makes',
+    'get', 'got', 'getting', 'gets',
+    'take', 'took', 'taking', 'takes', 'taken',
+    'give', 'gave', 'giving', 'gives', 'given',
+    'go', 'went', 'going', 'goes', 'gone',
+    'come', 'came', 'coming', 'comes',
+    'know', 'knew', 'knowing', 'knows', 'known',
+    'think', 'thought', 'thinking', 'thinks',
+    'say', 'said', 'saying', 'says',
+    'tell', 'told', 'telling', 'tells',
+    'ask', 'asked', 'asking', 'asks',
+    'need', 'needed', 'needing', 'needs',
+    'want', 'wanted', 'wanting', 'wants',
+    'try', 'tried', 'trying', 'tries',
+    'keep', 'kept', 'keeping', 'keeps',
+    'let', 'lets', 'letting',
+    'begin', 'began', 'beginning', 'begins',
+    'seem', 'seemed', 'seeming', 'seems',
+    'help', 'helped', 'helping', 'helps',
+    'turn', 'turned', 'turning', 'turns',
+    'start', 'started', 'starting', 'starts',
+    'run', 'ran', 'running', 'runs',
+    'move', 'moved', 'moving', 'moves',
+    'like', 'liked', 'likely',
+    'just', 'still', 'already', 'even', 'well',
+    'back', 'only', 'then', 'than', 'now',
+    'new', 'old', 'good', 'bad', 'great', 'big', 'small',
+    'long', 'short', 'high', 'low', 'first', 'last',
+    'own', 'other', 'same', 'different',
+    'many', 'few', 'several', 'enough',
+    'such', 'quite', 'rather', 'really',
+    'here', 'there', 'where', 'when', 'how', 'why',
+    'what', 'which', 'who', 'whom', 'whose',
+    'if', 'because', 'since', 'while', 'although',
+    'but', 'and', 'or', 'so', 'yet', 'nor',
+    'up', 'out', 'off', 'over', 'under', 'through',
+    'between', 'after', 'before', 'during', 'without',
+    'against', 'along', 'around', 'among',
+}
+
+
+def is_generic_concept(concept_name: str) -> bool:
+    """Check if a concept name is a generic verb-derived phrase.
+
+    A concept is considered generic if ALL of its words are common
+    verbs, pronouns, or filler words (i.e., it contains no proper
+    nouns, specific entity names, or domain-specific terms).
+
+    Handles contractions (e.g., "we've" → "we" + "ve") and possessives.
+
+    Examples of generic concepts: "we observe", "we've seen", "scrutinized"
+    Examples of specific concepts: "Chelsea", "Neo4j", "Venezuela"
+
+    Args:
+        concept_name: The concept name to check.
+
+    Returns:
+        True if the concept is generic (all words are common/generic).
+    """
+    if not concept_name or not concept_name.strip():
+        return True
+
+    # Tokenize and lowercase
+    text = concept_name.lower()
+    # Expand contractions: "we've" → "we ve", "didn't" → "didn t"
+    text = text.replace("'", " ").replace("\u2019", " ")
+    words = text.split()
+    words = [w.strip('?.,!"\';:()[]{}') for w in words if w.strip('?.,!"\';:()[]{}')]
+
+    if not words:
+        return True
+
+    # Common contraction fragments
+    _contraction_parts = {'ve', 've', 't', 's', 'd', 'll', 're', 'm', 'nt'}
+
+    # A concept is generic if ALL its words are in the generic words set
+    # or are contraction fragments
+    return all(
+        w in GENERIC_WORDS or w in _contraction_parts
+        for w in words
+    )
+
 
 # Stopwords to filter out when extracting content words
 STOPWORDS: Set[str] = {
@@ -87,8 +203,9 @@ class QueryDecomposer:
         neo4j_client: Optional[Any] = None,
         model_server_client: Optional[Any] = None,
         similarity_threshold: float = 0.75,
-        semantic_max_results: int = 20,
+        semantic_max_results: int = 15,
         semantic_enabled: bool = True,
+        ner_extractor: Optional[Any] = None,
     ):
         """
         Initialize QueryDecomposer with optional Neo4j and model server clients.
@@ -100,16 +217,20 @@ class QueryDecomposer:
                                 (injected via DI). If None, semantic matching
                                 is silently skipped.
             similarity_threshold: Minimum cosine similarity for semantic matches
-                                 (default 0.7).
+                                 (default 0.75).
             semantic_max_results: Max concepts returned from vector search
-                                (default 10).
+                                (default 15).
             semantic_enabled: Toggle semantic matching on/off (default True).
+            ner_extractor: Optional NER_Extractor for entity-aware query
+                          tokenization (injected via DI). If None, only
+                          standard word tokenization is used.
         """
         self._neo4j_client = neo4j_client
         self._model_server_client = model_server_client
         self._similarity_threshold = similarity_threshold
         self._semantic_max_results = semantic_max_results
         self._semantic_enabled = semantic_enabled
+        self.ner_extractor = ner_extractor
         # Cache query embeddings so identical query text always produces
         # the same vector within a session, eliminating floating-point
         # non-determinism from repeated embedding calls.
@@ -318,6 +439,16 @@ class QueryDecomposer:
         proper_nouns = {w for w, orig in content_words if orig and orig[0].isupper()}
         all_words = [w for w, _ in content_words]
         
+        # If NER_Extractor is available, add multi-word entities as search terms
+        if self.ner_extractor is not None:
+            try:
+                ner_result = await self.ner_extractor.extract_key_terms(query)
+                for term in ner_result.key_terms:
+                    if " " in term:  # Multi-word entities only
+                        all_words.append(term.lower())
+            except Exception as e:
+                logger.warning(f"NER extraction failed in _find_entity_matches: {e}")
+        
         # OPTIMIZATION: Try full-text index first (fastest), fall back to CONTAINS
         try:
             # Build full-text search query string (OR between words)
@@ -442,10 +573,33 @@ class QueryDecomposer:
                 'threshold': self._similarity_threshold,
             })
 
-            return [
+            matches = [
                 {**record, 'match_type': 'semantic'}
                 for record in (results or [])
             ]
+
+            # --- Annotate matches with generic/specific classification ---
+            # We do NOT remove generic concepts here because their
+            # EXTRACTED_FROM edges may lead to relevant chunks (e.g.,
+            # page 114 is linked via "we observe" concepts).  Instead,
+            # we annotate each match so that downstream scoring
+            # (_aggregate_and_deduplicate) can downweight generic
+            # concepts in the coverage_bonus calculation.
+            for m in matches:
+                m['is_generic'] = is_generic_concept(m.get('name', ''))
+
+            specific_count = sum(1 for m in matches if not m['is_generic'])
+            generic_count = sum(1 for m in matches if m['is_generic'])
+
+            if generic_count > 0:
+                logger.info(
+                    f"Semantic match classification: {len(matches)} total — "
+                    f"{specific_count} specific, {generic_count} generic "
+                    f"(generic concepts kept for edge traversal, "
+                    f"downweighted in scoring)"
+                )
+
+            return matches
         except Exception as e:
             logger.warning(f"Semantic matching failed, falling back to lexical only: {e}")
             return []

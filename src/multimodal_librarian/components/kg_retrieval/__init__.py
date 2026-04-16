@@ -11,11 +11,13 @@ Components:
 - SemanticReranker: Re-ranks candidate chunks using semantic similarity
 - RelevanceDetector: Identifies "no relevant results" scenarios via score distribution and concept specificity
 - ExplanationGenerator: Generates human-readable explanations for retrieval results
+- RelationshipTraverser: Traverses inter-concept relationships to find intersection chunks
 """
 
 from .chunk_resolver import ChunkResolver
 from .explanation_generator import ExplanationGenerator
 from .query_decomposer import QueryDecomposer
+from .relationship_traverser import RelationshipTraverser
 from .relevance_detector import RelevanceDetector
 from .semantic_reranker import SemanticReranker
 
@@ -23,6 +25,7 @@ __all__ = [
     "ChunkResolver",
     "ExplanationGenerator",
     "QueryDecomposer",
+    "RelationshipTraverser",
     "RelevanceDetector",
     "SemanticReranker",
 ]

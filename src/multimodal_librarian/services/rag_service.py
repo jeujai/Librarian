@@ -428,16 +428,21 @@ class ContextPreparer:
         # the same document_id (from KG + semantic paths). Collapse those.
         # Book/document sources from different pages are NOT deduplicated —
         # multiple pages from the same book are valuable context.
+        # Book/document sources from the SAME page ARE deduplicated —
+        # overlapping chunks or duplicate embeddings from the same page
+        # provide no additional value and confuse the citation list.
         # Web search sources share a synthetic document_id ("web_brave")
         # so deduplicate those by URL instead.
         seen_conv_doc_ids = set()
         seen_urls = set()
+        seen_doc_pages: set = set()
         deduped_chunks = []
         for chunk in selected_chunks:
             url = chunk.metadata.get('url') if chunk.metadata else None
             is_web = chunk.source_type and 'web' in str(chunk.source_type).lower()
             source_type = chunk.metadata.get('source_type', '') if chunk.metadata else ''
             is_conversation = source_type == 'conversation'
+            # Debug: log every chunk's dedup-relevant fields
             if is_web and url:
                 if url not in seen_urls:
                     seen_urls.add(url)
@@ -447,8 +452,34 @@ class ContextPreparer:
                     seen_conv_doc_ids.add(chunk.document_id)
                     deduped_chunks.append(chunk)
             else:
-                # Book/document chunks: keep all (different pages are valuable)
+                # Book/document chunks: keep different pages, drop same-page dupes.
+                # Chunks without a page number are always kept (keyed by chunk_id).
+                # Use document_title (not document_id) because the same book
+                # may have been ingested more than once with different IDs.
+                page = chunk.page_number
+                if page is None and chunk.metadata:
+                    page = chunk.metadata.get('page_number')
+                if page is not None:
+                    # Normalize to int for consistent dedup key
+                    try:
+                        page = int(page)
+                    except (ValueError, TypeError):
+                        pass
+                    doc_page_key = (chunk.document_title, page)
+                    if doc_page_key in seen_doc_pages:
+                        logger.debug(
+                            "Dedup: dropping same-page duplicate "
+                            "title=%s page=%s chunk_id=%s",
+                            chunk.document_title[:40], page,
+                            chunk.chunk_id[:12],
+                        )
+                        continue
+                    seen_doc_pages.add(doc_page_key)
                 deduped_chunks.append(chunk)
+        logger.info(
+            "Citation dedup: %d chunks -> %d after same-page dedup",
+            len(selected_chunks), len(deduped_chunks),
+        )
         selected_chunks = deduped_chunks
         
         # Format context
@@ -1274,7 +1305,9 @@ class RAGService:
         if kg_metadata and kg_metadata.get('kg_explanation'):
             kg_context = f"\n\nKNOWLEDGE GRAPH INSIGHTS:\n{kg_metadata['kg_explanation']}"
         
-        system_prompt = f"""You are Librarian, a helpful and knowledgeable AI assistant. You help users find answers using their document library and, when relevant, supplementary web search results.
+        system_prompt = f"""You are Librarian, a helpful and knowledgeable AI assistant. You help users find answers by summarizing and synthesizing information from their document library and, when relevant, supplementary web search results.
+
+Your role is to report what the documents say — you are a research assistant summarizing source material, not providing personal advice.
 
 SOURCES:
 {context}{kg_context}
@@ -1286,6 +1319,7 @@ Instructions:
 - Sources may come from the user's document library or from web search — use all of them
 - If knowledge graph insights are provided, use them to enhance your understanding
 - If the sources don't fully answer the question, say so and provide what information you can
+- When sources contain medical, legal, financial, or other professional content, summarize what the documents say. Frame answers as "According to [Source X]..." rather than as personal advice. You may add a brief disclaimer that users should consult a qualified professional.
 - Be accurate and helpful in your responses"""
 
         # Prepare messages for AI
@@ -1555,7 +1589,7 @@ Instructions:
                     )
                     for c in librarian_chunks
                 ]
-                verdict = self.relevance_detector.evaluate(
+                verdict = await self.relevance_detector.evaluate(
                     rc_chunks, query_decomposition,
                 )
                 self._last_relevance_verdict = verdict
@@ -2115,7 +2149,157 @@ Instructions:
         except Exception as e:
             logger.error(f"Document search failed: {e}")
             return []
-    
+
+    # ------------------------------------------------------------------
+    # Keyword search supplement (Postgres full-text index)
+    # ------------------------------------------------------------------
+
+    # Regex for terms that embeddings handle poorly: code identifiers
+    # (contain underscores, dots, equals), quoted strings, and
+    # camelCase / PascalCase tokens.
+    _CODE_TERM_RE = re.compile(
+        r"""
+        [\w]+[._=][\w=.]+   # underscore/dot/equals-separated identifiers
+        | [A-Z][a-z]+[A-Z]  # camelCase start
+        | "[^"]{3,}"         # double-quoted strings
+        | '[^']{3,}'         # single-quoted strings
+        """,
+        re.VERBOSE,
+    )
+
+    def _extract_keyword_terms(self, query: str) -> List[str]:
+        """Extract distinctive terms suitable for keyword search.
+
+        Returns code-like identifiers and multi-word quoted phrases that
+        embedding models typically struggle with.
+        """
+        terms: List[str] = []
+        for m in self._CODE_TERM_RE.finditer(query):
+            term = m.group().strip("\"'")
+            if len(term) >= 4:
+                terms.append(term)
+
+        # Also grab any word containing underscores (common code pattern)
+        for word in query.split():
+            cleaned = word.strip("?,.:;!\"'()[]{}=<>")
+            if "_" in cleaned and len(cleaned) >= 4 and cleaned not in terms:
+                terms.append(cleaned)
+
+        return terms
+
+    async def _keyword_search_postgres(
+        self,
+        query: str,
+        document_filter: Optional[List[str]] = None,
+        exclude_chunk_ids: Optional[set] = None,
+        max_results: int = 5,
+    ) -> List[DocumentChunk]:
+        """Search Postgres knowledge_chunks using the GIN full-text index.
+
+        Only runs when the query contains code-like or precise terms that
+        embeddings may miss.  Returns chunks not already in the semantic
+        result set (identified by *exclude_chunk_ids*).
+        """
+        terms = self._extract_keyword_terms(query)
+        if not terms:
+            return []
+
+        try:
+            from sqlalchemy import text as sa_text
+
+            from ..database.connection import db_manager
+
+            if not db_manager.AsyncSessionLocal:
+                db_manager.initialize()
+
+            # Build a Postgres full-text query.  Use plainto_tsquery for
+            # each term (handles special chars safely) joined with OR.
+            # Also do an ILIKE fallback for code identifiers that
+            # to_tsvector tokenises differently (e.g. underscores).
+            ts_clauses = []
+            ilike_clauses = []
+            params: Dict[str, Any] = {}
+            for i, term in enumerate(terms):
+                pname = f"t{i}"
+                ts_clauses.append(
+                    f"to_tsvector('english', kc.content) "
+                    f"@@ plainto_tsquery('english', :{pname})"
+                )
+                ilike_clauses.append(f"kc.content ILIKE :{pname}_like")
+                params[pname] = term
+                params[f"{pname}_like"] = f"%{term}%"
+
+            where_ts = " OR ".join(ts_clauses)
+            where_ilike = " OR ".join(ilike_clauses)
+
+            filter_clause = ""
+            if document_filter:
+                filter_clause = "AND kc.source_id = ANY(:doc_filter)"
+                params["doc_filter"] = document_filter
+
+            sql = f"""
+                SELECT kc.id, kc.source_id, kc.content, kc.metadata,
+                       ks.title AS document_title
+                FROM multimodal_librarian.knowledge_chunks kc
+                JOIN multimodal_librarian.knowledge_sources ks
+                  ON kc.source_id = ks.id
+                WHERE ({where_ts} OR {where_ilike})
+                  {filter_clause}
+                ORDER BY kc.created_at DESC
+                LIMIT :lim
+            """
+            params["lim"] = max_results * 3  # fetch extra, dedup below
+
+            async with db_manager.get_async_session() as session:
+                result = await session.execute(sa_text(sql), params)
+                rows = result.fetchall()
+
+            if not rows:
+                return []
+
+            exclude = exclude_chunk_ids or set()
+            chunks: List[DocumentChunk] = []
+            for row in rows:
+                chunk_id = str(row[0])
+                if chunk_id in exclude:
+                    continue
+                source_id = str(row[1])
+                content = row[2] or ""
+                metadata = row[3] if isinstance(row[3], dict) else (
+                    json.loads(row[3]) if row[3] else {}
+                )
+                doc_title = row[4] or metadata.get("title", "Unknown")
+
+                page_number = metadata.get("page_number")
+
+                chunk = DocumentChunk(
+                    chunk_id=chunk_id,
+                    document_id=source_id,
+                    document_title=doc_title,
+                    content=content,
+                    page_number=page_number,
+                    section_title=metadata.get("section_title"),
+                    chunk_type=metadata.get("chunk_type", "text"),
+                    # Assign a score between semantic threshold and
+                    # confidence threshold so keyword-only hits appear
+                    # in results but don't outrank strong semantic hits.
+                    similarity_score=0.60,
+                    metadata={**metadata, "keyword_match": True},
+                )
+                chunks.append(chunk)
+                if len(chunks) >= max_results:
+                    break
+
+            logger.info(
+                "Keyword search: %d terms -> %d rows -> %d new chunks",
+                len(terms), len(rows), len(chunks),
+            )
+            return chunks
+
+        except Exception as e:
+            logger.warning("Keyword search failed (non-fatal): %s", e)
+            return []
+
     def _rerank_with_knowledge_graph(
         self, 
         chunks: List[DocumentChunk], 
@@ -2169,7 +2353,9 @@ Instructions:
         if kg_metadata and kg_metadata.get('kg_explanation'):
             kg_context = f"\n\nKNOWLEDGE GRAPH INSIGHTS:\n{kg_metadata['kg_explanation']}"
         
-        system_prompt = f"""You are Librarian, a helpful and knowledgeable AI assistant. You help users find answers using their document library and, when relevant, supplementary web search results.
+        system_prompt = f"""You are Librarian, a helpful and knowledgeable AI assistant. You help users find answers by summarizing and synthesizing information from their document library and, when relevant, supplementary web search results.
+
+Your role is to report what the documents say — you are a research assistant summarizing source material, not providing personal advice.
 
 SOURCES:
 {context}{kg_context}
@@ -2180,6 +2366,7 @@ Instructions:
 - Sources may come from the user's document library or from web search — use all of them
 - If knowledge graph insights are provided, use them to enhance your understanding of relationships between concepts
 - If the sources don't fully answer the question, say so and provide what information you can
+- When sources contain medical, legal, financial, or other professional content, summarize what the documents say. Frame answers as "According to [Source X]..." rather than as personal advice. You may add a brief disclaimer that users should consult a qualified professional.
 - Be accurate and helpful in your responses
 - If you're unsure about something, acknowledge the uncertainty"""
 

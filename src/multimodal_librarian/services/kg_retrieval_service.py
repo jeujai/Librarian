@@ -31,8 +31,10 @@ from ..components.kg_retrieval import (
     ChunkResolver,
     ExplanationGenerator,
     QueryDecomposer,
+    RelationshipTraverser,
     SemanticReranker,
 )
+from ..components.kg_retrieval.query_decomposer import is_generic_concept
 from ..models.kg_retrieval import (
     ChunkSourceMapping,
     KGRetrievalResult,
@@ -41,6 +43,7 @@ from ..models.kg_retrieval import (
     RetrievalSource,
     RetrievedChunk,
     SourceChunksCacheEntry,
+    TraversalResult,
 )
 
 logger = logging.getLogger(__name__)
@@ -204,6 +207,16 @@ class KGRetrievalService:
         self._semantic_reranker = SemanticReranker(model_client=model_client)
         self._explanation_generator = ExplanationGenerator()
 
+        # Initialize relationship traverser with config settings
+        from ..config import get_settings
+        _settings = get_settings()
+        self._relationship_traverser = RelationshipTraverser(
+            neo4j_client=neo4j_client,
+            hop_limit=_settings.relationship_hop_limit,
+            timeout_seconds=_settings.relationship_traversal_timeout,
+            max_paths_per_pair=_settings.relationship_max_paths_per_pair,
+        )
+
         # Cache for source_chunks (Requirement 8.2)
         self._source_chunks_cache: Dict[str, SourceChunksCacheEntry] = {}
 
@@ -278,9 +291,9 @@ class KGRetrievalService:
 
             # Step 2: Stage 1 - KG-based retrieval (with timeout)
             try:
-                stage1_chunks, source_mappings = await with_timeout(
+                stage1_chunks, source_mappings, traversal_result = await with_timeout(
                     self._stage1_kg_retrieval(decomposition),
-                    self._query_timeout * 2  # 2x single-query timeout
+                    self._query_timeout * 3  # 3x single-query timeout for large graphs
                 )
             except asyncio.TimeoutError:
                 logger.warning(
@@ -329,7 +342,7 @@ class KGRetrievalService:
                         small_query_noun_limit=_settings.adaptive_small_query_noun_limit,
                     )
 
-                    filtered = self._relevance_detector.filter_chunks_by_proper_nouns(
+                    filtered = await self._relevance_detector.filter_chunks_by_proper_nouns(
                         stage1_chunks, query, adaptive_threshold=_adaptive_threshold
                     )
                     if filtered is not None:
@@ -367,6 +380,34 @@ class KGRetrievalService:
                 f"(Stage 1: {stage1_count}, cache hits: {cache_hits_this_query})"
             )
 
+            # Build result metadata
+            result_metadata: Dict[str, Any] = {
+                "concepts_matched": len(decomposition.entities),
+                "query_timeout_seconds": self._query_timeout,
+            }
+
+            # Add relationship-aware metadata (Requirements: 1.4, 6.4, 8.1)
+            is_multi_concept = len(decomposition.concept_matches) >= 2
+            if is_multi_concept and traversal_result is not None:
+                result_metadata["relationship_aware_activated"] = True
+                result_metadata["intersection_chunks_found"] = len(
+                    traversal_result.intersection_chunk_ids
+                )
+                result_metadata["relationship_paths_traversed"] = (
+                    traversal_result.total_paths_found
+                )
+                result_metadata["relationship_traversal_duration_ms"] = (
+                    traversal_result.traversal_duration_ms
+                )
+                logger.info(
+                    f"Relationship traversal completed in "
+                    f"{traversal_result.traversal_duration_ms}ms: "
+                    f"{traversal_result.total_paths_found} paths, "
+                    f"{len(traversal_result.intersection_chunk_ids)} intersection chunks"
+                )
+            else:
+                result_metadata["relationship_aware_activated"] = False
+
             return KGRetrievalResult(
                 chunks=ranked_chunks,
                 query_decomposition=decomposition,
@@ -376,10 +417,7 @@ class KGRetrievalService:
                 stage1_chunk_count=stage1_count,
                 stage2_chunk_count=stage2_count,
                 cache_hits=cache_hits_this_query,
-                metadata={
-                    "concepts_matched": len(decomposition.entities),
-                    "query_timeout_seconds": self._query_timeout,
-                },
+                metadata=result_metadata,
             )
 
         except Neo4jConnectionError as e:
@@ -429,7 +467,7 @@ class KGRetrievalService:
 
     async def _stage1_kg_retrieval(
         self, decomposition: QueryDecomposition
-    ) -> Tuple[List[RetrievedChunk], Dict[str, ChunkSourceMapping]]:
+    ) -> Tuple[List[RetrievedChunk], Dict[str, ChunkSourceMapping], Optional[TraversalResult]]:
         """
         Stage 1: KG-based candidate retrieval.
 
@@ -444,29 +482,30 @@ class KGRetrievalService:
             decomposition: Query decomposition with matched concepts
 
         Returns:
-            Tuple of (chunks, source_mappings)
+            Tuple of (chunks, source_mappings, traversal_result)
+            traversal_result is None when relationship traversal was not performed.
 
         Requirements: 1.1, 1.3, 2.1-2.5
         """
         all_chunk_ids: Set[str] = set()
         source_mappings: Dict[str, ChunkSourceMapping] = {}
 
-        # Step 1: Retrieve direct chunks from matched concepts
-        direct_chunk_ids, direct_mappings, chunk_concept_hits = (
-            await self._retrieve_direct_chunks(decomposition.concept_matches)
-        )
+        # Run direct chunk retrieval and relationship traversal concurrently.
+        # With large graphs (180K+ chunks, 15 matched concepts), running
+        # these sequentially exceeds the Stage 1 timeout.
+        direct_task = self._retrieve_direct_chunks(decomposition.concept_matches)
+        related_task = self._retrieve_related_chunks(decomposition.concept_matches)
+        (direct_chunk_ids, direct_mappings, chunk_concept_hits), \
+            (related_chunk_ids_raw, related_mappings_raw) = await asyncio.gather(
+                direct_task, related_task
+            )
+
         all_chunk_ids.update(direct_chunk_ids)
         source_mappings.update(direct_mappings)
 
-        # Always traverse relationships to leverage KG connections
-        # This ensures related concepts (like "regulated industries" connected to "Chelsea")
-        # are included in results even when direct chunks are sufficient
-        logger.debug(
-            f"Direct chunks: {len(direct_chunk_ids)}, traversing relationships for KG enrichment"
-        )
-        related_chunk_ids, related_mappings = await self._retrieve_related_chunks(
-            decomposition.concept_matches
-        )
+        # Merge related chunks (already retrieved concurrently above)
+        related_chunk_ids = related_chunk_ids_raw
+        related_mappings = related_mappings_raw
 
         # Add related chunks, capped to _max_related_chunks and prioritized
         # by the parent concept's similarity score. Without this cap, generic
@@ -518,7 +557,32 @@ class KGRetrievalService:
             direct_chunks, related_chunks, source_mappings, chunk_concept_hits
         )
 
-        return chunks, source_mappings
+        # Apply relationship-aware boost for multi-concept queries
+        # Requirements: 1.1, 1.2, 5.1, 5.2, 5.3
+        traversal_result: Optional[TraversalResult] = None
+        if len(decomposition.concept_matches) >= 2:
+            traversal_result = await self._relationship_traverser.traverse(
+                decomposition.concept_matches
+            )
+            if traversal_result.completed and traversal_result.intersection_chunk_ids:
+                from ..config import get_settings
+                _settings = get_settings()
+                chunks = self._apply_relationship_boost(
+                    chunks, traversal_result, _settings.relationship_boost
+                )
+                logger.debug(
+                    f"Relationship-aware boost applied: "
+                    f"{len(traversal_result.intersection_chunk_ids)} intersection chunks, "
+                    f"{traversal_result.total_paths_found} paths found, "
+                    f"{traversal_result.traversal_duration_ms}ms traversal time"
+                )
+            else:
+                logger.debug(
+                    "Relationship traversal returned no intersection chunks or timed out, "
+                    "proceeding with existing pipeline results"
+                )
+
+        return chunks, source_mappings, traversal_result
 
     async def _retrieve_direct_chunks(
         self, concept_matches: List[Dict[str, Any]]
@@ -566,6 +630,19 @@ class KGRetrievalService:
             if not concept_id:
                 continue
 
+            # Skip generic verb-derived concepts entirely for chunk
+            # retrieval.  They fan out to many irrelevant chunks and
+            # don't contribute to coverage_bonus (which only counts
+            # specific concepts).  This dramatically reduces Neo4j
+            # queries and prevents timeouts on verb-heavy queries.
+            is_specific = not is_generic_concept(concept_name)
+            if not is_specific and concept.get("match_type") == "semantic":
+                logger.debug(
+                    f"Skipping generic concept '{concept_name}' "
+                    f"for chunk retrieval"
+                )
+                continue
+
             # Check cache first (Requirement 8.2)
             cached_entry = self._get_cached_source_chunks(concept_id)
 
@@ -577,6 +654,30 @@ class KGRetrievalService:
                 self._cache_misses += 1
                 # Query Neo4j for chunk IDs via EXTRACTED_FROM traversal (Requirement 6.1)
                 concept_chunk_ids = await self._query_chunk_ids_for_concept(concept_id)
+
+                # Name expansion for SPECIFIC concepts only: also retrieve
+                # chunks from sibling concepts with the same name but
+                # different concept_ids (e.g., "Chelsea" as PERSON vs ORG
+                # vs CODE_TERM all link to different chunks).
+                if is_specific and concept_name and self._neo4j_client:
+                    try:
+                        sibling_chunks = await self._query_chunks_by_concept_name(
+                            concept_name, exclude_concept_id=concept_id
+                        )
+                        if sibling_chunks:
+                            before = len(concept_chunk_ids)
+                            existing = set(concept_chunk_ids)
+                            for cid in sibling_chunks:
+                                if cid not in existing:
+                                    concept_chunk_ids.append(cid)
+                                    existing.add(cid)
+                            if len(concept_chunk_ids) > before:
+                                logger.info(
+                                    f"Name expansion for '{concept_name}': "
+                                    f"{before} → {len(concept_chunk_ids)} chunks"
+                                )
+                    except Exception as e:
+                        logger.debug(f"Name expansion failed for '{concept_name}': {e}")
 
                 # Cache the result (stores chunk ID lists directly from graph traversal)
                 self._cache_source_chunks(concept_id, concept_name, concept_chunk_ids)
@@ -645,14 +746,60 @@ class KGRetrievalService:
             logger.warning(f"Error querying chunk IDs for concept {concept_id}: {e}")
             return []
 
+    async def _query_chunks_by_concept_name(
+        self, concept_name: str, exclude_concept_id: str = ""
+    ) -> List[str]:
+        """Query Neo4j for chunk IDs from sibling concepts with the same name.
+
+        When the KG has multiple concepts named "Chelsea" (PERSON, ORG,
+        CODE_TERM), the semantic vector search returns only one.  This
+        method finds chunks linked to the OTHER concepts with the same
+        name so they are treated as direct chunks (not related).
+
+        Args:
+            concept_name: The concept name to look up.
+            exclude_concept_id: Concept ID to exclude (already queried).
+
+        Returns:
+            List of chunk IDs from sibling concepts.
+        """
+        if not self._neo4j_client:
+            return []
+
+        try:
+            cypher = """
+            MATCH (c:Concept)-[:EXTRACTED_FROM]->(ch:Chunk)
+            WHERE c.name = $name
+              AND c.concept_id <> $exclude_id
+              AND NOT c.type IN ['PERSON']
+            RETURN DISTINCT ch.chunk_id AS chunk_id
+            """
+            results = await with_timeout(
+                self._neo4j_client.execute_query(
+                    cypher,
+                    {"name": concept_name, "exclude_id": exclude_concept_id},
+                ),
+                self._query_timeout,
+            )
+            return [
+                r["chunk_id"]
+                for r in (results or [])
+                if r.get("chunk_id")
+            ]
+        except Exception as e:
+            logger.debug(
+                f"Sibling concept query failed for '{concept_name}': {e}"
+            )
+            return []
+
     async def _retrieve_related_chunks(
         self, concept_matches: List[Dict[str, Any]]
     ) -> Tuple[Set[str], Dict[str, ChunkSourceMapping]]:
         """
         Retrieve chunks from related concepts via relationship traversal.
 
-        Traverses relationships up to max_hops to find related concepts
-        and collects their chunk IDs via EXTRACTED_FROM traversal.
+        Runs all concept traversals concurrently via asyncio.gather for
+        performance — total time ≈ slowest single concept, not the sum.
 
         Args:
             concept_matches: List of matched concepts from query decomposition
@@ -669,11 +816,12 @@ class KGRetrievalService:
             logger.debug("No Neo4j client available for relationship traversal")
             return chunk_ids, source_mappings
 
+        # Build list of (concept_meta, coroutine) for concurrent execution
+        tasks: list = []
+        task_meta: list = []
         for concept in concept_matches:
             concept_id = concept.get("concept_id", "")
             concept_name = concept.get("name", "")
-            # Carry the parent concept's similarity score so we can
-            # prioritize related chunks from higher-scoring concepts
             if concept.get("match_type") == "semantic":
                 parent_score = float(concept.get("similarity_score", 0.0))
             else:
@@ -682,38 +830,46 @@ class KGRetrievalService:
             if not concept_id:
                 continue
 
-            try:
-                # Query for related concepts within max_hops
-                related_concepts = await self._query_related_concepts(
-                    concept_id, concept_name
-                )
+            # Skip generic concepts for relationship traversal —
+            # they fan out to thousands of related chunks via hops.
+            if is_generic_concept(concept_name) and concept.get("match_type") == "semantic":
+                continue
 
-                for related in related_concepts:
-                    related_id = related.get("concept_id", "")
-                    related_name = related.get("name", "")
-                    hop_distance = related.get("hop_distance", 1)
-                    relationship_path = related.get("relationship_path", [])
-                    # chunk_ids come directly as a list from EXTRACTED_FROM traversal
-                    related_chunk_ids = related.get("chunk_ids", [])
+            tasks.append(self._query_related_concepts(concept_id, concept_name))
+            task_meta.append((concept_id, concept_name, parent_score))
 
-                    for chunk_id in related_chunk_ids:
-                        if chunk_id and chunk_id not in chunk_ids:
-                            chunk_ids.add(chunk_id)
-                            source_mappings[chunk_id] = ChunkSourceMapping(
-                                chunk_id=chunk_id,
-                                source_concept_id=related_id,
-                                source_concept_name=related_name,
-                                retrieval_source=RetrievalSource.RELATED_CONCEPT,
-                                relationship_path=relationship_path,
-                                hop_distance=hop_distance,
-                                match_score=parent_score,
-                            )
+        if not tasks:
+            return chunk_ids, source_mappings
 
-            except Exception as e:
+        # Run all traversals concurrently; individual failures return []
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for (concept_id, concept_name, parent_score), result in zip(task_meta, results):
+            if isinstance(result, Exception):
                 logger.warning(
-                    f"Error traversing relationships for concept {concept_name}: {e}"
+                    f"Error traversing relationships for concept {concept_name}: {result}"
                 )
                 continue
+
+            for related in result:
+                related_id = related.get("concept_id", "")
+                related_name = related.get("name", "")
+                hop_distance = related.get("hop_distance", 1)
+                relationship_path = related.get("relationship_path", [])
+                related_chunk_ids = related.get("chunk_ids", [])
+
+                for chunk_id in related_chunk_ids:
+                    if chunk_id and chunk_id not in chunk_ids:
+                        chunk_ids.add(chunk_id)
+                        source_mappings[chunk_id] = ChunkSourceMapping(
+                            chunk_id=chunk_id,
+                            source_concept_id=related_id,
+                            source_concept_name=related_name,
+                            retrieval_source=RetrievalSource.RELATED_CONCEPT,
+                            relationship_path=relationship_path,
+                            hop_distance=hop_distance,
+                            match_score=parent_score,
+                        )
 
         logger.debug(f"Found {len(chunk_ids)} chunks from related concepts")
         return chunk_ids, source_mappings
@@ -863,7 +1019,16 @@ class KGRetrievalService:
                         re.sub(r'[^a-z0-9\s]', '', h["concept_name"].lower()).strip()
                         for h in hits
                     }
-                    num_concepts = len(distinct_names)
+                    # Only count specific (non-generic) concepts for the
+                    # coverage bonus.  Generic verb-derived concepts like
+                    # "we observe" or "we saw" should not inflate the bonus.
+                    # Fallback: if ALL concepts are generic, treat as a
+                    # single concept (bonus = 0) to avoid inflating scores.
+                    specific_names = {
+                        name for name in distinct_names
+                        if not is_generic_concept(name)
+                    }
+                    num_concepts = len(specific_names) if specific_names else 1
                     # log2(1)=0, log2(2)=1, log2(3)=1.58, log2(4)=2
                     coverage_bonus = math.log2(max(1, num_concepts)) * 0.1
                     chunk.kg_relevance_score = min(1.0, base_score + coverage_bonus)
@@ -904,6 +1069,58 @@ class KGRetrievalService:
             f"(capped related: {related_count}/{len(related_chunks)})"
         )
         return aggregated
+
+    def _apply_relationship_boost(
+        self,
+        chunks: List[RetrievedChunk],
+        traversal_result: TraversalResult,
+        boost_factor: float,
+    ) -> List[RetrievedChunk]:
+        """
+        Apply relationship boost to intersection chunks.
+
+        For each chunk reachable from >= 2 query concepts via relationship
+        paths, multiply its kg_relevance_score by a scaled boost factor
+        and cap at 1.0.
+
+        Scaling formula:
+            scaled_boost = boost_factor * (1 + 0.1 * (num_concepts - 2))
+            - 2 concepts: boost_factor * 1.0
+            - 3 concepts: boost_factor * 1.1
+            - 4 concepts: boost_factor * 1.2
+
+        When boost_factor is 1.0, scores remain unchanged (identity).
+
+        Args:
+            chunks: List of retrieved chunks from aggregation
+            traversal_result: Result from RelationshipTraverser.traverse()
+            boost_factor: Base boost multiplier for intersection chunks
+
+        Returns:
+            Modified chunk list with boosted scores on intersection chunks
+
+        Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 8.4
+        """
+        intersection_ids = traversal_result.intersection_chunk_ids
+
+        if not intersection_ids:
+            return chunks
+
+        boosted_count = 0
+        for chunk in chunks:
+            if chunk.chunk_id in intersection_ids:
+                num_concepts = traversal_result.concept_count_for_chunk(chunk.chunk_id)
+                scaled_boost = boost_factor * (1 + 0.1 * (num_concepts - 2))
+                chunk.kg_relevance_score = min(1.0, chunk.kg_relevance_score * scaled_boost)
+                chunk.metadata["relationship_boost_applied"] = scaled_boost
+                chunk.metadata["connecting_concept_count"] = num_concepts
+                boosted_count += 1
+
+        logger.debug(
+            f"Applied relationship boost to {boosted_count}/{len(chunks)} chunks "
+            f"(boost_factor={boost_factor}, intersection_chunks={len(intersection_ids)})"
+        )
+        return chunks
 
     async def _augment_with_semantic(
         self,
@@ -956,9 +1173,9 @@ class KGRetrievalService:
                         chunk_id=chunk_id,
                         content=content,
                         source=RetrievalSource.SEMANTIC_AUGMENT,
-                        kg_relevance_score=0.5,  # Default for augmented chunks
+                        kg_relevance_score=0.3,  # Low KG score for augmented chunks — they weren't found via KG
                         semantic_score=similarity_score,
-                        final_score=similarity_score,
+                        final_score=similarity_score * 0.6,  # Discount augmented chunks so KG-found chunks rank higher
                         metadata=result.get("metadata", {}),
                     )
                     augmented_chunks.append(augmented_chunk)
@@ -1316,6 +1533,7 @@ class KGRetrievalService:
         """
         self._neo4j_client = client
         self._query_decomposer.set_neo4j_client(client)
+        self._relationship_traverser.set_neo4j_client(client)
         logger.debug("Neo4j client set on KGRetrievalService")
 
     def set_vector_client(self, client: Any) -> None:

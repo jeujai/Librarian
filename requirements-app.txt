@@ -32,6 +32,9 @@ nltk>=3.8.0,<4.0.0
 # NLP — spaCy sm model for NER-based relevance detection
 spacy>=3.7.0,<3.9.0
 
+# scispaCy for biomedical NER (Layer 2 — Scientific)
+scispacy>=0.5.0,<0.6.0
+
 # Database dependencies
 psycopg2-binary==2.9.9
 asyncpg==0.29.0
