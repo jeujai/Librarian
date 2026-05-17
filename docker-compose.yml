@@ -95,6 +95,10 @@ services:
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
 
+      # DeepSeek API (temporarily replaces Gemini for chat)
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - DEEPSEEK_MODEL=deepseek-v4-flash
+
       # File storage - MinIO (S3-compatible) for local development
       - MINIO_ENDPOINT=http://minio:9000
       - MINIO_ACCESS_KEY=minioadmin
@@ -372,7 +376,7 @@ services:
       options:
         max-size: "100m"
         max-file: "3"
-    command: [ "celery", "-A", "src.multimodal_librarian.services.celery_service", "worker", "--loglevel=info", "--queues=document_processing,pdf_processing,chunking,vector_storage,knowledge_graph,enrichment" ]
+    command: [ "celery", "-A", "src.multimodal_librarian.services.celery_service", "worker", "--loglevel=info", "--queues=document_processing,pdf_processing,chunking,vector_storage,knowledge_graph,enrichment,ml_training" ]
     environment:
       # Celery broker configuration
       - CELERY_BROKER_URL=redis://redis:6379/0
@@ -438,6 +442,15 @@ services:
       - OLLAMA_TIMEOUT=120.0
       - OLLAMA_NUM_PARALLEL=14
       - BRIDGE_GENERATION_PROVIDER=ollama
+
+      # Ollama model for ML training data & eval generation (RAG gold answers)
+      - OLLAMA_TRAINING_MODEL=mistral-nemo:12b
+      - OLLAMA_TRAINING_TIMEOUT=180.0
+      - RAG_TRAINING_CONCURRENCY=4
+
+      # DeepSeek API for high-quality training data generation
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - DEEPSEEK_MODEL=deepseek-v4-flash
 
       # External APIs (for Gemini fallback)
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}

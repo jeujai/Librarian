@@ -1,14 +1,26 @@
 # Multimodal Librarian
 
+[![Python](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Docker](https://img.shields.io/badge/docker-compose-2496ED?logo=docker&logoColor=white)](https://docs.docker.com/compose/)
+
 A conversational web-based knowledge management system that processes PDF books with multimodal content, stores them in a unified vector database, and enables conversational queries with multimedia output generation.
+
+![Chat interface showing clinical question with cited sources](docs/screenshots/ChatInterface.jpg)
 
 ## Features
 
 - **Multimodal PDF Processing**: Extract text, images, charts, and metadata from PDF files
+
+![Document upload interface](docs/screenshots/DocumentUploaded.jpg)
+
 - **Generic Multi-Level Chunking Framework**: Automated content profiling and adaptive chunking strategies
 - **Unified Knowledge Management**: Treat books and conversations as equivalent knowledge sources
 - **Conversational Interface**: Multimedia chat interface with real-time interactions
 - **Knowledge Graph Integration**: Concept extraction and multi-hop reasoning capabilities
+
+![Knowledge graph visualization showing concept nodes and relationships](docs/screenshots/KnowledgeGraphVisualization.jpg)
+
 - **Multimedia Output Generation**: Generate text, charts, audio, and video responses
 - **Multi-Format Export**: Export to .txt, .docx, .pdf, .rtf, .pptx, and .xlsx formats
 - **ML Training APIs**: Streaming access to knowledge chunks for reinforcement learning
@@ -75,6 +87,10 @@ The system follows a microservices approach with the following components:
 - **Model Server**: Dedicated service for ML model inference (embeddings, NLP)
 - **PDF Processing Component**: Extracts multimodal content from PDF files
 - **Multi-Level Chunking Framework**: Adaptive chunking with smart bridge generation
+
+![Document processing pipeline with quality gate](docs/screenshots/ProcessingView.jpg)
+
+- **Vector Database Component**: Unified storage for all knowledge sources
 - **Vector Database Component**: Unified storage for all knowledge sources
 - **Conversation Management**: Real-time chat with knowledge integration
 - **Knowledge Graph Builder**: Concept extraction and relationship discovery
@@ -119,7 +135,7 @@ async def chat(
 | WebSocket | `get_connection_manager`, `get_connection_manager_with_services` |
 
 For detailed documentation, see:
-- [DI Steering Guide](.kiro/steering/dependency-injection.md)
+- [DI Steering Guide](openspec/project/dependency-injection.md)
 - [Adding New Services](docs/architecture/adding-new-services-with-di.md)
 
 ### Model Server
@@ -201,12 +217,7 @@ cp .env.example .env
 # Edit .env with your configuration
 ```
 
-5. Initialize the database:
-```bash
-# TODO: Add database initialization commands
-```
-
-6. Run the application:
+5. Run the application:
 ```bash
 python -m multimodal_librarian.main
 ```
@@ -234,13 +245,13 @@ python -m multimodal_librarian.main
    ```bash
    make dev-local
    # Or manually:
-   docker-compose -f docker-compose.local.yml up -d
+   docker compose up -d
    ```
 
 3. **Verify setup**:
    ```bash
    # Check all services are running
-   docker-compose -f docker-compose.local.yml ps
+   docker compose ps
    
    # Validate PostgreSQL setup
    python database/postgresql/validate_setup.py
@@ -321,8 +332,8 @@ Common issues and solutions:
 
 1. **Services won't start**:
    ```bash
-   docker-compose -f docker-compose.local.yml down -v
-   docker-compose -f docker-compose.local.yml up -d
+   docker compose down -v
+   docker compose up -d
    ```
 
 2. **Database connection issues**:
@@ -427,12 +438,9 @@ Once the application is running, visit:
 
 ## Contributing
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests for new functionality
-5. Ensure all tests pass
-6. Submit a pull request
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development workflow, commit conventions, and pull request guidelines.
+
+This project follows a [Contributor Covenant](CODE_OF_CONDUCT.md) code of conduct. Security issues should be reported as described in [SECURITY.md](SECURITY.md).
 
 ## License
 
