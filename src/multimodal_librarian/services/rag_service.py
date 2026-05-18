@@ -696,6 +696,7 @@ class RAGService:
         # Relevance detection (Requirements 4.1, 4.2, 4.4)
         self.relevance_detector = relevance_detector
         self._last_relevance_verdict = None
+        self._last_kg_explanation: Optional[str] = None
 
         # Retrieval result cache: ensures identical queries return
         # identical citation lists within a session.  Keyed by
@@ -740,8 +741,9 @@ class RAGService:
         """
         start_time = time.time()
         
-        # Reset cached relevance verdict for this request (Req 4.6)
+        # Reset cached state for this request
         self._last_relevance_verdict = None
+        self._last_kg_explanation = None
         
         try:
             # Step 1: Process and enhance query with knowledge graph
@@ -831,12 +833,17 @@ class RAGService:
             
             # Remove internal-only decomposition object before metadata goes to response
             kg_metadata.pop('_decomposition', None)
-            
+
+            # Inject clinical reasoning gloss from KG retrieval into prompt metadata
+            if self._last_kg_explanation:
+                kg_metadata['kg_explanation'] = self._last_kg_explanation
+            self._last_kg_explanation = None
+
             # Step 3: Prepare context from search results
             context, citations = self.context_preparer.prepare_context(
                 search_results, query
             )
-            
+
             # Step 4: Generate AI response
             if context and citations:
                 # Generate document-aware response with KG context
@@ -995,13 +1002,16 @@ class RAGService:
         start_time = time.time()
         cumulative_content = ""
         cumulative_tokens = 0
-        
+
+        # Reset cached state for this request
+        self._last_kg_explanation = None
+
         try:
             # Step 1: Process and enhance query with knowledge graph
             processed_query, related_concepts, kg_metadata = await self.query_processor.process_query(
                 query, conversation_context
             )
-            
+
             # Step 1b: If the LLM classified this as not needing retrieval,
             # skip search entirely and go straight to fallback response.
             if kg_metadata.get('skip_retrieval'):
@@ -1168,12 +1178,17 @@ class RAGService:
             
             # Remove internal-only decomposition object before metadata goes to response
             kg_metadata.pop('_decomposition', None)
-            
+
+            # Inject clinical reasoning gloss from KG retrieval into prompt metadata
+            if self._last_kg_explanation:
+                kg_metadata['kg_explanation'] = self._last_kg_explanation
+            self._last_kg_explanation = None
+
             # Step 3: Prepare context from search results
             context, citations = self.context_preparer.prepare_context(
                 search_results, query
             )
-            
+
             # Step 4: Yield first chunk with citations
             yield RAGStreamingChunk(
                 content="",
@@ -1502,6 +1517,8 @@ Instructions:
                         f"KG-guided retrieval returned {len(kg_result.chunks)} chunks "
                         f"in {kg_result.retrieval_time_ms}ms"
                     )
+                    # Surface clinical reasoning gloss for prompt injection
+                    self._last_kg_explanation = kg_result.metadata.get("kg_explanation")
                     chunks = self._convert_kg_results(kg_result)
 
                     if document_filter:

@@ -34,6 +34,7 @@ from ..components.kg_retrieval import (
     RelationshipTraverser,
     SemanticReranker,
 )
+from ..components.kg_retrieval.chain_synthesizer import ChainSynthesizer
 from ..components.kg_retrieval.query_decomposer import is_generic_concept
 from ..models.kg_retrieval import (
     ChunkSourceMapping,
@@ -206,15 +207,16 @@ class KGRetrievalService:
         self._chunk_resolver = ChunkResolver(vector_client=vector_client)
         self._semantic_reranker = SemanticReranker(model_client=model_client)
         self._explanation_generator = ExplanationGenerator()
+        self._chain_synthesizer = ChainSynthesizer()
 
         # Initialize relationship traverser with config settings
         from ..config import get_settings
         _settings = get_settings()
         self._relationship_traverser = RelationshipTraverser(
             neo4j_client=neo4j_client,
-            hop_limit=_settings.relationship_hop_limit,
-            timeout_seconds=_settings.relationship_traversal_timeout,
-            max_paths_per_pair=_settings.relationship_max_paths_per_pair,
+            hop_limit=getattr(_settings, 'relationship_hop_limit', 2),
+            timeout_seconds=getattr(_settings, 'relationship_traversal_timeout', 3.0),
+            max_paths_per_pair=getattr(_settings, 'relationship_max_paths_per_pair', 50),
         )
 
         # Cache for source_chunks (Requirement 8.2)
@@ -405,6 +407,19 @@ class KGRetrievalService:
                     f"{traversal_result.total_paths_found} paths, "
                     f"{len(traversal_result.intersection_chunk_ids)} intersection chunks"
                 )
+
+                # Synthesize clinical reasoning gloss from UMLS path annotations
+                if traversal_result.path_annotations:
+                    concept_id_to_name = {
+                        m.get("concept_id", ""): m.get("concept_name", "")
+                        for m in decomposition.concept_matches
+                    }
+                    gloss = self._chain_synthesizer.synthesize(
+                        traversal_result.path_annotations,
+                        concept_id_to_name,
+                    )
+                    if gloss:
+                        result_metadata["kg_explanation"] = gloss
             else:
                 result_metadata["relationship_aware_activated"] = False
 
@@ -568,7 +583,8 @@ class KGRetrievalService:
                 from ..config import get_settings
                 _settings = get_settings()
                 chunks = self._apply_relationship_boost(
-                    chunks, traversal_result, _settings.relationship_boost
+                    chunks, traversal_result,
+                    getattr(_settings, 'relationship_boost', 1.0)
                 )
                 logger.debug(
                     f"Relationship-aware boost applied: "
