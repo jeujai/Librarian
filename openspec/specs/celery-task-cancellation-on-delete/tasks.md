@@ -1,0 +1,125 @@
+# Implementation Plan
+
+- [x] 1. Write bug condition exploration test
+  - **Property 1: Bug Condition** - Active Task Escapes Cancellation on Delete
+  - **CRITICAL**: This test MUST FAIL on unfixed code — failure confirms the bug exists
+  - **DO NOT attempt to fix the test or the code when it fails**
+  - **NOTE**: This test encodes the expected behavior — it will validate the fix when it passes after implementation
+  - **GOAL**: Surface counterexamples that demonstrate the four sub-conditions allowing task escape
+  - **Scoped PBT Approach**: Scope the property to concrete failing cases using Hypothesis strategies for job states with active tasks
+  - Write a property-based test in `tests/services/test_celery_cancellation_bug.py` using Hypothesis
+  - Generate inputs where `isBugCondition` holds: job exists with `status IN ['pending', 'running']` AND one of:
+    - `task_id` is `None` (race window) — assert `cancel_job()` still attempts cancellation or signals fallback
+    - `revoke()` raises an exception — assert error propagates (not swallowed by `delete_document_completely()`)
+    - `AsyncResult.status` returns non-terminal state after `revoke()` — assert system detects task still running
+  - Mock `get_job_status()`, `celery_app.control.revoke()`, and `AsyncResult` to reproduce each sub-condition
+  - Expected behavior assertions (from design):
+    - `cancel_job()` with `task_id=None` and `status='pending'` should poll for `task_id` or signal fallback (NOT silently return `True`)
+    - `delete_document_completely()` should record cancellation errors in `results['errors']` (NOT swallow them)
+    - `cancel_job()` should verify post-revoke task state via `AsyncResult.status` polling
+  - Run test on UNFIXED code
+  - **EXPECTED OUTCOME**: Test FAILS (this is correct — it proves the bug exists)
+  - Document counterexamples found:
+    - e.g., `cancel_job(doc_id)` returns `True` with `task_id=None` and no revocation occurred
+    - e.g., `delete_document_completely(doc_id)` returns `success=True` after `cancel_processing()` raised `ConnectionError`
+  - Mark task complete when test is written, run, and failure is documented
+  - _Requirements: 1.1, 1.2, 1.3, 1.4_
+
+- [x] 2. Write preservation property tests (BEFORE implementing fix)
+  - **Property 2: Preservation** - Non-Active-Task Deletions Unchanged
+  - **IMPORTANT**: Follow observation-first methodology
+  - Write property-based tests in `tests/services/test_celery_cancellation_preservation.py` using Hypothesis
+  - **Step 1 — Observe behavior on UNFIXED code** for non-buggy inputs (where `isBugCondition` returns false):
+    - Observe: `delete_document_completely(doc_id)` with no `processing_jobs` row → all stores cleaned up, `success=True`
+    - Observe: `delete_document_completely(doc_id)` with `job.status='completed'` → deletion succeeds, no revocation attempted
+    - Observe: `delete_document_completely(doc_id)` with `job.status='failed'` → deletion succeeds, no revocation attempted
+    - Observe: `delete_document_completely(doc_id)` for conversation document (`source_type='CONVERSATION'`) → thread archived, CASCADE delete succeeds
+    - Observe: `_check_document_deleted(doc_id)` for existing document → does NOT raise `DocumentDeletedError`
+  - **Step 2 — Write property-based tests** capturing observed behavior patterns:
+    - Generate random document states using Hypothesis: `st.sampled_from([None, 'completed', 'failed'])` for job status, `st.sampled_from(['PDF', 'CONVERSATION'])` for source type
+    - Property: for all non-active-task documents, `delete_document_completely()` produces `success=True` with all stores cleaned up
+    - Property: for all non-active-task documents, `cancel_processing()` is either not called or is a no-op (no revocation attempted)
+    - Property: `_check_document_deleted()` does not raise for documents that still exist in `knowledge_sources`
+  - Mock `upload_service.delete_document()`, Milvus, Neo4j, and PostgreSQL cleanup methods
+  - Run tests on UNFIXED code
+  - **EXPECTED OUTCOME**: Tests PASS (this confirms baseline behavior to preserve)
+  - Mark task complete when tests are written, run, and passing on unfixed code
+  - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5_
+
+- [x] 3. Fix for Celery task cancellation on document delete
+
+  - [x] 3.1 Update `cancel_job()` in `celery_service.py` to handle NULL `task_id` with polling
+    - In `cancel_job()`, when `task_id` is `None` but `job_status['status']` is `'pending'` or `'running'`, poll `get_job_status()` up to 3 times with 1s sleep between retries waiting for `task_id` to appear
+    - If `task_id` appears during polling, proceed with `revoke()`
+    - If `task_id` never appears after retries, log a warning and rely on `_check_document_deleted()` fallback — return `True` with a note that fallback is in effect
+    - _Bug_Condition: isBugCondition(input) where job.task_id IS NULL AND job.status IN ['pending', 'running']_
+    - _Expected_Behavior: System polls for task_id or signals fallback to _check_document_deleted() safety net_
+    - _Preservation: Non-active-task deletions skip this path entirely (task_id check only runs for active jobs)_
+    - _Requirements: 2.1_
+
+  - [x] 3.2 Update `cancel_job()` to propagate revocation errors
+    - Replace the `except Exception as e: return False` block with error propagation
+    - Define a `CancellationError` exception class in `celery_service.py`
+    - When `celery_app.control.revoke()` raises (e.g., `redis.ConnectionError`, timeout), catch the exception, log it with full context, and re-raise as `CancellationError`
+    - _Bug_Condition: revokeWouldFail(job.task_id) — broker unreachable or revoke timeout_
+    - _Expected_Behavior: Exception propagates to caller so cancellation failure is not silently ignored_
+    - _Preservation: Successful revocations are unaffected — error path only triggers on actual failures_
+    - _Requirements: 2.2_
+
+  - [x] 3.3 Add post-revoke verification in `cancel_job()` using `AsyncResult.status` polling
+    - After calling `revoke(terminate=True)`, poll `AsyncResult(task_id).status` for up to 5 seconds (e.g., 5 retries, 1s apart)
+    - Check for terminal states: `REVOKED`, `FAILURE`, `SUCCESS`
+    - If task reaches terminal state, log success and proceed
+    - If task does NOT reach terminal state after polling, log a warning but still proceed — the `_check_document_deleted()` fallback will catch it at the next pipeline checkpoint
+    - _Bug_Condition: NOT taskActuallyStopped(job.task_id) — revoke sent but task still running_
+    - _Expected_Behavior: System verifies task state after revoke; warns if task hasn't stopped but relies on fallback_
+    - _Preservation: Already-completed tasks will show terminal state immediately — no delay_
+    - _Requirements: 2.4_
+
+  - [x] 3.4 Replace `except: pass` in `delete_document_completely()` with proper error handling
+    - In `document_manager.py`, replace the bare `try/except Exception: pass` around `cancel_processing()` with:
+      - Catch `CancellationError` (and `Exception` as fallback)
+      - Log the error as a warning with `logger.warning()`
+      - Append the error message to `results['errors']`
+      - Record the `task_id` in results if available (for monitoring/retry)
+      - Do NOT silently discard the error
+    - _Bug_Condition: cancel_processing() raises but error is swallowed_
+    - _Expected_Behavior: Error is logged and recorded in results['errors']_
+    - _Preservation: When cancel_processing() succeeds, this code path is not entered_
+    - _Requirements: 2.2_
+
+  - [x] 3.5 Reorder `delete_document_completely()` so cancellation happens before CASCADE delete
+    - Move the `cancel_processing()` call (with its new error handling from 3.4) to execute BEFORE `upload_service.delete_document()` (step 3 in the current flow)
+    - This ensures the `processing_jobs` row (with `task_id`) is still available during cancellation
+    - The existing `_check_document_deleted()` calls in each pipeline stage serve as the safety net — once `knowledge_sources` is deleted after cancellation, any in-flight task self-terminates at its next checkpoint
+    - Current order: cancel → Milvus → Neo4j → MinIO/PostgreSQL (cancel is already first, but verify it stays before the CASCADE)
+    - _Bug_Condition: cascadeDeletesJobBeforeRetry(input) — task_id lost before revocation_
+    - _Expected_Behavior: Revocation completes (or fallback is confirmed) before CASCADE fires_
+    - _Preservation: Non-active-task deletions follow the same store cleanup order (Milvus → Neo4j → MinIO → PostgreSQL)_
+    - _Requirements: 2.3_
+
+  - [x] 3.6 Verify bug condition exploration test now passes
+    - **Property 1: Expected Behavior** - Active Task Is Cancelled Before Data Cleanup
+    - **IMPORTANT**: Re-run the SAME test from task 1 — do NOT write a new test
+    - The test from task 1 encodes the expected behavior for all bug condition inputs
+    - When this test passes, it confirms:
+      - `cancel_job()` polls for `task_id` when it's `NULL` (or signals fallback)
+      - `delete_document_completely()` records cancellation errors (not swallowed)
+      - `cancel_job()` verifies post-revoke task state
+    - Run bug condition exploration test from step 1
+    - **EXPECTED OUTCOME**: Test PASSES (confirms bug is fixed)
+    - _Requirements: 2.1, 2.2, 2.3, 2.4_
+
+  - [x] 3.7 Verify preservation tests still pass
+    - **Property 2: Preservation** - Non-Active-Task Deletions Unchanged
+    - **IMPORTANT**: Re-run the SAME tests from task 2 — do NOT write new tests
+    - Run preservation property tests from step 2
+    - **EXPECTED OUTCOME**: Tests PASS (confirms no regressions)
+    - Confirm all non-active-task deletion paths produce identical results to unfixed code
+    - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5_
+
+- [x] 4. Checkpoint — Ensure all tests pass
+  - Run the full test suite: `pytest tests/services/test_celery_cancellation_bug.py tests/services/test_celery_cancellation_preservation.py -v`
+  - Ensure all property-based tests pass (both bug condition and preservation)
+  - Run existing project tests to verify no regressions: `pytest tests/ -v --ignore=tests/integration --ignore=tests/performance`
+  - Ask the user if questions arise

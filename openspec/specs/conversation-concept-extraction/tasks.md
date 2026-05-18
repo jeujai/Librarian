@@ -1,0 +1,104 @@
+# Implementation Plan
+
+- [x] 1. Write bug condition exploration test
+  - **Property 1: Bug Condition** - Conversation Lifecycle Events Never Trigger Concept Extraction
+  - **CRITICAL**: This test MUST FAIL on unfixed code - failure confirms the bug exists
+  - **DO NOT attempt to fix the test or the code when it fails**
+  - **NOTE**: This test encodes the expected behavior - it will validate the fix when it passes after implementation
+  - **GOAL**: Surface counterexamples that demonstrate concept extraction is never automatically triggered
+  - **Scoped PBT Approach**: Scope the property to concrete failing cases:
+    - Case A: `unified_interface.js` `clearChat()` with active conversation that has messages → assert `_convertCurrentConversation()` is called (it won't be — method doesn't exist in unified_interface.js)
+    - Case B: `POST /api/v1/conversations/start` with a `previous_thread_id` param referencing a thread with messages → assert `convert_conversation` is triggered in background (it won't be — param doesn't exist, no DI wiring)
+  - **Backend test**: Mock `ConversationKnowledgeService` and `ConversationManager`, call `start_conversation` endpoint with a `previous_thread_id` field, assert `convert_conversation` was scheduled as a background task. On unfixed code, the endpoint ignores `previous_thread_id` entirely and never calls the service.
+  - **Frontend test**: Parse `unified_interface.js` `clearChat()` method body and assert it contains a call to `_convertCurrentConversation()`. On unfixed code, the method simply clears UI state and starts a new conversation without any conversion call.
+  - Run tests on UNFIXED code
+  - **EXPECTED OUTCOME**: Tests FAIL (this is correct - it proves the bug exists)
+  - Document counterexamples found:
+    - `unified_interface.js` `clearChat()` never calls `_convertCurrentConversation()` — method doesn't exist on the class
+    - `start_conversation` endpoint has no `previous_thread_id` parameter and no `ConversationKnowledgeService` dependency
+    - `add_message_to_conversation` endpoint never schedules concept extraction
+  - Mark task complete when tests are written, run, and failure is documented
+  - _Requirements: 1.1, 1.2, 1.3, 1.4, 2.1, 2.2, 2.3_
+
+- [x] 2. Write preservation property tests (BEFORE implementing fix)
+  - **Property 2: Preservation** - Existing Convert-to-Knowledge, Empty Conversations, Idempotent Re-ingestion, and Document Pipeline Unchanged
+  - **IMPORTANT**: Follow observation-first methodology
+  - **Step 1 — Observe on UNFIXED code:**
+    - Observe: `POST /api/conversations/{thread_id}/convert-to-knowledge` on a thread with messages returns `ConvertToKnowledgeResponse` with accurate `chunks_created`, `vectors_stored`, `concepts_extracted` counts and 200 status
+    - Observe: `POST /api/conversations/{thread_id}/convert-to-knowledge` on a thread with 0 messages returns zero counts (`chunks_created=0`, `vectors_stored=0`, `concepts_extracted=0`) and no errors
+    - Observe: Converting the same thread twice cleans up existing data first (calls `_cleanup_existing`) and produces idempotent result with no duplicate concepts or vectors
+    - Observe: `chat.js` `clearChat()` fires `_convertCurrentConversation()` when `this.messageHistory.length > 0 && this.currentThreadId` is truthy
+    - Observe: Document processing pipeline (non-conversation knowledge sources) is unaffected — the `conversations.py` router changes do not touch document upload/processing endpoints
+  - **Step 2 — Write property-based tests capturing observed behavior:**
+    - Property: For all valid thread IDs with messages, explicit `POST /{thread_id}/convert-to-knowledge` returns 200 with `ConvertToKnowledgeResponse` containing non-negative integer counts
+    - Property: For all thread IDs with zero messages, explicit convert returns zero counts without errors
+    - Property: For all thread IDs converted twice in sequence, the second conversion produces the same counts as the first (idempotent after cleanup)
+    - Property: `chat.js` `clearChat()` source contains `_convertCurrentConversation()` call guarded by message count check
+    - Property: Document processing endpoints (`POST /api/v1/documents/upload`, etc.) are not modified by conversation extraction changes
+  - **Step 3 — Verify tests PASS on UNFIXED code**
+  - Mark task complete when tests are written, run, and passing on unfixed code
+  - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5_
+
+- [x] 3. Fix for automatic concept extraction on conversation lifecycle events
+
+  - [x] 3.1 Add `get_conversation_knowledge_service_optional` to DI layer
+    - Create `get_conversation_knowledge_service_optional()` in `src/multimodal_librarian/api/dependencies/services.py`
+    - Returns `None` instead of raising HTTPException 503 when initialization fails
+    - Follows the same pattern as `get_ai_service_optional`, `get_opensearch_client_optional`, etc.
+    - Export from `src/multimodal_librarian/api/dependencies/__init__.py`
+    - _Bug_Condition: conversations router currently has no access to ConversationKnowledgeService_
+    - _Expected_Behavior: optional DI variant enables graceful degradation — if knowledge service is unavailable, conversation endpoints still work normally_
+    - _Preservation: existing `get_conversation_knowledge_service` (non-optional, raises 503) must remain unchanged_
+    - _Requirements: 2.1, 2.2, 2.3_
+
+  - [x] 3.2 Add `previous_thread_id` to `StartConversationRequest` and wire background conversion in `start_conversation`
+    - Add `previous_thread_id: Optional[str] = None` field to `StartConversationRequest` in `src/multimodal_librarian/api/models_legacy.py`
+    - In `start_conversation` endpoint (`src/multimodal_librarian/api/routers/conversations.py`):
+      - Add `BackgroundTasks` parameter
+      - Add `knowledge_service = Depends(get_conversation_knowledge_service_optional)` parameter
+      - After creating the new thread, if `request.previous_thread_id` is provided AND `knowledge_service` is not None, verify the previous thread exists and has messages, then schedule `knowledge_service.convert_conversation(previous_thread_id)` as a `background_tasks.add_task()` fire-and-forget call
+      - If `knowledge_service` is None, log a warning and skip conversion (graceful degradation)
+    - _Bug_Condition: `isBugCondition(event)` where `event.type == "start_conversation" AND event.previousThreadId IS NOT NULL AND NOT convertConversationCalled(event.previousThreadId)`_
+    - _Expected_Behavior: `convert_conversation` is scheduled as background task for previous thread when `previous_thread_id` is provided_
+    - _Preservation: when `previous_thread_id` is not provided (existing callers), behavior is identical to before — no conversion triggered, same response model and status codes_
+    - _Requirements: 1.1, 1.2, 2.1, 2.2, 3.1, 3.3_
+
+  - [x] 3.3 Add `_convertCurrentConversation()` to `unified_interface.js` and call it from `clearChat()`
+    - Add `_convertCurrentConversation()` method to the UnifiedInterface class in `src/multimodal_librarian/static/js/unified_interface.js`
+    - Implementation mirrors `chat.js` `_convertCurrentConversation()`: calls `POST /api/conversations/${threadId}/convert-to-knowledge` with a generated title
+    - Add `_generateDocumentTitle()` helper if not already present
+    - In `clearChat()`, BEFORE clearing `this.messageHistory` and `this.currentThreadId`, add: `if (this.messageHistory.length > 0 && this.currentThreadId) { this._convertCurrentConversation(); }`
+    - Fire-and-forget pattern — do not await, catch errors with `.catch()` and log
+    - _Bug_Condition: `isBugCondition(event)` where `event.type == "clear_chat" AND event.source == "unified_interface.js" AND event.previousThread.messageCount > 0`_
+    - _Expected_Behavior: `_convertCurrentConversation()` is called before clearing state, triggering concept extraction for the outgoing conversation_
+    - _Preservation: `chat.js` `clearChat()` and `_convertCurrentConversation()` must remain unchanged_
+    - _Requirements: 1.3, 2.3, 3.2_
+
+  - [x] 3.4 Verify bug condition exploration test now passes
+    - **Property 1: Expected Behavior** - Conversation Lifecycle Events Trigger Concept Extraction
+    - **IMPORTANT**: Re-run the SAME test from task 1 - do NOT write a new test
+    - The test from task 1 encodes the expected behavior
+    - When this test passes, it confirms:
+      - `unified_interface.js` `clearChat()` now calls `_convertCurrentConversation()` before clearing state
+      - `start_conversation` endpoint triggers background `convert_conversation` when `previous_thread_id` is provided
+    - Run bug condition exploration test from step 1
+    - **EXPECTED OUTCOME**: Test PASSES (confirms bug is fixed)
+    - _Requirements: 2.1, 2.2, 2.3, 2.4_
+
+  - [x] 3.5 Verify preservation tests still pass
+    - **Property 2: Preservation** - Existing Behavior Unchanged After Fix
+    - **IMPORTANT**: Re-run the SAME tests from task 2 - do NOT write new tests
+    - Run preservation property tests from step 2
+    - **EXPECTED OUTCOME**: Tests PASS (confirms no regressions)
+    - Confirm: explicit convert-to-knowledge endpoint returns same response model and counts
+    - Confirm: empty conversations still return zero counts without errors
+    - Confirm: re-ingestion still idempotent after cleanup
+    - Confirm: `chat.js` `clearChat()` still fires `_convertCurrentConversation()` correctly
+    - Confirm: document processing pipeline completely unaffected
+
+- [x] 4. Checkpoint - Ensure all tests pass
+  - Run full test suite to verify no regressions
+  - Verify bug condition exploration test (task 1) passes after fix
+  - Verify preservation property tests (task 2) still pass after fix
+  - Ensure all existing tests in `tests/` continue to pass
+  - Ask the user if questions arise
