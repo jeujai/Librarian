@@ -108,8 +108,8 @@ The raw UMLS path annotations (`"metformin --[may_treat]--> Type 2 Diabetes --[i
 
 ```
 Clinical reasoning paths found between query concepts:
-- Diabetes Mellitus ↔ Polyuria: Polyuria presents with Diabetes Mellitus
-- Diabetes Mellitus ↔ Metformin: metformin may treat Type 2 Diabetes, which is a type of Diabetes Mellitus
+- Diabetes Mellitus <-> Polyuria: Polyuria presents with Diabetes Mellitus
+- Diabetes Mellitus <-> Metformin: metformin may treat Type 2 Diabetes, which is a type of Diabetes Mellitus
 ```
 
 This gloss flows into the LLM system prompt via a `KNOWLEDGE GRAPH INSIGHTS` slot — giving the model explicit clinical relationship context before it reads the retrieved document chunks. UMLS relationship types are mapped to readable phrases: `has_manifestation` becomes "presents with", `may_treat` becomes "may treat", `isa` becomes "is a type of".
