@@ -1,0 +1,28 @@
+schema: spec-driven
+
+context: |
+  Multimodal Librarian is a production-grade conversational knowledge management system.
+  It enables users to upload PDF books with multimodal content to a vector store,
+  allowing queries against the collective knowledge base with multimedia output generation.
+
+  Architecture: FastAPI async microservices, AWS-native databases (Neptune, OpenSearch, RDS PostgreSQL),
+  ECS Fargate deployment via Terraform. Supporting: Neo4j (local KG), Milvus (local vector DB),
+  Redis (caching/locks), Celery (async tasks).
+
+  Key capabilities:
+  - Multimodal PDF processing with OCR, text extraction, image/chart handling
+  - Adaptive multi-level chunking with smart bridge generation
+  - Knowledge graph extraction (NER + LLM) and concept resolution
+  - Vector search with cross-encoder reranking and relationship-aware retrieval
+  - Conversational AI with WebSocket streaming, chat history, and document Q&A
+  - Analytics dashboard with telemetry, document management, and job tracking
+  - JWT authentication with AWS KMS and Secrets Manager
+
+rules:
+  proposal:
+    - "Must include security considerations for AWS infrastructure"
+    - "Must reference relevant user stories from openspec/specs/"
+  specs:
+    - "Must use SHALL/MUST keyword in every requirement"
+    - "Must include GIVEN/WHEN/THEN scenarios for acceptance criteria"
+    - "Must validate against correctness properties defined in design.md"
