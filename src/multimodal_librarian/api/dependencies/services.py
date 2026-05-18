@@ -220,6 +220,11 @@ _query_decomposer: Optional["QueryDecomposer"] = None
 _relevance_detector: Optional["RelevanceDetector"] = None
 
 # =============================================================================
+# NER_Extractor cached instance
+# =============================================================================
+_ner_extractor: Optional["NER_Extractor"] = None
+
+# =============================================================================
 # Source Prioritization Engine cached instance
 # =============================================================================
 _source_prioritization_engine: Optional["SourcePrioritizationEngine"] = None
@@ -1563,12 +1568,84 @@ async def get_kg_retrieval_service_optional(
 
 
 # =============================================================================
+# NER_Extractor Dependencies
+# =============================================================================
+
+async def get_ner_extractor(
+    umls_client: Optional[Any] = Depends(get_umls_client_optional),
+) -> Optional["NER_Extractor"]:
+    """
+    FastAPI dependency for NER_Extractor.
+
+    Lazily creates and caches the NER_Extractor with:
+    - en_core_web_sm for Layer 1 (Base)
+    - en_core_sci_sm for Layer 2 (Scientific)
+    - Optional UMLSClient for Layer 3 (Medical Precision)
+
+    Each model loads independently — failure of one does not
+    prevent the others from loading.
+
+    Args:
+        umls_client: Optional UMLS client for Layer 3 refinement (injected)
+
+    Returns:
+        NER_Extractor instance (may have None for failed models).
+
+    Validates: Requirements 7.1, 6.1, 6.2, 6.6
+    """
+    global _ner_extractor
+
+    if _ner_extractor is not None:
+        return _ner_extractor
+
+    from ...components.kg_retrieval.ner_extractor import NER_Extractor
+
+    # Load en_core_web_sm (Layer 1) — independent
+    spacy_web_nlp = None
+    try:
+        import spacy
+        spacy_web_nlp = spacy.load("en_core_web_sm")
+        logger.info("Layer 1: en_core_web_sm loaded for NER_Extractor")
+    except Exception as web_err:
+        logger.warning(
+            "Layer 1: en_core_web_sm unavailable (%s), Layer 1 disabled",
+            web_err,
+        )
+
+    # Load en_core_sci_sm (Layer 2) — independent
+    spacy_sci_nlp = None
+    try:
+        import spacy
+        spacy_sci_nlp = spacy.load("en_core_sci_sm")
+        logger.info("Layer 2: en_core_sci_sm loaded for NER_Extractor")
+    except Exception as sci_err:
+        logger.warning(
+            "Layer 2: en_core_sci_sm unavailable (%s), Layer 2 disabled",
+            sci_err,
+        )
+
+    if spacy_web_nlp is None and spacy_sci_nlp is None:
+        logger.error(
+            "Both en_core_web_sm and en_core_sci_sm failed to load. "
+            "Only UMLS Layer 3 available (if configured)."
+        )
+
+    _ner_extractor = NER_Extractor(
+        spacy_web_nlp=spacy_web_nlp,
+        spacy_sci_nlp=spacy_sci_nlp,
+        umls_client=umls_client,
+    )
+    return _ner_extractor
+
+
+# =============================================================================
 # QueryDecomposer Dependencies
 # =============================================================================
 
 async def get_query_decomposer_optional(
     graph_client: Optional["GraphStoreClient"] = Depends(get_graph_client_optional),
-    model_client: Optional["ModelServerClient"] = Depends(get_model_server_client_optional)
+    model_client: Optional["ModelServerClient"] = Depends(get_model_server_client_optional),
+    ner_extractor: Optional["NER_Extractor"] = Depends(get_ner_extractor),
 ) -> Optional["QueryDecomposer"]:
     """
     Optional QueryDecomposer dependency - returns None if unavailable.
@@ -1581,11 +1658,12 @@ async def get_query_decomposer_optional(
     Args:
         graph_client: Optional graph client for Neo4j concept lookups (injected)
         model_client: Optional model server client for embedding generation (injected)
+        ner_extractor: Optional NER_Extractor for entity-aware query tokenization (injected)
 
     Returns:
         QueryDecomposer instance or None if unavailable
 
-    Validates: Requirements 2.4, 2.5
+    Validates: Requirements 2.4, 2.5, 8.1
     """
     global _query_decomposer
 
@@ -1597,7 +1675,8 @@ async def get_query_decomposer_optional(
 
             _query_decomposer = QueryDecomposer(
                 neo4j_client=graph_client,
-                model_server_client=model_client
+                model_server_client=model_client,
+                ner_extractor=ner_extractor,
             )
 
             logger.info("QueryDecomposer initialized successfully via DI")
@@ -1618,7 +1697,9 @@ async def get_query_decomposer_optional(
 # RelevanceDetector Dependencies
 # =============================================================================
 
-async def get_relevance_detector() -> "RelevanceDetector":
+async def get_relevance_detector(
+    ner_extractor: Optional["NER_Extractor"] = Depends(get_ner_extractor),
+) -> "RelevanceDetector":
     """
     FastAPI dependency for RelevanceDetector.
 
@@ -1626,8 +1707,13 @@ async def get_relevance_detector() -> "RelevanceDetector":
     Reads spread, variance, and specificity thresholds from application
     settings (environment-overridable via Pydantic config).
 
-    Loads spaCy en_core_web_sm for NER-based proper-noun extraction
-    used by the query term coverage signal.
+    Uses the NER_Extractor's ``spacy_web_nlp`` model for backward-compatible
+    NER-based proper-noun extraction, and passes the full NER_Extractor
+    for three-layer concurrent extraction in ``filter_chunks_by_proper_nouns``.
+
+    Args:
+        ner_extractor: Optional NER_Extractor with pre-loaded spaCy models
+                      and optional UMLS client (injected via DI).
 
     Returns:
         RelevanceDetector instance
@@ -1635,7 +1721,7 @@ async def get_relevance_detector() -> "RelevanceDetector":
     Raises:
         HTTPException: If initialization fails (503 Service Unavailable)
 
-    Validates: Requirements 6.1, 6.2, 6.3
+    Validates: Requirements 6.1, 6.2, 6.3, 7.1
     """
     global _relevance_detector
 
@@ -1646,21 +1732,36 @@ async def get_relevance_detector() -> "RelevanceDetector":
         try:
             settings = get_settings()
 
-            # Load spaCy model for NER (proper-noun extraction)
+            # Use NER_Extractor's web model for backward compatibility;
+            # fall back to loading en_core_web_sm directly if NER_Extractor
+            # is unavailable.
             spacy_nlp = None
-            try:
-                import spacy
-                spacy_nlp = spacy.load("en_core_web_sm")
-                logger.info(
-                    "spaCy en_core_web_sm loaded for "
-                    "RelevanceDetector NER"
-                )
-            except Exception as spacy_err:
-                logger.warning(
-                    "spaCy model unavailable, query term "
-                    "coverage signal disabled: %s",
-                    spacy_err,
-                )
+            if ner_extractor is not None:
+                spacy_nlp = ner_extractor.spacy_web_nlp
+                if spacy_nlp is not None:
+                    logger.info(
+                        "RelevanceDetector using NER_Extractor's "
+                        "en_core_web_sm model"
+                    )
+                else:
+                    logger.warning(
+                        "NER_Extractor has no en_core_web_sm model, "
+                        "query term coverage signal may be limited"
+                    )
+            else:
+                try:
+                    import spacy
+                    spacy_nlp = spacy.load("en_core_web_sm")
+                    logger.info(
+                        "spaCy en_core_web_sm loaded directly for "
+                        "RelevanceDetector NER (NER_Extractor unavailable)"
+                    )
+                except Exception as spacy_err:
+                    logger.warning(
+                        "spaCy model unavailable, query term "
+                        "coverage signal disabled: %s",
+                        spacy_err,
+                    )
 
             logger.info(
                 "Initializing RelevanceDetector via DI (lazy)"
@@ -1674,6 +1775,7 @@ async def get_relevance_detector() -> "RelevanceDetector":
                 medical_threshold=settings.adaptive_medical_threshold,
                 legal_threshold=settings.adaptive_legal_threshold,
                 small_query_noun_limit=settings.adaptive_small_query_noun_limit,
+                ner_extractor=ner_extractor,
             )
             logger.info(
                 "RelevanceDetector initialized successfully via DI"
@@ -2731,6 +2833,7 @@ def clear_all_caches():
     global _umls_client
     global _status_report_service
     global _active_jobs_dispatcher
+    global _ner_extractor
     
     # Disconnect OpenSearch if connected
     if _opensearch_client is not None:
@@ -2781,6 +2884,9 @@ def clear_all_caches():
     
     # Clear QueryDecomposer cache
     _query_decomposer = None
+    
+    # Clear NER_Extractor cache
+    _ner_extractor = None
     
     # Clear component-level caches
     _vector_store_cache = None

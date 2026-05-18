@@ -309,8 +309,13 @@ def analyze_query_term_coverage(
     medical_threshold: float = 0.95,
     legal_threshold: float = 0.90,
     small_query_noun_limit: int = 2,
+    ner_key_terms: Optional[set] = None,
 ) -> QueryTermCoverageResult:
     """Check if the query's proper nouns are covered in results.
+
+    When ``ner_key_terms`` is provided (from NER_Extractor), uses
+    those terms directly for coverage analysis.  Otherwise falls
+    back to inline spaCy NER extraction.
 
     Uses spaCy NER to extract named entities (proper nouns) from
     the query, then applies a two-level coverage check:
@@ -351,19 +356,36 @@ def analyze_query_term_coverage(
         legal_threshold: Minimum threshold for legal domain.
         small_query_noun_limit: Noun count at or below which
             100 % coverage is required.
+        ner_key_terms: Pre-computed key terms from NER_Extractor.
+            When provided, bypasses inline spaCy extraction.
 
     Returns:
         QueryTermCoverageResult with proper nouns found,
         which are covered/uncovered, and whether a gap exists.
     """
-    if spacy_nlp is None or not query:
+    if not query:
         return QueryTermCoverageResult()
 
-    doc = spacy_nlp(query)
-    # Extract unique entity texts from spaCy NER
-    proper_nouns = list({
-        ent.text for ent in doc.ents
-    })
+    # --- Key term extraction ---
+    if ner_key_terms is not None:
+        # Use pre-computed NER_Extractor key terms
+        proper_nouns = sorted(ner_key_terms)
+    elif spacy_nlp is not None:
+        doc = spacy_nlp(query)
+        # Extract unique entity texts from spaCy NER, filtering out
+        # age descriptors (e.g., "72-year-old") and numeric patterns
+        # that spaCy sometimes misidentifies as named entities.
+        import re as _re
+        _age_pattern = _re.compile(r'^\d+-year-old$', _re.IGNORECASE)
+        _numeric_pattern = _re.compile(r'^\d+[\d\s.,%/:-]*$')
+        proper_nouns = list({
+            ent.text for ent in doc.ents
+            if not _age_pattern.match(ent.text.strip())
+            and not _numeric_pattern.match(ent.text.strip())
+            and ent.label_ not in ('CARDINAL', 'ORDINAL', 'QUANTITY', 'DATE', 'TIME', 'PERCENT', 'MONEY')
+        })
+    else:
+        return QueryTermCoverageResult()
 
     if not proper_nouns:
         return QueryTermCoverageResult()
@@ -439,19 +461,25 @@ def analyze_query_term_coverage(
     key_nouns: List[str] = []
     has_cooccurrence_gap = False
 
-    propn_tokens = {
-        t.text for t in doc if t.pos_ == "PROPN"
-    }
-    # Add capitalized NOUN tokens from noun chunks that
-    # look like proper-noun-like terms (e.g. "President")
-    for nc in doc.noun_chunks:
-        for tok in nc:
-            if (
-                tok.pos_ == "NOUN"
-                and tok.text[0].isupper()
-                and len(tok.text) > 2
-            ):
-                propn_tokens.add(tok.text)
+    if ner_key_terms is not None:
+        # When NER_Extractor key terms are provided, they already
+        # include PROPN and capitalized NOUN tokens from all layers.
+        # Use them directly for co-occurrence analysis.
+        propn_tokens = set(ner_key_terms)
+    else:
+        propn_tokens = {
+            t.text for t in doc if t.pos_ == "PROPN"
+        }
+        # Add capitalized NOUN tokens from noun chunks that
+        # look like proper-noun-like terms (e.g. "President")
+        for nc in doc.noun_chunks:
+            for tok in nc:
+                if (
+                    tok.pos_ == "NOUN"
+                    and tok.text[0].isupper()
+                    and len(tok.text) > 2
+                ):
+                    propn_tokens.add(tok.text)
 
     if len(propn_tokens) >= 2 and chunk_contents_lower:
         key_nouns = sorted(propn_tokens)
@@ -545,6 +573,7 @@ class RelevanceDetector:
         medical_threshold: float = 0.95,
         legal_threshold: float = 0.90,
         small_query_noun_limit: int = 2,
+        ner_extractor: Optional[Any] = None,
     ) -> None:
         self.spread_threshold = spread_threshold
         self.variance_threshold = variance_threshold
@@ -554,13 +583,15 @@ class RelevanceDetector:
         self.medical_threshold = medical_threshold
         self.legal_threshold = legal_threshold
         self.small_query_noun_limit = small_query_noun_limit
+        self.ner_extractor = ner_extractor
 
         logger.info(
             "RelevanceDetector initialised — "
             "spread=%.4f, variance=%.5f, "
             "specificity=%.2f, spacy=%s, "
             "adaptive_floor=%.2f, medical=%.2f, "
-            "legal=%.2f, small_noun_limit=%d",
+            "legal=%.2f, small_noun_limit=%d, "
+            "ner_extractor=%s",
             spread_threshold,
             variance_threshold,
             specificity_threshold,
@@ -569,6 +600,7 @@ class RelevanceDetector:
             medical_threshold,
             legal_threshold,
             small_query_noun_limit,
+            "available" if ner_extractor else "None",
         )
 
     def _detect_domain(self, query: str) -> Optional[str]:
@@ -589,7 +621,7 @@ class RelevanceDetector:
                 return domain
         return None
 
-    def evaluate(
+    async def evaluate(
         self,
         chunks: List[RetrievedChunk],
         query_decomposition: QueryDecomposition,
@@ -621,6 +653,15 @@ class RelevanceDetector:
             query_decomposition.concept_matches,
             self.specificity_threshold,
         )
+
+        # Pre-compute NER key terms if extractor is available
+        ner_key_terms = None
+        if self.ner_extractor is not None:
+            ner_result = await self.ner_extractor.extract_key_terms(
+                query_decomposition.original_query
+            )
+            ner_key_terms = ner_result.key_terms
+
         term_cov = analyze_query_term_coverage(
             query_decomposition.original_query,
             query_decomposition.concept_matches,
@@ -633,6 +674,7 @@ class RelevanceDetector:
             medical_threshold=self.medical_threshold,
             legal_threshold=self.legal_threshold,
             small_query_noun_limit=self.small_query_noun_limit,
+            ner_key_terms=ner_key_terms,
         )
 
         # Count how many signals fired
@@ -732,7 +774,7 @@ class RelevanceDetector:
             reasoning=reasoning,
         )
 
-    def filter_chunks_by_proper_nouns(
+    async def filter_chunks_by_proper_nouns(
         self,
         chunks: List[RetrievedChunk],
         query: str,
@@ -742,9 +784,10 @@ class RelevanceDetector:
         contains the query's proper nouns, using a three-tier
         strategy.
 
-        Uses spaCy NER to extract named entities from *query*,
-        then does a case-insensitive substring match against
-        each chunk's ``content``.
+        When an NER_Extractor is available, uses its three-layer
+        concurrent extraction (en_core_web_sm + en_core_sci_sm +
+        UMLS) for improved key term identification.  Falls back
+        to inline spaCy extraction when NER_Extractor is None.
 
         Three-tier filter:
         1. Prefer chunks containing ALL key terms.
@@ -761,34 +804,21 @@ class RelevanceDetector:
             - query has no proper nouns
             - filtered set is empty (fall back to unfiltered)
 
-        Requirements: 5.1, 5.2, 5.3, 7.1, 7.3, 7.4, 7.6, 7.7, 7.9
+        Requirements: 5.1, 5.2, 5.3, 7.1, 7.2, 7.3, 7.4, 7.6, 7.7, 7.9
         """
-        if self.spacy_nlp is None or not query:
+        if not query:
             return None
 
-        doc = self.spacy_nlp(query)
-
-        # Collect key terms from both NER entities and noun chunks.
-        # doc.ents gives named entities ("Venezuela").
-        # doc.noun_chunks gives noun phrases ("the President"),
-        # from which we extract only PROPN tokens and
-        # capitalized NOUN tokens (title-like words such as
-        # "President", "Minister") — NOT generic lowercase
-        # nouns like "developments" or "current".
-        key_terms: set = set()
-        for ent in doc.ents:
-            key_terms.add(ent.text)
-
-        for nc in doc.noun_chunks:
-            for tok in nc:
-                if tok.pos_ == "PROPN" and len(tok.text) > 2:
-                    key_terms.add(tok.text)
-                elif (
-                    tok.pos_ == "NOUN"
-                    and tok.text[0].isupper()
-                    and len(tok.text) > 2
-                ):
-                    key_terms.add(tok.text)
+        # --- Key term extraction ---
+        if self.ner_extractor is not None:
+            # Three-layer NER extraction (web + sci + UMLS)
+            ner_result = await self.ner_extractor.extract_key_terms(query)
+            key_terms = ner_result.key_terms
+        elif self.spacy_nlp is not None:
+            # Fallback: inline spaCy extraction (original behavior)
+            key_terms = self._extract_key_terms_inline(query)
+        else:
+            return None
 
         if not key_terms:
             return None
@@ -859,3 +889,34 @@ class RelevanceDetector:
             return None
 
         return filtered
+
+    def _extract_key_terms_inline(self, query: str) -> set:
+        """Fallback inline spaCy extraction (original behavior).
+
+        Used when NER_Extractor is not available.  Extracts named
+        entities and PROPN/capitalized-NOUN tokens from noun chunks
+        using the pre-loaded ``self.spacy_nlp`` model.
+        """
+        doc = self.spacy_nlp(query)
+        key_terms: set = set()
+        import re as _re
+        _age_pat = _re.compile(r'^\d+-year-old$', _re.IGNORECASE)
+        _num_pat = _re.compile(r'^\d+[\d\s.,%/:-]*$')
+        for ent in doc.ents:
+            if (not _age_pat.match(ent.text.strip())
+                    and not _num_pat.match(ent.text.strip())
+                    and ent.label_ not in ('CARDINAL', 'ORDINAL', 'QUANTITY', 'DATE', 'TIME', 'PERCENT', 'MONEY')):
+                key_terms.add(ent.text)
+
+        for nc in doc.noun_chunks:
+            for tok in nc:
+                if tok.pos_ == "PROPN" and len(tok.text) > 2:
+                    key_terms.add(tok.text)
+                elif (
+                    tok.pos_ == "NOUN"
+                    and tok.text[0].isupper()
+                    and len(tok.text) > 2
+                ):
+                    key_terms.add(tok.text)
+
+        return key_terms

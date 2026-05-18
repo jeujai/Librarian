@@ -11,7 +11,7 @@ Requirements: 1.1, 1.3, 3.5, 5.4
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 # =============================================================================
 # Enums
@@ -347,9 +347,9 @@ class SourceChunksCacheEntry:
 @dataclass
 class ChunkSourceMapping:
     """Maps chunk IDs to their source concepts and retrieval paths.
-    
+
     Used to track the provenance of each chunk during the retrieval process.
-    
+
     Validates: Requirements 1.1, 2.1, 3.5
     """
     chunk_id: str
@@ -359,7 +359,7 @@ class ChunkSourceMapping:
     relationship_path: Optional[List[str]] = None
     hop_distance: int = 0
     match_score: float = 1.0  # Concept match score from fulltext search
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
@@ -371,7 +371,7 @@ class ChunkSourceMapping:
             'hop_distance': self.hop_distance,
             'match_score': self.match_score,
         }
-    
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'ChunkSourceMapping':
         """Create from dictionary for JSON deserialization."""
@@ -384,7 +384,7 @@ class ChunkSourceMapping:
             hop_distance=data.get('hop_distance', 0),
             match_score=data.get('match_score', 1.0),
         )
-    
+
     def validate(self) -> bool:
         """Validate chunk source mapping data."""
         if not self.chunk_id or not self.source_concept_id or not self.source_concept_name:
@@ -392,7 +392,7 @@ class ChunkSourceMapping:
         if self.hop_distance < 0:
             return False
         return True
-    
+
     def get_relevance_score(self, decay_factor: float = 0.5) -> float:
         """Calculate relevance score based on hop distance.
 
@@ -408,6 +408,51 @@ class ChunkSourceMapping:
         if self.hop_distance == 0:
             return 1.0
         return decay_factor ** self.hop_distance
+
+
+# =============================================================================
+# Relationship-Aware Retrieval Models
+# =============================================================================
+
+@dataclass
+class TraversalResult:
+    """Result of inter-concept relationship traversal.
+
+    Captures the mapping of chunk IDs to the set of query concepts that
+    reach them via relationship paths, along with traversal metadata.
+
+    Used by RelationshipTraverser to communicate which chunks sit at the
+    intersection of multiple query concepts in the knowledge graph.
+
+    Requirements: 3.1, 3.2
+    """
+    # Maps chunk_id -> set of concept_ids that connect to it via paths
+    chunk_concept_connections: Dict[str, Set[str]] = field(default_factory=dict)
+    # Total relationship paths found across all concept pairs
+    total_paths_found: int = 0
+    # Traversal duration in milliseconds
+    traversal_duration_ms: int = 0
+    # Whether traversal completed without timeout
+    completed: bool = True
+    # UMLS path annotations for clinical reasoning gloss synthesis
+    path_annotations: List[Dict[str, Any]] = field(default_factory=list)
+
+    @property
+    def intersection_chunk_ids(self) -> Set[str]:
+        """Chunk IDs reachable from >= 2 query concepts via relationship paths."""
+        return {
+            cid for cid, concepts in self.chunk_concept_connections.items()
+            if len(concepts) >= 2
+        }
+
+    def concept_count_for_chunk(self, chunk_id: str) -> int:
+        """Number of distinct query concepts connecting to a chunk."""
+        return len(self.chunk_concept_connections.get(chunk_id, set()))
+
+    @staticmethod
+    def empty() -> 'TraversalResult':
+        """Return an empty result for fallback/timeout cases."""
+        return TraversalResult(completed=False)
 
 
 # =============================================================================

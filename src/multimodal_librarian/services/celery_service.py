@@ -1209,6 +1209,10 @@ def finalize_processing_task(parallel_results, document_id: str):
         asyncio.run(_update_document_status_sync(
             UUID(document_id), DocumentStatus.COMPLETED
         ))
+        asyncio.run(_update_job_status_sync(
+            UUID(document_id), 'completed', 100.0,
+            'Processing completed successfully'
+        ))
         
         # Send detailed completion notification via WebSocket
         # Requirements: 3.3

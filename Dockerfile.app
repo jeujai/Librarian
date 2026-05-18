@@ -42,6 +42,10 @@ RUN python -c "import nltk; nltk.download('punkt'); nltk.download('stopwords'); 
 # Download spaCy sm model for NER-based relevance detection
 RUN python -m spacy download en_core_web_sm
 
+# Install scispaCy and biomedical NER model for Layer 2 scientific entity extraction
+RUN pip install "scispacy>=0.5.0,<0.6.0" && \
+    pip install https://s3-us-west-2.amazonaws.com/ai2-s2-scispacy/releases/v0.5.4/en_core_sci_sm-0.5.4.tar.gz
+
 # Create necessary directories
 RUN mkdir -p uploads media exports logs audit_logs \
     .cache/matplotlib \
