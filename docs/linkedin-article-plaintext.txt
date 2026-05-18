@@ -1,0 +1,187 @@
+Building Librarian: A Knowledge Graph-Powered RAG System for Medical and Scientific Literature
+
+How I built a conversational knowledge management system that processes medical textbooks, understands their concepts through a 7-million-node knowledge graph, and answers clinical questions with cited sources.
+
+
+Introduction
+
+Over the past several months, I've been building Librarian — a conversational knowledge management system that processes PDF documents (medical textbooks, clinical guidelines, AI/ML references) and makes their content queryable through an intelligent chat interface.
+
+It's not a wrapper around an LLM. It's a full retrieval pipeline with a knowledge graph containing 7.1 million nodes and 35.3 million relationships, a vector store with 356,000 embeddings, vision-based OCR, and domain-aware entity recognition across three concurrent NER layers.
+
+This article walks through the architecture and methodology, from the first spec forward.
+
+
+Adaptive Chunking with Bridge Generation
+
+The first design decision was how to split documents into searchable pieces. Standard fixed-size chunking loses context at boundaries — a paragraph about drug interactions gets cut in half, and neither half makes sense alone.
+
+The Librarian uses a multi-level adaptive chunking framework. It automatically profiles each document using Wikidata entity classification and ConceptNet relationship patterns to determine the content domain (medical, legal, technical, narrative). Based on that profile, it generates domain-specific chunking configurations: where to split, how large chunks should be, and what content must stay together.
+
+When chunks are split at conceptual boundaries, the system runs a gap analysis measuring semantic distance, concept overlap, and cross-reference density between adjacent chunks. If the gap is significant, it generates a bridge chunk using Llama 3.2 3B via Ollama — a short passage that preserves the conceptual thread between the two chunks. Each bridge is validated using cross-encoding models for semantic relevance and factual consistency. Failed bridges fall back to intelligent mechanical overlap with sentence-boundary awareness.
+
+This approach produces 356,000+ searchable chunks across the current document library, each with preserved context and domain-aware boundaries.
+
+
+The Knowledge Graph: Neo4j at Scale
+
+Every document chunk gets concept extraction. Entities, relationships, and domain-specific terms are extracted and stored as nodes and edges in a Neo4j knowledge graph. Each concept node maintains EXTRACTED_FROM pointers back to the specific chunks it came from — 11.9 million of these edges connect concepts to their source material.
+
+Current graph statistics:
+
+Total nodes: 7,122,796
+Total relationships: 35,327,488
+Document-extracted concepts: 755,450
+Chunk nodes: 183,801
+EXTRACTED_FROM edges: 11,903,379
+
+The graph is enriched with three external knowledge bases:
+
+Wikidata (391,706 entities) provides entity disambiguation and ontological classification. When the system extracts "Chelsea" from a document, Wikidata helps determine whether it's a football club, a neighborhood, or a person — each linking to different chunks.
+
+ConceptNet (1,787,373 concepts, 3.4M+ relationships) provides cross-document relationship discovery. Concepts like "neural network" and "deep learning" are connected through semantic relationships even when they appear in different documents.
+
+UMLS — Unified Medical Language System (1,612,268 concepts, 2.4M synonyms, 13.9M relationships) provides the biomedical backbone. The system can disambiguate "aspirin" to its canonical CUI (C0004057), expand queries using synonyms, validate extracted concepts against 127 semantic types, and traverse biomedical relationships (treats, causes, inhibits) for multi-hop reasoning.
+
+
+Knowledge Graph-Guided Retrieval: Beyond Vector Search
+
+Pure semantic search has a fundamental limitation: embedding models compress meaning into fixed-dimensional vectors, and precise terms (drug names, code identifiers, clinical parameters) often get diluted in the embedding space. When you upload a 10,000-page medical textbook, the vector index shifts and previously-retrievable content can fall below the similarity threshold.
+
+The Librarian solves this with a two-stage retrieval pipeline:
+
+Stage 1 — Knowledge Graph Retrieval. The system decomposes the query into concepts, matches them against Neo4j's fulltext index, retrieves chunks via direct EXTRACTED_FROM pointers, and traverses relationships to find related content. Direct chunk retrieval and relationship traversal run concurrently via asyncio.gather, keeping total latency bounded by the slowest single query rather than the sum.
+
+Stage 2 — Semantic Re-ranking. Chunk IDs from Stage 1 are resolved against the Milvus vector store and re-ranked using semantic similarity scores. This combines the precision of graph-based retrieval with the relevance ordering of vector search.
+
+Relationship-Aware Retrieval
+
+For multi-concept queries, the system traverses Neo4j edges (CAUSES, PRESENTS_WITH, TREATED_BY, and 60+ other relationship types) to find chunks at the intersection of connected concepts.
+
+A query like "hepatitis B treatment in immunocompromised patients" doesn't just find chunks mentioning hepatitis B and chunks mentioning immunocompromised patients separately — it finds chunks where those concepts are connected through clinical relationships. This is multi-hop reasoning operating over real document content, not hallucinated connections.
+
+UMLS Clinical Reasoning Paths
+
+The document-extracted concept graph captures what's in your library, but it doesn't encode formal biomedical ontology. The UMLS graph does — 13.9 million clinical relationships between 1.6 million concepts, covering isa hierarchies, treatment relationships, causative links, and clinical manifestations.
+
+The relationship traverser now bridges these two graphs. It maps document-extracted concepts to UMLS concepts via SAME_AS edges, then walks UMLS_REL edges to find clinical reasoning paths between query concepts. For a clinical query like "Patient presents with polyuria, polydipsia, unexplained weight loss, and a fasting blood glucose of 280 mg/dL. What is the diagnosis and first-line treatment?", the traverser finds:
+
+- Polyuria has_manifestation Diabetes Mellitus (1-hop UMLS path)
+- Polydipsia has_manifestation Diabetes Mellitus (1-hop UMLS path)
+- metformin may_treat Type 2 Diabetes, which isa Diabetes Mellitus (2-hop UMLS path)
+- Hyperglycemia is defined by Diabetes Mellitus (1-hop UMLS path)
+
+This isn't keyword matching — it's traversing actual clinical ontology edges. The system knows metformin treats Type 2 Diabetes because the UMLS graph encodes that relationship, and it knows Type 2 Diabetes is a form of Diabetes Mellitus through the isa hierarchy.
+
+Four-Strategy Traversal
+
+Each concept pair runs through four strategies in parallel, ordered by clinical specificity:
+
+1. UMLS 1-hop — Direct clinical relationships via SAME_AS → UMLS_REL → SAME_AS bridge
+2. UMLS 2-hop — Two-step clinical paths through an intermediate UMLS concept (e.g., drug → treats → disease → isa → parent disease)
+3. Direct inter-concept edges — Explicit named relationships between Concept nodes extracted from documents (RELATES_TO, CAUSES, TREATS, etc.)
+4. Shared EXTRACTED_FROM chunks — Two query concepts that both link to the same Chunk node via EXTRACTED_FROM edges, with no direct relationship edge between the concepts themselves: (Concept A)-[:EXTRACTED_FROM]->(Chunk)<-[:EXTRACTED_FROM]-(Concept B)
+
+Strategies 3 and 4 address different gaps. Strategy 3 fires when the document extraction pipeline explicitly created a named relationship edge between two concepts — for example, a sentence like "Hepatitis B causes liver failure" produced a CAUSES edge from the Hepatitis B node to the Liver Failure node. The relationship exists as a typed edge in the graph.
+
+Strategy 4 fires when two query concepts independently point to the same chunk but no relationship edge exists between them. For example, a textbook paragraph discusses both "polyuria" and "diabetes mellitus" in the same clinical presentation without the extraction pipeline ever creating a RELATES_TO or CAUSES edge between them. The graph structure is (polyuria)-[:EXTRACTED_FROM]->(Chunk #4521)<-[:EXTRACTED_FROM]-(diabetes_mellitus). The concepts are connected through the chunk, not through each other.
+
+This is especially important for clinical pattern recognition — symptom clusters that suggest a diagnosis often aren't stated as explicit relationships in the text. The author doesn't write "polyuria causes diabetes"; they describe the patient presentation. Strategy 4 captures the pattern regardless.
+
+The 2-hop strategy short-circuits for pairs already resolved by 1-hop, avoiding redundant queries. Each query gets an adaptive timeout budget computed from the remaining time, not a fixed equal-slice division. A total timeout with double-loop break ensures the traverser degrades gracefully rather than hanging.
+
+Of the 13.9 million UMLS_REL edges, only 35 clinically meaningful relationship types are used — isa, may_treat, cause_of, has_manifestation, and 31 others. Qualifier edges (QB type — subheading metadata like "diagnosis" and "immunology") are filtered out. Without this whitelist, 2-hop paths drown in noise.
+
+Before any UMLS strategy runs, a single cheap Neo4j pre-check determines whether any matched concept has a SAME_AS bridge to a UMLSConcept. For non-medical queries — where no concepts map to UMLS — both UMLS strategies are skipped entirely, preserving the timeout budget for document-edge and co-occurrence strategies.
+
+Chain Synthesis: Feeding Clinical Reasoning to the LLM
+
+The raw UMLS path annotations ("metformin --[may_treat]--> Type 2 Diabetes --[isa]--> Diabetes Mellitus") aren't useful to the LLM in their raw form. A ChainSynthesizer converts these path annotations into a human-readable clinical reasoning gloss:
+
+Clinical reasoning paths found between query concepts:
+- Diabetes Mellitus ↔ Polyuria: Polyuria presents with Diabetes Mellitus
+- Diabetes Mellitus ↔ Metformin: metformin may treat Type 2 Diabetes, which is a type of Diabetes Mellitus
+
+This gloss flows into the LLM system prompt via a KNOWLEDGE GRAPH INSIGHTS slot — giving the model explicit clinical relationship context before it reads the retrieved document chunks. UMLS relationship types are mapped to readable phrases: has_manifestation becomes "presents with", may_treat becomes "may treat", isa becomes "is a type of".
+
+This was the missing last mile. The traverser was collecting clinical paths but nothing was reading them. Now those paths reach the LLM.
+
+Why This Matters
+
+I encountered a concrete example of why knowledge graph retrieval is essential. A query for allow_dangerous_code=True (a LangChain parameter) was returning irrelevant results after uploading a large medical textbook. The 10,000+ new medical chunks shifted the vector index, pushing the relevant page below the similarity threshold.
+
+The knowledge graph was immune to this drift — the concept allow_dangerous_code=True existed as a node with a direct EXTRACTED_FROM edge to the correct chunk. The fix wasn't to add keyword search as a band-aid. It was to ensure the KG retrieval path completed within its timeout budget by running concept traversals concurrently instead of sequentially.
+
+
+Three-Layer NER for Scientific and Medical Queries
+
+General-purpose NER models fragment medical terminology. SpaCy's en_core_web_sm extracts "hepatitis", "B", and "surface" as separate tokens instead of recognizing "hepatitis B surface antigen" as a single entity. This fragmentation cascades through the entire retrieval pipeline — the knowledge graph gets three weak concepts instead of one precise one.
+
+The Librarian runs three NER layers concurrently via asyncio.gather:
+
+Layer 1 — Base uses spaCy's en_core_web_sm for general proper nouns: people, places, organizations, dates.
+
+Layer 2 — Scientific uses scispaCy's en_core_sci_sm, trained on biomedical corpora, for multi-word scientific terms: "hepatitis B", "surface antigen", "healthcare worker".
+
+Layer 3 — Medical Precision generates candidate n-grams from the query and batch-queries them against the 1.6 million UMLS concepts in Neo4j, returning the longest matching medical terms: "hepatitis B surface antigen".
+
+Results merge with a priority hierarchy — UMLS terms override shorter scispaCy terms when they fully contain them; scispaCy terms override shorter spaCy terms; non-overlapping terms from all layers are preserved. Each layer degrades independently. If the sci model fails to load, the other two still produce results.
+
+
+Vision OCR: Every Image Becomes Searchable Text
+
+Medical textbooks are full of tables, diagrams, clinical photographs, and charts embedded as images. Standard PDF extraction ignores them entirely. A scanned 109MB antimicrobial therapy guide produced just 1 chunk from text extraction alone.
+
+The Librarian processes every embedded image through Ollama vision models with content-aware routing:
+
+minicpm-v:8b for structured content — tables, forms, drug interaction charts.
+llama3.2-vision:11b for narrative content — clinical diagrams, anatomical illustrations.
+
+The visual interpretation (description + OCR of text within the image) is combined with the page's native text into a unified content stream before chunking. No information is lost. Vision work is scheduled through a fair-share pool manager alongside bridge generation and KG extraction tasks.
+
+
+Conversations as Knowledge
+
+Every conversation with the Librarian becomes part of the knowledge base. Conversation threads are chunked, embedded, and stored using the same pipeline as documents. Concepts extracted from conversations get added to the knowledge graph with the same EXTRACTED_FROM edges.
+
+A question you asked last week about drug interactions becomes retrievable context for a related question today. The system treats all knowledge sources — books, clinical guidelines, and conversations — with equal priority during search.
+
+
+Streaming Responses with Cited Sources
+
+Responses stream in real-time via WebSocket using Gemini 2.5 Flash. Every claim is backed by clickable source citations showing the document title, page number, relevance score, and an excerpt from the source chunk. Citations are interactive — clicking one displays the full context in a popup.
+
+The system includes relevance detection using two signals:
+
+Score distribution analysis — low variance across results indicates the query hit the semantic floor (everything scores similarly because nothing is truly relevant).
+
+Concept specificity analysis — distinguishes domain-specific terms from generic words to assess whether the knowledge graph found meaningful matches.
+
+When library results are thin, the system supplements with web search via SearXNG and clearly labels the source type. Confidence scores are adjusted downward for uncertain results so the LLM doesn't overstate its certainty.
+
+
+Production Infrastructure
+
+The system runs on Docker locally with seven services: Neo4j, Milvus, PostgreSQL, Redis, Celery workers, a dedicated ML model server, and the FastAPI application. It deploys to AWS via Terraform using Neptune (graph), OpenSearch (vector), ECS Fargate (containers), ALB (load balancing), and CloudWatch (monitoring).
+
+The ML model server runs in a separate container for independent scaling. The app container starts in 5 seconds while embedding models, spaCy models, and cross-encoders load asynchronously in the model server. This separation means code changes don't require reloading 4GB of ML models.
+
+Document processing is distributed across Celery workers with parallel bridge generation, knowledge graph extraction, and vector storage. A quality gate validates each stage — tracking LLM failure rates, NER failure rates, and bridge generation success rates — before marking a document as complete.
+
+
+What I Learned
+
+Building this system across 80+ specs reinforced several things:
+
+Vector search alone isn't enough for precise retrieval. Knowledge graphs provide the structural understanding that embeddings lack. When an embedding model can't distinguish allow_dangerous_code=True from general security content, the knowledge graph's direct concept-to-chunk pointers find the exact page.
+
+Domain-specific NER matters enormously for medical content. The difference between extracting "hepatitis B surface antigen" as one entity versus three fragments determines whether the system finds the right answer. Three concurrent NER layers with a merge hierarchy solved this.
+
+Concurrent execution is critical at scale. When your knowledge graph has 7.1 million nodes, 35.3 million relationships, and a query matches 15 concepts, sequential Neo4j traversals will timeout. Running them concurrently via asyncio.gather is the difference between a working system and a broken one.
+
+Every document upload changes the retrieval landscape. Adding 10,000 chunks from a new medical textbook shifts the vector index and can push previously-retrievable content below the similarity threshold. The knowledge graph provides a stable retrieval path that's immune to this drift.
+
+Spec-driven development works. Each feature started as a requirements document, progressed through design with formal correctness properties, and was implemented against a task list with property-based tests (Hypothesis). This methodology caught bugs that unit tests missed and made the system's behavior verifiable across all valid inputs.
+
+
+Librarian is open source. If you're working on RAG systems, medical informatics, or knowledge management, I'd welcome the conversation.
