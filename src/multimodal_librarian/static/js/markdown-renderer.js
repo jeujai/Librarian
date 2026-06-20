@@ -6,8 +6,11 @@
  * inline code, and line breaks.
  *
  * Does NOT use innerHTML for untrusted input — all text content is escaped.
+ *
+ * Version: 2025-06-10-v2 — multi-line list items, loose list support
  */
 const MarkdownRenderer = (() => {
+    console.log("[MarkdownRenderer] v2025-06-10-v3 loaded — nested list, loose list, multi-line support active");
     /**
      * Escape HTML special characters to prevent XSS.
      * @param {string} text
@@ -51,11 +54,22 @@ const MarkdownRenderer = (() => {
         let codeBlockContent = [];
         let inList = false;
         let listType = null; // 'ul' or 'ol'
+        let currentListItem = []; // accumulated lines for the current <li>
         let inTable = false;
         let tableRows = [];
+        let blankRun = 0; // consecutive blank lines (for loose list vs paragraph detection)
+
+        function flushListItem() {
+            if (currentListItem.length > 0) {
+                const parts = currentListItem.map(line => applyInlineFormatting(escapeHtml(line)));
+                htmlParts.push('<li>' + parts.join('<br>') + '</li>');
+                currentListItem = [];
+            }
+        }
 
         function closeList() {
             if (inList) {
+                flushListItem();
                 htmlParts.push(listType === 'ol' ? '</ol>' : '</ul>');
                 inList = false;
                 listType = null;
@@ -113,13 +127,18 @@ const MarkdownRenderer = (() => {
                 continue;
             }
 
-            // Blank line — close list, close table, add spacing
+            // Blank line — close table, add spacing. Lists survive blank lines
+            // because standard Markdown allows loose lists (blank lines between items).
             if (line.trim() === '') {
-                closeList();
                 closeTable();
-                // Don't add empty paragraphs for consecutive blank lines
+                blankRun++;
                 continue;
             }
+
+            // Snapshot blank run for continuation-vs-paragraph decision,
+            // then reset — every non-blank line ends a blank run.
+            const blankLinesBefore = blankRun;
+            blankRun = 0;
 
             // Headers: # H1, ## H2, ### H3
             const headerMatch = line.match(/^(#{1,4})\s+(.+)$/);
@@ -136,12 +155,19 @@ const MarkdownRenderer = (() => {
             const ulMatch = line.match(/^(\s*)[-*•]\s+(.+)$/);
             if (ulMatch) {
                 if (!inList || listType !== 'ul') {
+                    if (inList) {
+                        // Inside a different list type — treat as continuation
+                        // to avoid breaking the parent list (e.g., * bullets inside an ol)
+                        currentListItem.push(line);
+                        continue;
+                    }
                     closeList();
                     htmlParts.push('<ul>');
                     inList = true;
                     listType = 'ul';
                 }
-                htmlParts.push('<li>' + applyInlineFormatting(escapeHtml(ulMatch[2])) + '</li>');
+                flushListItem();
+                currentListItem = [ulMatch[2]];
                 continue;
             }
 
@@ -149,12 +175,47 @@ const MarkdownRenderer = (() => {
             const olMatch = line.match(/^(\s*)\d+[.)]\s+(.+)$/);
             if (olMatch) {
                 if (!inList || listType !== 'ol') {
+                    if (inList) {
+                        // Inside a different list type — treat as continuation
+                        // to avoid breaking the parent list (e.g., numbered items inside a ul)
+                        currentListItem.push(line);
+                        continue;
+                    }
                     closeList();
                     htmlParts.push('<ol>');
                     inList = true;
                     listType = 'ol';
                 }
-                htmlParts.push('<li>' + applyInlineFormatting(escapeHtml(olMatch[2])) + '</li>');
+                flushListItem();
+                currentListItem = [olMatch[2]];
+                continue;
+            }
+
+            // Continuation line inside a list item (text after the numbered/bullet line)
+            if (inList) {
+                // Two or more blank lines before this line → standalone paragraph, close list
+                if (blankLinesBefore >= 2) {
+                    closeList();
+                    htmlParts.push('<p>' + applyInlineFormatting(escapeHtml(line)) + '</p>');
+                    continue;
+                }
+                // After a blank line, a non-indented line that starts a new
+                // standalone paragraph pattern (bold header or non-continuation)
+                // is NOT a list continuation. This handles LLM output where
+                // closing paragraphs follow a numbered list with a single blank
+                // line separator.
+                if (blankLinesBefore >= 1 && line.trim() !== '') {
+                    const isIndented = line[0] === ' ' || line[0] === '\t';
+                    const isBoldHeader = /^\*\*[^*]+\*\*/.test(line.trim());
+                    // Not indented → new paragraph per CommonMark spec.
+                    // Bold header after a list → standalone paragraph (LLM pattern).
+                    if (!isIndented || isBoldHeader) {
+                        closeList();
+                        htmlParts.push('<p>' + applyInlineFormatting(escapeHtml(line)) + '</p>');
+                        continue;
+                    }
+                }
+                currentListItem.push(line);
                 continue;
             }
 

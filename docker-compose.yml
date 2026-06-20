@@ -16,7 +16,7 @@ services:
       - LOG_LEVEL=INFO
       - PRELOAD_MODELS=true
     volumes:
-      - model_cache:/root/.cache # Cache downloaded models
+      - ./data/model-cache:/root/.cache # Cache downloaded models
     restart: unless-stopped
     networks:
       - app-network
@@ -150,7 +150,7 @@ services:
       - ./test_exports:/app/test_exports
       # Mount source code for development hot reload
       - ./src:/app/src
-      - ./scripts:/app/scripts
+      # - ./scripts:/app/scripts
       - ./yago-dumps:/tmp/yago-dumps
     # Override CMD to disable reload (prevents stuck reload loops from log file changes)
     # ws-max-size set to 16GB to support large file uploads (10GB file + base64 overhead)
@@ -177,13 +177,14 @@ services:
   # PostgreSQL database for metadata and configuration
   postgres:
     image: postgres:15-alpine
+    user: "501:20"
     environment:
       - POSTGRES_DB=multimodal_librarian
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - ./data/postgres:/var/lib/postgresql/data
       - ./src/multimodal_librarian/database/init_db.sql:/docker-entrypoint-initdb.d/01_init_db.sql:ro
     ports:
       - "5432:5432"
@@ -218,6 +219,7 @@ services:
   # Milvus vector database for embeddings
   milvus:
     image: milvusdb/milvus:v2.3.4
+    user: "501:20"
     command: [ "milvus", "run", "standalone" ]
     logging:
       driver: "json-file"
@@ -240,7 +242,7 @@ services:
       - MILVUS_PROXY_MAXSHARDNUM=256
       - MILVUS_PROXY_MAXQUERYNODENUM=64
     volumes:
-      - milvus_data:/var/lib/milvus
+      - ./data/milvus:/var/lib/milvus
     ports:
       - "19530:19530"
       - "9091:9091" # Milvus web UI
@@ -264,6 +266,7 @@ services:
   # etcd for Milvus metadata
   etcd:
     image: quay.io/coreos/etcd:v3.5.5
+    user: "501:20"
     logging:
       driver: "json-file"
       options:
@@ -275,7 +278,7 @@ services:
       - ETCD_QUOTA_BACKEND_BYTES=4294967296
       - ETCD_SNAPSHOT_COUNT=50000
     volumes:
-      - etcd_data:/etcd
+      - ./data/etcd:/etcd
     command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
     ports:
       - "2379:2379"
@@ -286,11 +289,12 @@ services:
   # MinIO for Milvus object storage
   minio:
     image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    user: "501:20"
     environment:
       - MINIO_ACCESS_KEY=minioadmin
       - MINIO_SECRET_KEY=minioadmin
     volumes:
-      - minio_data:/data
+      - ./data/minio:/data
     command: minio server /data --console-address ":9001"
     ports:
       - "9000:9000"
@@ -306,7 +310,8 @@ services:
 
   # Neo4j knowledge graph database
   neo4j:
-    image: neo4j:5.14-community
+    image: neo4j:5.25-community
+    user: "501:20"
     environment:
       - NEO4J_AUTH=neo4j/password
       - NEO4J_PLUGINS=["apoc", "graph-data-science"]
@@ -314,9 +319,9 @@ services:
       - NEO4J_dbms_security_procedures_allowlist=apoc.*,gds.*
       # Memory optimization — sized for UMLS expanded vocabulary loading
       # (SNOMEDCT_US, MSH, ICD10CM, RXNORM, LNC, HPO + NDF-RT, ICD10PCS, ATC)
-      - NEO4J_dbms_memory_heap_initial__size=2G
-      - NEO4J_dbms_memory_heap_max__size=6G
-      - NEO4J_dbms_memory_pagecache_size=3G
+      - NEO4J_dbms_memory_heap_initial__size=512M
+      - NEO4J_dbms_memory_heap_max__size=2G
+      - NEO4J_dbms_memory_pagecache_size=512M
       # Query optimization
       - NEO4J_dbms_query__cache__size=1000
       - NEO4J_cypher_min__replan__interval=10s
@@ -332,8 +337,8 @@ services:
       - NEO4J_dbms_logs_query_enabled=OFF
       - NEO4J_gds_enterprise_license_file=
     volumes:
-      - neo4j_data:/data
-      - neo4j_logs:/logs
+      - ./data/neo4j:/data
+      - ./data/neo4j-logs:/logs
     ports:
       - "7474:7474" # HTTP
       - "7687:7687" # Bolt
@@ -343,17 +348,18 @@ services:
     healthcheck:
       test: [ "CMD", "cypher-shell", "-u", "neo4j", "-p", "password", "RETURN 1" ]
       interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
+      timeout: 60s
+      retries: 5
+      start_period: 180s
 
   # Redis for caching and session management (optional)
   redis:
     image: redis:7-alpine
+    user: "501:20"
     command: >
       redis-server  --appendonly yes  --maxmemory 512mb  --maxmemory-policy allkeys-lru --tcp-keepalive 300 --timeout 0 --tcp-backlog 511 --save "" --io-threads 2 --io-threads-do-reads yes
     volumes:
-      - redis_data:/data
+      - ./data/redis:/data
     ports:
       - "6379:6379"
     restart: unless-stopped
@@ -504,6 +510,7 @@ services:
   # Nginx reverse proxy for production (optional)
   nginx:
     image: nginx:alpine
+    user: "501:20"
     ports:
       - "80:80"
       - "443:443"
@@ -518,23 +525,6 @@ services:
     profiles:
       - production
 
-volumes:
-  postgres_data:
-    driver: local
-  milvus_data:
-    driver: local
-  etcd_data:
-    driver: local
-  minio_data:
-    driver: local
-  neo4j_data:
-    driver: local
-  neo4j_logs:
-    driver: local
-  redis_data:
-    driver: local
-  model_cache:
-    driver: local
 
 networks:
   app-network:

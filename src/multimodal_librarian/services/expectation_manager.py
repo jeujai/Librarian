@@ -50,6 +50,46 @@ class ExpectationResponse:
     progress_indicators: Dict[str, Any]
 
 
+class OperatingMode(Enum):
+    """System operating modes."""
+    FULL = "full"
+    DEGRADED = "degraded"
+    STARTUP = "startup"
+    MAINTENANCE = "maintenance"
+
+
+class QualityLevel(Enum):
+    """Quality levels for indicators."""
+    OPTIMAL = "optimal"
+    GOOD = "good"
+    BASIC = "basic"
+    LIMITED = "limited"
+
+
+@dataclass
+class QualityIndicator:
+    """Quality indicator for UI display."""
+    symbol: str
+    level: QualityLevel
+    description: str
+    user_message: str
+    color_code: str
+
+
+@dataclass
+class ExpectationContext:
+    """Context object for capabilities endpoint."""
+    current_mode: OperatingMode
+    quality_indicator: QualityIndicator
+    available_capabilities: List[str]
+    loading_capabilities: List[str]
+    estimated_times: Dict[str, Any]
+    progress_percentage: float
+    upgrade_message: str
+    limitations: List[str]
+    alternatives: List[str]
+
+
 class ExpectationManager:
     """Service for managing user expectations during startup and loading."""
     
@@ -104,6 +144,102 @@ class ExpectationManager:
         # Default to short wait
         return ExpectationLevel.SHORT_WAIT
     
+    def get_expectation_context(self) -> ExpectationContext:
+        """Get current expectation context for the capabilities endpoint."""
+        try:
+            capabilities = self.capability_service.get_capability_summary()
+            current_level = capabilities.get("overall", {}).get("current_level", "startup")
+            progress = self.capability_service.get_loading_progress()
+            progress_pct = float(progress.get("overall_progress", 0))
+
+            if progress_pct >= 100:
+                mode = OperatingMode.FULL
+                indicator = QualityIndicator(
+                    symbol="✓",
+                    level=QualityLevel.OPTIMAL,
+                    description="All systems operational",
+                    user_message="Full capabilities available",
+                    color_code="#22C55E"
+                )
+                limitations = []
+                alternatives = []
+                upgrade_message = "All capabilities loaded"
+            elif progress_pct >= 70:
+                mode = OperatingMode.DEGRADED
+                indicator = QualityIndicator(
+                    symbol="~",
+                    level=QualityLevel.GOOD,
+                    description="Most systems operational",
+                    user_message="Most capabilities available, some loading",
+                    color_code="#3B82F6"
+                )
+                limitations = ["Advanced analysis may be slower"]
+                alternatives = ["Basic features are fully available"]
+                upgrade_message = "Loading advanced features"
+            elif progress_pct >= 30:
+                mode = OperatingMode.STARTUP
+                indicator = QualityIndicator(
+                    symbol="⚡",
+                    level=QualityLevel.BASIC,
+                    description="System starting up",
+                    user_message="Basic capabilities available, more loading",
+                    color_code="#F59E0B"
+                )
+                limitations = ["Knowledge graph", "Full document analysis"]
+                alternatives = ["Basic chat is available", "Simple document queries"]
+                upgrade_message = "Loading core features — please wait"
+            else:
+                mode = OperatingMode.STARTUP
+                indicator = QualityIndicator(
+                    symbol="⚡",
+                    level=QualityLevel.LIMITED,
+                    description="System initializing",
+                    user_message="System starting up — limited features",
+                    color_code="#EF4444"
+                )
+                limitations = ["Most features are loading"]
+                alternatives = ["Try again in a moment"]
+                upgrade_message = "System starting up"
+
+            available = capabilities.get("available", ["basic_chat"])
+            if isinstance(available, str):
+                available = [available]
+            loading = capabilities.get("loading", ["rag", "kg_search"])
+            if isinstance(loading, str):
+                loading = [loading]
+            eta_info = self._get_eta_information()
+
+            return ExpectationContext(
+                current_mode=mode,
+                quality_indicator=indicator,
+                available_capabilities=available,
+                loading_capabilities=loading,
+                estimated_times={"full_capabilities": eta_info.get("eta_seconds", 60)},
+                progress_percentage=progress_pct,
+                upgrade_message=upgrade_message,
+                limitations=limitations,
+                alternatives=alternatives,
+            )
+        except Exception as e:
+            logger.error(f"Error building expectation context: {e}")
+            return ExpectationContext(
+                current_mode=OperatingMode.STARTUP,
+                quality_indicator=QualityIndicator(
+                    symbol="⚡",
+                    level=QualityLevel.BASIC,
+                    description="Basic mode",
+                    user_message="System starting up",
+                    color_code="#FFA500",
+                ),
+                available_capabilities=["simple_text"],
+                loading_capabilities=["basic_chat", "document_analysis"],
+                estimated_times={"full_capabilities": 120},
+                progress_percentage=10.0,
+                upgrade_message="System loading — please wait",
+                limitations=["Most features loading"],
+                alternatives=["Try again in a moment"],
+            )
+
     def manage_expectations(
         self, 
         user_message: str,

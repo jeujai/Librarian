@@ -374,7 +374,7 @@ class KnowledgeGraphService:
             logger.error(f"Error creating node {label}: {e}")
             raise
     
-    def get_node_by_id(self, node_id: Union[int, str]) -> Optional[Dict[str, Any]]:
+    async def get_node_by_id(self, node_id: Union[int, str]) -> Optional[Dict[str, Any]]:
         """
         Get a node by its ID.
         
@@ -386,20 +386,20 @@ class KnowledgeGraphService:
         """
         try:
             query = "MATCH (n) WHERE id(n) = $node_id RETURN n, id(n) as node_id, labels(n) as labels"
-            result = self.client.execute_query(query, {"node_id": int(node_id)})
-            
+            result = await self.client.execute_query(query, {"node_id": int(node_id)})
+
             if result:
                 node_data = dict(result[0]["n"])
                 node_data["id"] = result[0]["node_id"]
                 node_data["labels"] = result[0]["labels"]
                 return node_data
             return None
-            
+
         except Exception as e:
             logger.error(f"Error getting node by ID {node_id}: {e}")
             raise
     
-    def get_nodes_by_label(self, label: str, properties: Optional[Dict[str, Any]] = None,
+    async def get_nodes_by_label(self, label: str, properties: Optional[Dict[str, Any]] = None,
                           limit: int = 100) -> List[Dict[str, Any]]:
         """
         Get nodes by label and optional properties.
@@ -428,22 +428,22 @@ class KnowledgeGraphService:
             LIMIT $limit
             """
             
-            result = self.client.execute_query(query, params)
-            
+            result = await self.client.execute_query(query, params)
+
             nodes = []
             for record in result:
                 node_data = dict(record["n"])
                 node_data["id"] = record["node_id"]
                 node_data["labels"] = record["labels"]
                 nodes.append(node_data)
-            
+
             return nodes
-            
+
         except Exception as e:
             logger.error(f"Error getting nodes by label {label}: {e}")
             raise
     
-    def update_node(self, node_id: Union[int, str], properties: Dict[str, Any]) -> Dict[str, Any]:
+    async def update_node(self, node_id: Union[int, str], properties: Dict[str, Any]) -> Dict[str, Any]:
         """
         Update a node's properties.
         
@@ -467,8 +467,8 @@ class KnowledgeGraphService:
             """
             
             params = {"node_id": int(node_id), **properties}
-            result = self.client.execute_query(query, params)
-            
+            result = await self.client.execute_query(query, params)
+
             if result:
                 node_data = dict(result[0]["n"])
                 node_data["id"] = result[0]["node_id"]
@@ -482,7 +482,7 @@ class KnowledgeGraphService:
             logger.error(f"Error updating node {node_id}: {e}")
             raise
     
-    def delete_node(self, node_id: Union[int, str], delete_relationships: bool = True) -> bool:
+    async def delete_node(self, node_id: Union[int, str], delete_relationships: bool = True) -> bool:
         """
         Delete a node and optionally its relationships.
         
@@ -499,7 +499,7 @@ class KnowledgeGraphService:
             else:
                 query = "MATCH (n) WHERE id(n) = $node_id DELETE n"
             
-            self.client.execute_query(query, {"node_id": int(node_id)})
+            await self.client.execute_query(query, {"node_id": int(node_id)})
             logger.info(f"Deleted node {node_id}")
             return True
             
@@ -560,7 +560,7 @@ class KnowledgeGraphService:
             logger.error(f"Error creating relationship {relationship_type}: {e}")
             raise
     
-    def get_node_relationships(self, node_id: Union[int, str], 
+    async def get_node_relationships(self, node_id: Union[int, str],
                              direction: str = "both") -> List[Dict[str, Any]]:
         """
         Get relationships for a node.
@@ -587,28 +587,28 @@ class KnowledgeGraphService:
                    other, id(other) as other_id, labels(other) as other_labels
             """
             
-            result = self.client.execute_query(query, {"node_id": int(node_id)})
-            
+            result = await self.client.execute_query(query, {"node_id": int(node_id)})
+
             relationships = []
             for record in result:
                 rel_data = dict(record["r"])
                 rel_data["id"] = record["rel_id"]
                 rel_data["type"] = record["rel_type"]
-                
+
                 other_node = dict(record["other"])
                 other_node["id"] = record["other_id"]
                 other_node["labels"] = record["other_labels"]
-                
+
                 rel_data["other_node"] = other_node
                 relationships.append(rel_data)
-            
+
             return relationships
             
         except Exception as e:
             logger.error(f"Error getting relationships for node {node_id}: {e}")
             raise
     
-    def delete_relationship(self, relationship_id: Union[int, str]) -> bool:
+    async def delete_relationship(self, relationship_id: Union[int, str]) -> bool:
         """
         Delete a relationship by ID.
         
@@ -620,7 +620,7 @@ class KnowledgeGraphService:
         """
         try:
             query = "MATCH ()-[r]->() WHERE id(r) = $rel_id DELETE r"
-            self.client.execute_query(query, {"rel_id": int(relationship_id)})
+            await self.client.execute_query(query, {"rel_id": int(relationship_id)})
             logger.info(f"Deleted relationship {relationship_id}")
             return True
             
@@ -630,26 +630,26 @@ class KnowledgeGraphService:
     
     # Query Operations
     
-    def execute_cypher(self, query: str, parameters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    async def execute_cypher(self, query: str, parameters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """
         Execute a custom Cypher query.
-        
+
         Args:
             query: Cypher query string
             parameters: Query parameters
-            
+
         Returns:
             Query results
         """
         try:
             logger.info(f"Executing Cypher query: {query[:100]}...")
-            return self.client.execute_query(query, parameters or {})
+            return await self.client.execute_query(query, parameters or {})
             
         except Exception as e:
             logger.error(f"Error executing Cypher query: {e}")
             raise
     
-    def search_nodes(self, search_term: str, labels: Optional[List[str]] = None,
+    async def search_nodes(self, search_term: str, labels: Optional[List[str]] = None,
                     properties: Optional[List[str]] = None, limit: int = 50) -> List[Dict[str, Any]]:
         """
         Search for nodes containing a term in their properties.
@@ -687,15 +687,15 @@ class KnowledgeGraphService:
             """
             
             params = {"search_term": search_term, "limit": limit}
-            result = self.client.execute_query(query, params)
-            
+            result = await self.client.execute_query(query, params)
+
             nodes = []
             for record in result:
                 node_data = dict(record["n"])
                 node_data["id"] = record["node_id"]
                 node_data["labels"] = record["labels"]
                 nodes.append(node_data)
-            
+
             return nodes
             
         except Exception as e:
@@ -923,7 +923,7 @@ class KnowledgeGraphService:
     
     # Statistics and Info
     
-    def get_graph_stats(self) -> Dict[str, Any]:
+    async def get_graph_stats(self) -> Dict[str, Any]:
         """
         Get basic statistics about the knowledge graph.
         
@@ -934,7 +934,7 @@ class KnowledgeGraphService:
             stats = {}
             
             # Node count by label
-            node_stats = self.client.execute_query("""
+            node_stats = await self.client.execute_query("""
                 MATCH (n)
                 RETURN labels(n) as labels, count(n) as count
                 ORDER BY count DESC
@@ -956,7 +956,7 @@ class KnowledgeGraphService:
             stats["total_nodes"] = total_nodes
             
             # Relationship count by type
-            rel_stats = self.client.execute_query("""
+            rel_stats = await self.client.execute_query("""
                 MATCH ()-[r]->()
                 RETURN type(r) as rel_type, count(r) as count
                 ORDER BY count DESC

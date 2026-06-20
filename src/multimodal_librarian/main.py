@@ -260,6 +260,10 @@ async def _background_initialization(app: FastAPI):
         app.state.model_status_service = model_status_service
         app.state.model_status_service_initialized = True
         
+        # Also set the module-level global for loading_progress endpoint compatibility
+        import multimodal_librarian.services.model_status_service as mss
+        mss._model_status_service = model_status_service
+
         # Inject ModelStatusService into MinimalServer for unified status tracking
         if app.state.minimal_server:
             app.state.minimal_server.set_model_status_service(model_status_service)
@@ -1280,7 +1284,7 @@ def create_minimal_app() -> FastAPI:
         app.add_middleware(
             TimeoutMiddleware,
             timeout_seconds=30.0,  # 30 second timeout for most requests
-            exclude_paths=["/health/simple", "/health/alb", "/ws/", "/static/", "/api/conversations/"]
+            exclude_paths=["/health/simple", "/health/alb", "/ws/", "/static/", "/api/conversations/", "/api/chat/"]
         )
         
         if logger:
@@ -1742,11 +1746,20 @@ def create_minimal_app() -> FastAPI:
     if logger:
         logger.info("Inline functional chat added successfully")
     
-    # Mount static files for the unified interface
+    # Mount static files for the unified interface (no-cache for development)
+    class NoCacheStaticFiles(StaticFiles):
+        def is_not_modified(self, *args, **kwargs) -> bool:
+            return False
+
+        async def get_response(self, path: str, scope):
+            response = await super().get_response(path, scope)
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            return response
+
     try:
         static_path = os.path.join(os.path.dirname(__file__), "static")
         if os.path.exists(static_path):
-            app.mount("/static", StaticFiles(directory=static_path), name="static")
+            app.mount("/static", NoCacheStaticFiles(directory=static_path), name="static")
             if logger:
                 logger.info(f"Static files mounted from {static_path}")
         else:

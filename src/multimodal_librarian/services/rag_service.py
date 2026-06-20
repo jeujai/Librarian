@@ -402,7 +402,7 @@ class ContextPreparer:
         self, 
         chunks: List[DocumentChunk],
         query: str,
-        max_chunks: int = 10
+        max_chunks: int = 100
     ) -> Tuple[str, List[CitationSource]]:
         """
         Prepare context from document chunks with intelligent ranking.
@@ -498,11 +498,21 @@ class ContextPreparer:
             else:
                 excerpt_error = "not_found"
             
+            # Resolve page_number: prefer top-level field, fall back to metadata
+            page_number = chunk.page_number
+            if page_number is None and chunk.metadata:
+                page_number = chunk.metadata.get('page_number')
+                if page_number is not None:
+                    try:
+                        page_number = int(page_number)
+                    except (ValueError, TypeError):
+                        pass
+
             # Create citation source with truncation info and source type
             citation = CitationSource(
                 document_id=chunk.document_id,
                 document_title=chunk.document_title,
-                page_number=chunk.page_number,
+                page_number=page_number,
                 chunk_id=chunk.chunk_id,
                 relevance_score=chunk.similarity_score,
                 excerpt=excerpt_text,
@@ -517,8 +527,8 @@ class ContextPreparer:
             
             # Format context entry
             source_info = f"[Source {i}: {chunk.document_title}"
-            if chunk.page_number:
-                source_info += f", Page {chunk.page_number}"
+            if page_number:
+                source_info += f", Page {page_number}"
             if chunk.section_title:
                 source_info += f", Section: {chunk.section_title}"
             source_info += "]"
@@ -1324,39 +1334,60 @@ class RAGService:
 
 Your role is to report what the documents say — you are a research assistant summarizing source material, not providing personal advice.
 
+EVIDENCE TIERS:
+  Tier 1 — SOURCES (trust: 1.0): Retrieved document chunks. These are
+           verbatim excerpts from the user's library. Treat as ground truth.
+  Tier 2 — KNOWLEDGE GRAPH INSIGHTS (trust: 0.6): Machine-extracted
+           concept relationships. Use to understand connections between
+           concepts, but never contradict Tier 1 evidence.
+
+TIE-BREAKING RULE:
+  Tier 1 > Tier 2 always. A Tier 2 claim is only usable if:
+  (a) no Tier 1 source addresses the same claim, OR
+  (b) at least one Tier 1 source supports it.
+
 SOURCES:
 {context}{kg_context}
 
-Instructions:
-- Use the provided sources to answer the user's question
-- Always cite sources using the format [Source X] when referencing information
-- IMPORTANT: Only reference sources that actually appear above. Do NOT fabricate or hallucinate source numbers beyond what is provided
-- Sources may come from the user's document library or from web search — use all of them
-- If knowledge graph insights are provided, use them to enhance your understanding
-- If the sources don't fully answer the question, say so and provide what information you can
-- When sources contain medical, legal, financial, or other professional content, summarize what the documents say. Frame answers as "According to [Source X]..." rather than as personal advice. You may add a brief disclaimer that users should consult a qualified professional.
-- Be accurate and helpful in your responses"""
+WORKFLOW:
+1. Read all SOURCES and identify what they collectively say about the user's question.
+2. Read the KNOWLEDGE GRAPH INSIGHTS (if provided). For each KG claim, classify:
+   - CORROBORATED: at least one SOURCE supports it → use it
+   - UNRELATED: no SOURCE addresses it → may mention if helpful, but label as KG-derived
+   - CONTRADICTED: a SOURCE directly conflicts → discard the KG claim entirely
+3. Answer using only corroborated claims from SOURCES, supplemented by corroborated KG insights for relationship context.
+
+CITATION RULES:
+- Always cite sources using the format [Source X]
+- IMPORTANT: Only reference sources that actually appear above. Do NOT fabricate or hallucinate source numbers
+- Sources may come from the document library or from web search — use all of them
+
+RESPONSE RULES:
+- If sources don't fully answer the question, say so and provide what information you can
+- When sources contain medical, legal, financial, or other professional content, frame answers as "According to [Source X]..." rather than as personal advice. You may add a brief disclaimer that users should consult a qualified professional
+- Be accurate and helpful in your responses
+- If you're unsure about something, acknowledge the uncertainty"""
 
         # Prepare messages for AI
         messages = []
-        
+
         # Add conversation context if available
         if conversation_context:
             for msg in conversation_context[-5:]:
                 if msg['role'] in ['user', 'assistant']:
                     messages.append(msg)
-        
+
         # Add current query with system context
         messages.append({
             "role": "user",
             "content": f"{system_prompt}\n\nUser Question: {query}"
         })
-        
+
         # Generate streaming response
         async for chunk in self.ai_service.generate_response_stream(
             messages=messages,
             temperature=0.7,
-            max_tokens=2048
+            max_tokens=4096
         ):
             yield chunk
 
@@ -1409,7 +1440,7 @@ Instructions:
         async for chunk in self.ai_service.generate_response_stream(
             messages=messages,
             temperature=0.7,
-            max_tokens=2048
+            max_tokens=4096
         ):
             yield chunk
     
@@ -1706,17 +1737,26 @@ Instructions:
                     c.metadata['chunk_noun_score'] = compute_chunk_noun_score(
                         c.content or "", tc.key_nouns,
                     )
+                # Also retain chunks from documents whose titles match
+                # the query's matched concepts — those chunks are
+                # topically relevant even when they don't contain the
+                # diagnosis-specific key nouns (e.g. treatment sections
+                # that mention antibiotics rather than symptoms).
                 kept = [
                     c for c in librarian_chunks
                     if c.metadata['chunk_noun_score'] >= adaptive_thresh
+                    or c.metadata.get('concept_title_boost', 1.0) >= 1.3
                 ]
                 if not kept and librarian_chunks:
-                    # Fallback: retain top chunks by chunk_noun_score
-                    librarian_chunks.sort(
-                        key=lambda c: c.metadata.get('chunk_noun_score', 0.0),
-                        reverse=True,
-                    )
-                    kept = librarian_chunks[:self.web_search_result_count_threshold]
+                    # Fallback: retain top chunks by noun score weighted
+                    # by concept-title boost so that chunks from
+                    # concept-aligned documents get priority.
+                    def _weighted_noun(c):
+                        noun = c.metadata.get('chunk_noun_score', 0.0)
+                        cboost = c.metadata.get('concept_title_boost', 1.0)
+                        return noun * cboost
+                    librarian_chunks.sort(key=_weighted_noun, reverse=True)
+                    kept = librarian_chunks[:max(10, self.web_search_result_count_threshold)]
                 dropped = len(librarian_chunks) - len(kept)
                 logger.info(
                     f"Co-occurrence drop (adaptive): kept {len(kept)}, "
@@ -1783,14 +1823,18 @@ Instructions:
             kept = [
                 c for c in librarian_chunks
                 if c.metadata['chunk_noun_score'] >= adaptive_thresh
+                or c.metadata.get('concept_title_boost', 1.0) >= 1.3
             ]
             if not kept and librarian_chunks:
-                # Fallback: retain top chunks by chunk_noun_score
-                librarian_chunks.sort(
-                    key=lambda c: c.metadata.get('chunk_noun_score', 0.0),
-                    reverse=True,
-                )
-                kept = librarian_chunks[:self.web_search_result_count_threshold]
+                # Fallback: retain top chunks by noun score weighted
+                # by concept-title boost so chunks from concept-aligned
+                # documents get priority.
+                def _weighted_noun2(c):
+                    noun = c.metadata.get('chunk_noun_score', 0.0)
+                    cboost = c.metadata.get('concept_title_boost', 1.0)
+                    return noun * cboost
+                librarian_chunks.sort(key=_weighted_noun2, reverse=True)
+                kept = librarian_chunks[:max(10, self.web_search_result_count_threshold)]
             dropped = before_count - len(kept)
             if dropped > 0:
                 logger.info(
@@ -1980,7 +2024,7 @@ Instructions:
             chunk = DocumentChunk(
                 chunk_id=retrieved_chunk.chunk_id,
                 document_id=metadata.get('source_id', metadata.get('document_id', 'unknown')),
-                document_title=metadata.get('title', metadata.get('document_title', 'Unknown Document')),
+                document_title=metadata.get('document_title') or metadata.get('title') or 'Unknown Document',
                 content=retrieved_chunk.content,
                 page_number=metadata.get('page_number'),
                 section_title=metadata.get('section_title'),
@@ -2031,13 +2075,23 @@ Instructions:
         chunks = []
         
         for result in prioritized_results.results:
+            # Resolve page_number from result or metadata
+            page_number = result.page_number
+            if page_number is None and result.metadata:
+                pn = result.metadata.get('page_number')
+                if pn is not None:
+                    try:
+                        page_number = int(pn)
+                    except (ValueError, TypeError):
+                        page_number = pn
+
             # Create DocumentChunk from PrioritizedSearchResult
             chunk = DocumentChunk(
                 chunk_id=result.chunk_id,
                 document_id=result.document_id,
                 document_title=result.document_title,
                 content=result.content,
-                page_number=result.page_number,
+                page_number=page_number,
                 section_title=result.section_title,
                 chunk_type='text',
                 similarity_score=result.score,
@@ -2374,39 +2428,60 @@ Instructions:
 
 Your role is to report what the documents say — you are a research assistant summarizing source material, not providing personal advice.
 
+EVIDENCE TIERS:
+  Tier 1 — SOURCES (trust: 1.0): Retrieved document chunks. These are
+           verbatim excerpts from the user's library. Treat as ground truth.
+  Tier 2 — KNOWLEDGE GRAPH INSIGHTS (trust: 0.6): Machine-extracted
+           concept relationships. Use to understand connections between
+           concepts, but never contradict Tier 1 evidence.
+
+TIE-BREAKING RULE:
+  Tier 1 > Tier 2 always. A Tier 2 claim is only usable if:
+  (a) no Tier 1 source addresses the same claim, OR
+  (b) at least one Tier 1 source supports it.
+
 SOURCES:
 {context}{kg_context}
 
-Instructions:
-- Use the provided sources to answer the user's question
-- Always cite sources using the format [Source X] when referencing information
-- Sources may come from the user's document library or from web search — use all of them
-- If knowledge graph insights are provided, use them to enhance your understanding of relationships between concepts
-- If the sources don't fully answer the question, say so and provide what information you can
-- When sources contain medical, legal, financial, or other professional content, summarize what the documents say. Frame answers as "According to [Source X]..." rather than as personal advice. You may add a brief disclaimer that users should consult a qualified professional.
+WORKFLOW:
+1. Read all SOURCES and identify what they collectively say about the user's question.
+2. Read the KNOWLEDGE GRAPH INSIGHTS (if provided). For each KG claim, classify:
+   - CORROBORATED: at least one SOURCE supports it → use it
+   - UNRELATED: no SOURCE addresses it → may mention if helpful, but label as KG-derived
+   - CONTRADICTED: a SOURCE directly conflicts → discard the KG claim entirely
+3. Answer using only corroborated claims from SOURCES, supplemented by corroborated KG insights for relationship context.
+
+CITATION RULES:
+- Always cite sources using the format [Source X]
+- IMPORTANT: Only reference sources that actually appear above. Do NOT fabricate or hallucinate source numbers
+- Sources may come from the document library or from web search — use all of them
+
+RESPONSE RULES:
+- If sources don't fully answer the question, say so and provide what information you can
+- When sources contain medical, legal, financial, or other professional content, frame answers as "According to [Source X]..." rather than as personal advice. You may add a brief disclaimer that users should consult a qualified professional
 - Be accurate and helpful in your responses
 - If you're unsure about something, acknowledge the uncertainty"""
 
         # Prepare messages for AI
         messages = []
-        
+
         # Add conversation context if available
         if conversation_context:
             for msg in conversation_context[-5:]:  # Last 5 messages for context
                 if msg['role'] in ['user', 'assistant']:
                     messages.append(msg)
-        
+
         # Add current query with system context
         messages.append({
             "role": "user",
             "content": f"{system_prompt}\n\nUser Question: {query}"
         })
-        
+
         # Generate response
         return await self.ai_service.generate_response(
             messages=messages,
             temperature=0.7,
-            max_tokens=2048,
+            max_tokens=4096,
             preferred_provider=preferred_provider
         )
     
@@ -2461,7 +2536,7 @@ Instructions:
         return await self.ai_service.generate_response(
             messages=messages,
             temperature=0.7,
-            max_tokens=2048,
+            max_tokens=4096,
             preferred_provider=preferred_provider
         )
     

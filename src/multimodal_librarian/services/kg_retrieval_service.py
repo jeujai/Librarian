@@ -103,6 +103,87 @@ DEFAULT_AUGMENTATION_THRESHOLD = 3  # Minimum chunks before augmentation (Requir
 DEFAULT_QUERY_TIMEOUT_SECONDS = 5.0  # Neo4j query timeout (Requirement 6.4)
 
 
+# Relationship types eligible for concept promotion to direct retrieval.
+# UMLS-derived and clinically-meaningful ConceptNet types only — loose
+# associations like RelatedTo or AtLocation are excluded to avoid
+# promoting irrelevant concepts (e.g. "voice" RelatedTo "cough").
+_PROMOTION_ELIGIBLE_RELATIONSHIPS = frozenset({
+    # UMLS-derived clinical relationships (pattern-extracted, lowercase)
+    "IS_A", "PART_OF", "CAUSES", "SIMILAR_TO",
+    # ConceptNet clinically-meaningful relationships (PascalCase)
+    "IsA", "PartOf", "Synonym", "FormOf", "HasContext",
+    "DerivedFrom", "HasProperty", "UsedFor", "CapableOf",
+    "HasA", "DefinedAs", "Entails", "Causes",
+})
+
+# UMLS_REL rela_type values eligible for concept promotion.
+# These represent clinically validated edges between medical concepts
+# (e.g., pneumonia → may_be_treated_by → doxycycline).
+# Sourced from RelationshipTraverser.CLINICALLY_MEANINGFUL_UMLS_RELA —
+# excludes qualifier metadata, drug composition, trade names, and
+# administrative mappings.
+_UMLS_PROMOTION_ELIGIBLE_RELA = frozenset({
+    "isa", "inverse_isa",
+    "may_treat", "may_be_treated_by",
+    "may_be_prevented_by", "may_prevent",
+    "cause_of", "due_to",
+    "has_manifestation", "manifestation_of",
+    "has_definitional_manifestation",
+    "has_associated_finding", "associated_finding_of",
+    "has_associated_etiologic_finding",
+    "finding_site_of", "has_finding_site",
+    "has_procedure_site", "procedure_site_of",
+    "has_direct_procedure_site", "has_indirect_procedure_site",
+    "has_focus", "focus_of",
+    "has_component", "component_of",
+    "occurs_after", "occurs_before",
+    "has_clinical_course", "clinical_course_of",
+    "has_severity", "severity_of",
+    "has_stage", "stage_of",
+    "has_associated_morphology", "associated_morphology_of",
+    "has_pathological_process", "pathological_process_of",
+    "has_specimen", "specimen_of",
+    "has_interpretation", "interpretation_of",
+    "has_method", "method_of",
+    "has_direct_morphology", "has_indirect_morphology",
+    "has_causative_agent",
+    "has_pharmacokinetics",
+    "has_physiologic_effect",
+    "has_mechanism_of_action",
+    "has_therapeutic_class",
+    "may_diagnose", "may_be_diagnosed_by",
+})
+
+
+# Path-type-aware decay rates for hop-distance scoring.
+# UMLS clinical paths are curated medical knowledge — they get minimal/no decay.
+# Document-extracted edges and co-occurrence are noisier — they get full decay.
+# Keys match path_type values from RelationshipTraverser path annotations.
+_PATH_TYPE_DECAY = {
+    "umls_1hop": 1.0,            # Clinically validated direct UMLS path — no decay
+    "umls_2hop": 0.85,           # Clinically validated 2-hop UMLS — slight decay
+    "umls_bridge": 1.0,          # UMLS bridge traversal (SAME_AS → UMLS_REL) — no decay
+    "umls_bridge_2hop": 0.85,    # 2-hop UMLS bridge — slight decay
+    "direct": 0.7,               # Document-extracted direct edge — moderate decay
+    "shared_chunk": 0.5,         # Co-occurrence in shared chunk — full decay
+}
+_PATH_TYPE_RANK = {
+    "umls_1hop": 0,
+    "umls_2hop": 1,
+    "umls_bridge": 0,
+    "umls_bridge_2hop": 1,
+    "direct": 2,
+    "shared_chunk": 3,
+}
+
+# 2-hop traversal limits — keep fan-out bounded to avoid
+# combinatorial explosion on densely-connected concept graphs.
+_MAX_2HOP_INTERMEDIATE = 3        # max intermediates to expand from (per concept)
+_MAX_2HOP_TARGETS_PER_INTERMEDIATE = 3  # max 2-hop targets per intermediate
+_MAX_CONCEPTS_FOR_2HOP = 3        # only top-N concepts by match score get 2-hop
+_MAX_CONCEPTS_FOR_1HOP = 10       # only top-N concepts by match score get 1-hop traversal
+_MAX_CONCEPTS_FOR_UMLS_1HOP = 5  # narrower cap for UMLS bridge (13.9M UMLS_REL edges)
+
 # Relationship types to prioritize during traversal (Requirement 2.3)
 # Includes both pattern-extracted types (uppercase) and ConceptNet types (PascalCase)
 PRIORITY_RELATIONSHIP_TYPES = [
@@ -506,13 +587,70 @@ class KGRetrievalService:
         source_mappings: Dict[str, ChunkSourceMapping] = {}
 
         # Run direct chunk retrieval and relationship traversal concurrently.
-        # With large graphs (180K+ chunks, 15 matched concepts), running
-        # these sequentially exceeds the Stage 1 timeout.
+        # Direct retrieval is the critical path — it must never be discarded
+        # because the expensive UMLS/relationship traversal timed out.
+        # return_exceptions=True ensures a TimeoutError in the related task
+        # doesn't kill the direct results that completed in <2 seconds.
         direct_task = self._retrieve_direct_chunks(decomposition.concept_matches)
         related_task = self._retrieve_related_chunks(decomposition.concept_matches)
-        (direct_chunk_ids, direct_mappings, chunk_concept_hits), \
-            (related_chunk_ids_raw, related_mappings_raw) = await asyncio.gather(
-                direct_task, related_task
+        gathered = await asyncio.gather(
+            direct_task, related_task, return_exceptions=True
+        )
+        direct_result, related_result = gathered
+
+        if isinstance(direct_result, Exception):
+            logger.error(
+                f"Direct chunk retrieval failed: {direct_result}"
+            )
+            raise direct_result
+
+        direct_chunk_ids, direct_mappings, chunk_concept_hits = direct_result
+
+        if isinstance(related_result, Exception):
+            logger.warning(
+                f"Related traversal failed, proceeding with direct chunks "
+                f"({len(direct_chunk_ids)}): {related_result}"
+            )
+            related_chunk_ids_raw: Set[str] = set()
+            related_mappings_raw: Dict[str, ChunkSourceMapping] = {}
+            promoted_concepts = []
+        else:
+            related_chunk_ids_raw, related_mappings_raw, promoted_concepts = related_result
+
+        # Concept expansion: promote related concepts reached via clinical
+        # edges to direct retrieval status.  Chunks from promoted concepts
+        # get full scoring weight (coverage bonus, doc boost, title boost)
+        # instead of the hop-distance decay ceiling applied to related chunks.
+        promoted_chunk_count = 0
+        for pc in promoted_concepts:
+            pc_id = pc["concept_id"]
+            pc_name = pc["concept_name"]
+            pc_score = pc["match_score"]
+            for chunk_id in pc["chunk_ids"]:
+                if chunk_id and chunk_id not in direct_chunk_ids:
+                    direct_chunk_ids.add(chunk_id)
+                    direct_mappings[chunk_id] = ChunkSourceMapping(
+                        chunk_id=chunk_id,
+                        source_concept_id=pc_id,
+                        source_concept_name=pc_name,
+                        retrieval_source=RetrievalSource.DIRECT_CONCEPT,
+                        match_score=pc_score,
+                        path_type="promoted",
+                    )
+                    # Register concept hit for coverage scoring
+                    if chunk_id not in chunk_concept_hits:
+                        chunk_concept_hits[chunk_id] = []
+                    chunk_concept_hits[chunk_id].append({
+                        "concept_id": pc_id,
+                        "concept_name": pc_name,
+                        "match_score": pc_score,
+                        "match_type": "promoted",
+                    })
+                    promoted_chunk_count += 1
+        if promoted_chunk_count:
+            logger.info(
+                f"Concept expansion: promoted {promoted_chunk_count} chunks "
+                f"from {len(promoted_concepts)} related concepts to direct status"
             )
 
         all_chunk_ids.update(direct_chunk_ids)
@@ -568,8 +706,23 @@ class KGRetrievalService:
                 related_chunks.append(chunk)
 
         # Aggregate with concept-coverage scoring and related chunk capping
+        matched_concept_names = [
+            c["name"] for c in decomposition.concept_matches
+            if c.get("name") and not is_generic_concept(c["name"])
+        ]
+        # Precompute rationale→query similarity per (concept, chunk).  Done
+        # here (async) because _aggregate_and_deduplicate is synchronous and
+        # cannot embed the query or query Neo4j for edge rationale embeddings.
+        rationale_sim_by_pair = await self._compute_rationale_sims(
+            [c.get("concept_id") for c in decomposition.concept_matches if c.get("concept_id")],
+            direct_chunk_ids,
+            decomposition.original_query,
+        )
         chunks = self._aggregate_and_deduplicate(
-            direct_chunks, related_chunks, source_mappings, chunk_concept_hits
+            direct_chunks, related_chunks, source_mappings, chunk_concept_hits,
+            query=decomposition.original_query,
+            matched_concept_names=matched_concept_names,
+            rationale_sim_by_pair=rationale_sim_by_pair,
         )
 
         # Apply relationship-aware boost for multi-concept queries
@@ -579,22 +732,83 @@ class KGRetrievalService:
             traversal_result = await self._relationship_traverser.traverse(
                 decomposition.concept_matches
             )
-            if traversal_result.completed and traversal_result.intersection_chunk_ids:
-                from ..config import get_settings
-                _settings = get_settings()
-                chunks = self._apply_relationship_boost(
-                    chunks, traversal_result,
-                    getattr(_settings, 'relationship_boost', 1.0)
+            if traversal_result.completed:
+                # Apply intersection boost
+                if traversal_result.intersection_chunk_ids:
+                    from ..config import get_settings
+                    _settings = get_settings()
+                    chunks = self._apply_relationship_boost(
+                        chunks, traversal_result,
+                        getattr(_settings, 'relationship_boost', 1.0)
+                    )
+                    logger.debug(
+                        f"Relationship-aware boost applied: "
+                        f"{len(traversal_result.intersection_chunk_ids)} intersection chunks, "
+                        f"{traversal_result.total_paths_found} paths found, "
+                        f"{traversal_result.traversal_duration_ms}ms traversal time"
+                    )
+
+                # Merge UMLS-discovered chunks not already in the pipeline.
+                # The relationship traverser finds chunks via UMLS clinical
+                # paths that the generic 1-hop _query_related_concepts misses
+                # (e.g., treatment chunks reachable only via UMLS-mediated
+                # relationships like Diabetes -[may_be_treated_by]-> Metformin).
+                existing_ids = {c.chunk_id for c in chunks}
+                new_traversal_ids = (
+                    set(traversal_result.chunk_concept_connections.keys())
+                    - existing_ids
                 )
-                logger.debug(
-                    f"Relationship-aware boost applied: "
-                    f"{len(traversal_result.intersection_chunk_ids)} intersection chunks, "
-                    f"{traversal_result.total_paths_found} paths found, "
-                    f"{traversal_result.traversal_duration_ms}ms traversal time"
-                )
+
+                if new_traversal_ids:
+                    # Build chunk_id → best path_type from annotations
+                    pt_map: Dict[str, str] = {}
+                    for ann in traversal_result.path_annotations:
+                        cid = ann.get("chunk_id")
+                        pt = ann.get("path_type", "shared_chunk")
+                        if cid and cid in new_traversal_ids:
+                            if (cid not in pt_map
+                                    or _PATH_TYPE_RANK.get(pt, 99)
+                                    < _PATH_TYPE_RANK.get(pt_map[cid], 99)):
+                                pt_map[cid] = pt
+
+                    # Build source mappings for new chunks
+                    new_mappings: Dict[str, ChunkSourceMapping] = {}
+                    for cid in new_traversal_ids:
+                        pt = pt_map.get(cid)
+                        hop = 2 if pt == "umls_2hop" else 1
+                        new_mappings[cid] = ChunkSourceMapping(
+                            chunk_id=cid,
+                            source_concept_id="",
+                            source_concept_name="",
+                            retrieval_source=RetrievalSource.REASONING_PATH,
+                            hop_distance=hop,
+                            path_type=pt,
+                        )
+
+                    # Resolve and score new chunks
+                    new_resolved = await self._chunk_resolver.resolve_chunks(
+                        list(new_traversal_ids), new_mappings
+                    )
+
+                    for chunk in new_resolved:
+                        mapping = new_mappings.get(chunk.chunk_id)
+                        pt = mapping.path_type if mapping else None
+                        decay = _PATH_TYPE_DECAY.get(
+                            pt, self._hop_distance_decay
+                        )
+                        hop = mapping.hop_distance if mapping else 1
+                        chunk.kg_relevance_score = decay ** hop
+                        chunk.metadata["umls_discovered"] = True
+
+                    chunks.extend(new_resolved)
+                    logger.info(
+                        f"Merged {len(new_resolved)} UMLS-discovered chunks "
+                        f"not found by direct/related pipeline "
+                        f"(path_types: {set(pt_map.values())})"
+                    )
             else:
                 logger.debug(
-                    "Relationship traversal returned no intersection chunks or timed out, "
+                    "Relationship traversal timed out or incomplete, "
                     "proceeding with existing pipeline results"
                 )
 
@@ -724,6 +938,79 @@ class KGRetrievalService:
 
         return chunk_ids, source_mappings, chunk_concept_hits
 
+    async def _compute_rationale_sims(
+        self,
+        concept_ids: List[str],
+        chunk_ids: Set[str],
+        query: str,
+    ) -> Dict[Tuple[str, str], float]:
+        """Compute rationale→query cosine similarity per (concept_id, chunk_id).
+
+        Fetches the LLM rationale embedding stored on each EXTRACTED_FROM edge
+        for the matched concepts (bounded to the candidate chunks), embeds the
+        query once, and returns a cosine-similarity map used to boost chunks
+        whose concept rationale is semantically close to the query.  Degrades
+        to an empty map when the model/Neo4j clients are unavailable.
+        """
+        if not concept_ids or not chunk_ids:
+            return {}
+        if not self._model_client or not self._neo4j_client:
+            return {}
+        if not query or not query.strip():
+            return {}
+
+        try:
+            q_embs = await self._model_client.generate_embeddings([query])
+        except Exception as e:
+            logger.warning(f"Rationale boost: query embedding failed: {e}")
+            return {}
+        if not q_embs:
+            return {}
+        q_emb = q_embs[0]
+
+        cypher = """
+        MATCH (c:Concept)-[r:EXTRACTED_FROM]->(ch:Chunk)
+        WHERE c.concept_id IN $concept_ids
+          AND ch.chunk_id IN $chunk_ids
+          AND r.rationale_embedding IS NOT NULL
+        RETURN c.concept_id AS concept_id,
+               ch.chunk_id AS chunk_id,
+               r.rationale_embedding AS emb
+        """
+        try:
+            rows = await with_timeout(
+                self._neo4j_client.execute_query(
+                    cypher,
+                    {
+                        "concept_ids": list(concept_ids),
+                        "chunk_ids": list(chunk_ids),
+                    },
+                ),
+                self._query_timeout,
+            )
+        except Exception as e:
+            logger.debug(f"Rationale boost: edge query failed: {e}")
+            return {}
+
+        def _cos(a, b) -> float:
+            dot = sum(x * y for x, y in zip(a, b))
+            na = sum(x * x for x in a) ** 0.5
+            nb = sum(x * x for x in b) ** 0.5
+            return dot / (na * nb) if na and nb else 0.0
+
+        sims: Dict[Tuple[str, str], float] = {}
+        for row in (rows or []):
+            emb = row.get("emb")
+            if not emb:
+                continue
+            sims[(row["concept_id"], row["chunk_id"])] = _cos(q_emb, emb)
+        if sims:
+            logger.info(
+                f"Rationale boost: computed {len(sims)} rationale→query "
+                f"similarities (max={max(sims.values()):.3f})"
+            )
+        return sims
+
     async def _query_chunk_ids_for_concept(self, concept_id: str) -> List[str]:
         """
         Query Neo4j for chunk IDs linked to a concept via EXTRACTED_FROM traversal.
@@ -810,32 +1097,56 @@ class KGRetrievalService:
 
     async def _retrieve_related_chunks(
         self, concept_matches: List[Dict[str, Any]]
-    ) -> Tuple[Set[str], Dict[str, ChunkSourceMapping]]:
+    ) -> Tuple[Set[str], Dict[str, ChunkSourceMapping], List[Dict[str, Any]]]:
         """
         Retrieve chunks from related concepts via relationship traversal.
 
         Runs all concept traversals concurrently via asyncio.gather for
         performance — total time ≈ slowest single concept, not the sum.
 
+        Also identifies 1-hop related concepts for promotion to direct
+        retrieval: concepts discovered via traversal that have document
+        chunks are candidates for full scoring weight instead of the
+        hop-distance decay applied to related chunks.
+
         Args:
             concept_matches: List of matched concepts from query decomposition
 
         Returns:
-            Tuple of (chunk_ids, source_mappings)
+            Tuple of (chunk_ids, source_mappings, promoted_concepts)
+            promoted_concepts is a list of dicts with keys:
+                concept_id, concept_name, chunk_ids, match_score
 
         Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 6.2
         """
         chunk_ids: Set[str] = set()
         source_mappings: Dict[str, ChunkSourceMapping] = {}
+        promoted_concepts: List[Dict[str, Any]] = []
 
         if not self._neo4j_client:
             logger.debug("No Neo4j client available for relationship traversal")
-            return chunk_ids, source_mappings
+            return chunk_ids, source_mappings, promoted_concepts
 
-        # Build list of (concept_meta, coroutine) for concurrent execution
+        # Build list of (concept_meta, coroutine) for concurrent execution.
+        # 1-hop traversal is limited to top-N concepts to keep query count
+        # manageable — each traversal is a separate Neo4j round-trip.
         tasks: list = []
         task_meta: list = []
-        for concept in concept_matches:
+
+        # Sort key: semantic matches first (higher quality for traversal),
+        # then by score descending within each group.  Lexical Lucene scores
+        # are inflated (exact phrase match) and produce garbage intermediates
+        # like "woman presents" → "(see figure)" → "with".
+        def _traversal_sort_key(c: Dict[str, Any]) -> Tuple[int, float]:
+            is_sem = 1 if c.get("match_type") == "semantic" else 0
+            score = float(c.get("similarity_score", c.get("match_score", 0)))
+            return (is_sem, score)
+
+        sorted_matches = sorted(
+            concept_matches, key=_traversal_sort_key, reverse=True
+        )
+
+        for concept in sorted_matches[:_MAX_CONCEPTS_FOR_1HOP]:
             concept_id = concept.get("concept_id", "")
             concept_name = concept.get("name", "")
             if concept.get("match_type") == "semantic":
@@ -852,15 +1163,74 @@ class KGRetrievalService:
                 continue
 
             tasks.append(self._query_related_concepts(concept_id, concept_name))
-            task_meta.append((concept_id, concept_name, parent_score))
+            task_meta.append((concept_id, concept_name, parent_score, "umls_1hop"))
+
+        # UMLS-aware 1-hop traversal: Concept → SAME_AS → UMLSConcept
+        # → UMLS_REL → UMLSConcept → SAME_AS → Concept.
+        # Surfaces treatment/diagnostic concepts reachable via
+        # validated clinical edges even when no direct Concept→Concept
+        # edge exists.
+        # Uses a narrower cap than plain 1-hop because each query walks
+        # the 13.9M-edge UMLS_REL graph.
+        for concept in sorted_matches[:_MAX_CONCEPTS_FOR_UMLS_1HOP]:
+            concept_id = concept.get("concept_id", "")
+            concept_name = concept.get("name", "")
+            if concept.get("match_type") == "semantic":
+                parent_score = float(concept.get("similarity_score", 0.0))
+            else:
+                parent_score = float(concept.get("match_score", 0.0))
+
+            if not concept_id:
+                continue
+            if is_generic_concept(concept_name) and concept.get("match_type") == "semantic":
+                continue
+
+            tasks.append(
+                self._query_umls_related_concepts(concept_id, concept_name)
+            )
+            task_meta.append(
+                (concept_id, concept_name, parent_score, "umls_bridge")
+            )
+
+        # 2-hop traversal for top-N concepts only (Requirement 2.2).
+        # Limits fan-out to keep query times reasonable.
+        if self._max_hops >= 2:
+            sorted_concepts = sorted(
+                concept_matches, key=_traversal_sort_key, reverse=True
+            )
+            for concept in sorted_concepts[:_MAX_CONCEPTS_FOR_2HOP]:
+                cid = concept.get("concept_id", "")
+                cname = concept.get("name", "")
+                if not cid:
+                    continue
+                if concept.get("match_type") == "semantic":
+                    pscore = float(concept.get("similarity_score", 0.0))
+                else:
+                    pscore = float(concept.get("match_score", 0.0))
+                tasks.append(
+                    self._query_2hop_related_concepts(cid, cname)
+                )
+                task_meta.append((cid, cname, pscore, "umls_2hop"))
+
+                # 2-hop UMLS bridge: reaches treatment concepts 2 clinical
+                # hops away (e.g., pneumonia → isa → Bacterial Pneumonia
+                # → may_treat → doxycycline).
+                tasks.append(
+                    self._query_umls_2hop_related_concepts(cid, cname)
+                )
+                task_meta.append(
+                    (cid, cname, pscore, "umls_bridge_2hop")
+                )
 
         if not tasks:
-            return chunk_ids, source_mappings
+            return chunk_ids, source_mappings, promoted_concepts
 
         # Run all traversals concurrently; individual failures return []
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        for (concept_id, concept_name, parent_score), result in zip(task_meta, results):
+        for (concept_id, concept_name, parent_score, path_type), result in zip(
+            task_meta, results
+        ):
             if isinstance(result, Exception):
                 logger.warning(
                     f"Error traversing relationships for concept {concept_name}: {result}"
@@ -884,11 +1254,48 @@ class KGRetrievalService:
                             retrieval_source=RetrievalSource.RELATED_CONCEPT,
                             relationship_path=relationship_path,
                             hop_distance=hop_distance,
+                            path_type=path_type,
                             match_score=parent_score,
                         )
 
-        logger.debug(f"Found {len(chunk_ids)} chunks from related concepts")
-        return chunk_ids, source_mappings
+                # Promote related concepts reached via clinical edges
+                # to direct retrieval status.  Concept expansion:
+                # symptom → diagnosis traversal (e.g. "productive cough"
+                # IsA "cough" → HasContext "pneumonia") gets full scoring
+                # weight instead of the hop-distance decay ceiling.
+                #
+                # 1-hop: promote when the single relationship type is
+                # clinically meaningful (UMLS rela or ConceptNet edge).
+                #
+                # 2-hop UMLS bridge: promote when both hops use
+                # clinically-meaningful UMLS rela types — the path
+                # pneumonia → isa → Bacterial Pneumonia → may_treat →
+                # doxycycline is clinically validated and deserves full
+                # scoring weight.
+                if related_chunk_ids:
+                    promoted = False
+                    if hop_distance == 1:
+                        rel_type = relationship_path[0] if relationship_path else ""
+                        if (rel_type in _PROMOTION_ELIGIBLE_RELATIONSHIPS
+                                or rel_type in _UMLS_PROMOTION_ELIGIBLE_RELA):
+                            promoted = True
+                    elif hop_distance == 2 and path_type in ("umls_bridge_2hop",):
+                        rela1 = relationship_path[0] if len(relationship_path) > 0 else ""
+                        rela2 = relationship_path[1] if len(relationship_path) > 1 else ""
+                        if (rela1 in _UMLS_PROMOTION_ELIGIBLE_RELA
+                                and rela2 in _UMLS_PROMOTION_ELIGIBLE_RELA):
+                            promoted = True
+                    if promoted:
+                        promoted_concepts.append({
+                            "concept_id": related_id,
+                            "concept_name": related_name,
+                            "chunk_ids": list(related_chunk_ids),
+                            "match_score": parent_score,
+                        })
+
+        logger.debug(f"Found {len(chunk_ids)} chunks from related concepts "
+                     f"(+{len(promoted_concepts)} concepts promoted to direct)")
+        return chunk_ids, source_mappings, promoted_concepts
 
     async def _query_related_concepts(
         self, concept_id: str, concept_name: str
@@ -925,20 +1332,23 @@ class KGRetrievalService:
             # Single-hop query — avoids combinatorial explosion of variable-length paths.
             # With 215K+ relationships, *1..2 patterns are too expensive.
             # Collects chunk IDs via EXTRACTED_FROM traversal (Requirement 6.2).
+            # LIMIT is applied BEFORE OPTIONAL MATCH so only the top-N related
+            # concepts get their chunk lists resolved.
             cypher_query = f"""
             MATCH (start:Concept {{concept_id: $concept_id}})
                   -[r:{rel_types}]-(related:Concept)
             WHERE related.concept_id <> start.concept_id
+            WITH DISTINCT related, type(r) as rel_type, start
+            ORDER BY related.concept_id
+            LIMIT 20
             OPTIONAL MATCH (related)-[:EXTRACTED_FROM]->(ch:Chunk)
             RETURN DISTINCT
                 related.concept_id as concept_id,
                 related.name as name,
                 collect(DISTINCT ch.chunk_id) as chunk_ids,
                 1 as hop_distance,
-                [type(r)] as relationship_path,
+                [rel_type] as relationship_path,
                 [start.name, related.name] as path_names
-            ORDER BY related.concept_id
-            LIMIT 20
             """
 
             results = await with_timeout(
@@ -976,12 +1386,323 @@ class KGRetrievalService:
             )
             return []
 
+    async def _query_umls_related_concepts(
+        self, concept_id: str, concept_name: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Query Neo4j for UMLS-related concepts via SAME_AS → UMLS_REL bridge.
+
+        Walks: Concept → SAME_AS → UMLSConcept → UMLS_REL → UMLSConcept
+        → SAME_AS → Concept, collecting EXTRACTED_FROM chunks from the
+        far-side document Concepts. This surfaces treatment concepts
+        (e.g., doxycycline) that are clinically related to a diagnosis
+        concept (e.g., pneumonia) via validated UMLS edges, even when
+        no direct Concept→Concept edge exists.
+
+        Only traverses UMLS_REL edges with clinically meaningful
+        rela_type values — excludes qualifier metadata, drug composition,
+        trade names, and administrative mappings.
+
+        Args:
+            concept_id: Starting concept ID
+            concept_name: Starting concept name (for logging)
+
+        Returns:
+            List of related concept dicts with keys:
+            concept_id, name, chunk_ids, hop_distance=1,
+            relationship_path=[rela_type], path_names
+        """
+        if not self._neo4j_client:
+            return []
+
+        try:
+            if hasattr(self._neo4j_client, '_is_connected') and not self._neo4j_client._is_connected:
+                logger.info("Neo4j client connection is stale, reconnecting...")
+                if hasattr(self._neo4j_client, 'connect'):
+                    await self._neo4j_client.connect()
+
+            clinical_rela = RelationshipTraverser.CLINICALLY_MEANINGFUL_UMLS_RELA
+
+            cypher = """
+            MATCH (start:Concept {concept_id: $concept_id})
+                  -[:SAME_AS]->(ua:UMLSConcept)
+                  -[r:UMLS_REL]-(ub:UMLSConcept)
+            WHERE r.rela_type IN $clinical_rela
+              AND ub.preferred_name IS NOT NULL
+            WITH DISTINCT ub, r.rela_type AS rela_type, start
+            ORDER BY ub.cui
+            LIMIT 20
+            OPTIONAL MATCH (target:Concept)-[:SAME_AS]->(ub)
+            WHERE target.concept_id <> start.concept_id
+            OPTIONAL MATCH (target)-[:EXTRACTED_FROM]->(ch:Chunk)
+            RETURN DISTINCT
+                target.concept_id AS concept_id,
+                target.name AS name,
+                collect(DISTINCT ch.chunk_id) AS chunk_ids,
+                1 AS hop_distance,
+                [rela_type] AS relationship_path,
+                [start.name, ub.preferred_name] AS path_names
+            """
+
+            results = await with_timeout(
+                self._neo4j_client.execute_query(
+                    cypher,
+                    {
+                        "concept_id": concept_id,
+                        "clinical_rela": clinical_rela,
+                    },
+                ),
+                self._query_timeout,
+            )
+
+            related_concepts = []
+            for r in results or []:
+                raw_chunk_ids = r.get("chunk_ids", [])
+                chunk_ids = [cid for cid in raw_chunk_ids if cid]
+                related_concepts.append({
+                    "concept_id": r.get("concept_id", ""),
+                    "name": r.get("name", ""),
+                    "chunk_ids": chunk_ids,
+                    "hop_distance": r.get("hop_distance", 1),
+                    "relationship_path": r.get("relationship_path", []),
+                })
+
+            logger.debug(
+                f"Found {len(related_concepts)} UMLS-related concepts for {concept_name}"
+            )
+            return related_concepts
+
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"Timeout querying UMLS-related concepts for {concept_name}"
+            )
+            return []
+        except Exception as e:
+            logger.warning(
+                f"Error querying UMLS-related concepts for {concept_name}: {e}"
+            )
+            return []
+
+    async def _query_umls_2hop_related_concepts(
+        self, concept_id: str, concept_name: str,
+    ) -> List[Dict[str, Any]]:
+        """
+        Query Neo4j for UMLS-related concepts within 2 UMLS_REL hops.
+
+        Walks: Concept → SAME_AS → UMLSConcept → UMLS_REL →
+        UMLSConcept → UMLS_REL → UMLSConcept → SAME_AS → Concept.
+
+        This reaches treatment concepts that are 2 clinical hops away
+        (e.g., pneumonia → isa → Bacterial Pneumonia → may_treat →
+        doxycycline) which the 1-hop UMLS traversal misses.
+
+        Bounded with LIMITs at each hop to prevent fan-out explosion.
+
+        Args:
+            concept_id: Starting concept ID
+            concept_name: Starting concept name (for logging)
+
+        Returns:
+            List of related concept dicts with keys:
+            concept_id, name, chunk_ids, hop_distance=2,
+            relationship_path=[rela_type_1, rela_type_2], path_names
+        """
+        if not self._neo4j_client:
+            return []
+
+        try:
+            if hasattr(self._neo4j_client, '_is_connected') and not self._neo4j_client._is_connected:
+                logger.info("Neo4j client connection is stale, reconnecting...")
+                if hasattr(self._neo4j_client, 'connect'):
+                    await self._neo4j_client.connect()
+
+            # Use a focused subset for 2-hop — the full clinical_rela
+            # list (50+ types) produces 10K+ targets, pushing clinically
+            # relevant concepts like doxycycline past the LIMIT.
+            clinical_rela_focused = [
+                "isa", "inverse_isa",
+                "may_treat", "may_be_treated_by",
+                "cause_of", "due_to",
+                "has_manifestation", "manifestation_of",
+            ]
+
+            cypher = """
+            MATCH (start:Concept {concept_id: $concept_id})
+                  -[:SAME_AS]->(ua:UMLSConcept)
+                  -[r1:UMLS_REL]-(umid:UMLSConcept)
+            WHERE r1.rela_type IN $clinical_rela
+              AND umid <> ua
+            WITH DISTINCT umid, r1.rela_type AS rela1, start, ua
+            ORDER BY umid.cui
+            LIMIT 10
+            MATCH (umid)-[r2:UMLS_REL]-(ub:UMLSConcept)
+            WHERE r2.rela_type IN $clinical_rela
+              AND ub <> umid
+              AND ub <> ua
+              AND ub.preferred_name IS NOT NULL
+            // Aggregate paths per unique UMLS target to prevent
+            // multi-path duplicates from inflating the effective
+            // position of each target in the ordered set.
+            WITH ub, rela1, r2.rela_type AS rela2, start, umid
+            WITH ub,
+                 collect({rela1: rela1, rela2: rela2,
+                          umid_name: umid.preferred_name,
+                          start_name: start.name}) AS paths,
+                 start
+            ORDER BY ub.cui
+            LIMIT 50
+            UNWIND paths AS path
+            OPTIONAL MATCH (target:Concept)-[:SAME_AS]->(ub)
+            WHERE target.concept_id <> start.concept_id
+            OPTIONAL MATCH (target)-[:EXTRACTED_FROM]->(ch:Chunk)
+            RETURN DISTINCT
+                target.concept_id AS concept_id,
+                target.name AS name,
+                collect(DISTINCT ch.chunk_id) AS chunk_ids,
+                2 AS hop_distance,
+                [path.rela1, path.rela2] AS relationship_path,
+                [path.start_name, path.umid_name, ub.preferred_name]
+                    AS path_names
+            """
+
+            results = await with_timeout(
+                self._neo4j_client.execute_query(
+                    cypher,
+                    {
+                        "concept_id": concept_id,
+                        "clinical_rela": clinical_rela_focused,
+                    },
+                ),
+                self._query_timeout,
+            )
+
+            related_concepts = []
+            for r in results or []:
+                raw_chunk_ids = r.get("chunk_ids", [])
+                chunk_ids = [cid for cid in raw_chunk_ids if cid]
+                related_concepts.append({
+                    "concept_id": r.get("concept_id", ""),
+                    "name": r.get("name", ""),
+                    "chunk_ids": chunk_ids,
+                    "hop_distance": r.get("hop_distance", 2),
+                    "relationship_path": r.get("relationship_path", []),
+                })
+
+            logger.debug(
+                f"Found {len(related_concepts)} UMLS 2-hop concepts "
+                f"for {concept_name}"
+            )
+            return related_concepts
+
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"Timeout querying UMLS 2-hop concepts for {concept_name}"
+            )
+            return []
+        except Exception as e:
+            logger.warning(
+                f"Error querying UMLS 2-hop concepts for {concept_name}: {e}"
+            )
+            return []
+
+    async def _query_2hop_related_concepts(
+        self, concept_id: str, concept_name: str,
+    ) -> List[Dict[str, Any]]:
+        """
+        Query Neo4j for related concepts within 2 hops.
+
+        Uses a single bounded Cypher query: 1-hop to intermediates
+        (LIMIT 5), then from each intermediate expands to 2-hop targets
+        (LIMIT 5 per intermediate).  This avoids the *1..2 variable-length
+        pattern while keeping to a single round-trip.
+
+        Args:
+            concept_id: Starting concept ID
+            concept_name: Starting concept name (for logging)
+
+        Returns:
+            List of 2-hop related concept dictionaries with hop_distance=2
+        """
+        if not self._neo4j_client:
+            return []
+
+        rel_types = "|".join(PRIORITY_RELATIONSHIP_TYPES)
+
+        try:
+            # Single-query 2-hop: bound intermediates via LIMIT, then
+            # unbind to targets.  Keeps fan-out predictable.
+            # LIMIT is applied BEFORE OPTIONAL MATCH so only the top-N
+            # targets get their chunk lists resolved.
+            cypher = f"""
+            MATCH (start:Concept {{concept_id: $concept_id}})
+                  -[r1:{rel_types}]-(mid:Concept)
+            WHERE mid.concept_id <> start.concept_id
+            WITH mid, type(r1) as rel1, start.name as start_name
+            ORDER BY mid.concept_id
+            LIMIT $intermediate_limit
+            MATCH (mid)-[r2:{rel_types}]-(target:Concept)
+            WHERE target.concept_id <> $concept_id
+              AND target.concept_id <> mid.concept_id
+            WITH DISTINCT target, rel1, type(r2) as rel2, start_name, mid.name as mid_name
+            ORDER BY target.concept_id
+            LIMIT $target_limit
+            OPTIONAL MATCH (target)-[:EXTRACTED_FROM]->(ch:Chunk)
+            RETURN DISTINCT
+                target.concept_id as concept_id,
+                target.name as name,
+                collect(DISTINCT ch.chunk_id) as chunk_ids,
+                2 as hop_distance,
+                [rel1, rel2] as relationship_path,
+                [start_name, mid_name, target.name] as path_names
+            """
+
+            results = await with_timeout(
+                self._neo4j_client.execute_query(
+                    cypher, {
+                        "concept_id": concept_id,
+                        "intermediate_limit": _MAX_2HOP_INTERMEDIATE,
+                        "target_limit": _MAX_2HOP_INTERMEDIATE * _MAX_2HOP_TARGETS_PER_INTERMEDIATE,
+                    }
+                ),
+                self._query_timeout * 3,  # 2-hop walks more edges, keep ~15s
+            )
+
+            two_hop: List[Dict[str, Any]] = []
+            for row in (results or []):
+                raw_chunk_ids = row.get("chunk_ids", [])
+                chunk_ids = [cid for cid in raw_chunk_ids if cid]
+                if chunk_ids:
+                    two_hop.append({
+                        "concept_id": row.get("concept_id", ""),
+                        "name": row.get("name", ""),
+                        "chunk_ids": chunk_ids,
+                        "hop_distance": 2,
+                        "relationship_path": row.get("relationship_path", []),
+                        "path_names": row.get("path_names", []),
+                    })
+
+            logger.info(
+                f"2-hop traversal for '{concept_name}': "
+                f"{len(two_hop)} targets with chunks"
+            )
+            return two_hop
+
+        except asyncio.TimeoutError:
+            logger.warning(f"Timeout in 2-hop traversal for {concept_name}")
+            return []
+        except Exception as e:
+            logger.warning(f"Error in 2-hop traversal for {concept_name}: {e}")
+            return []
+
     def _aggregate_and_deduplicate(
         self,
         direct_chunks: List[RetrievedChunk],
         related_chunks: List[RetrievedChunk],
         source_mappings: Dict[str, ChunkSourceMapping],
         chunk_concept_hits: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+        query: str = "",
+        matched_concept_names: Optional[List[str]] = None,
+        rationale_sim_by_pair: Optional[Dict[Tuple[str, str], float]] = None,
     ) -> List[RetrievedChunk]:
         """
         Aggregate and deduplicate chunks from multiple sources.
@@ -1015,6 +1736,216 @@ class KGRetrievalService:
         aggregated: List[RetrievedChunk] = []
         concept_hits = chunk_concept_hits or {}
 
+        # Document chunk-hit concentration: reward chunks from documents
+        # where a higher proportion of concept-matched chunks originate.
+        # Global concept nodes in Neo4j (source_document: NULL) cause
+        # cross-document pollution — this soft boost counters that by
+        # weighting document relevance into the KG score via the fraction
+        # of concept-hit chunks that belong to each document.
+        chunk_to_doc: Dict[str, str] = {}
+        for chunk in direct_chunks + related_chunks:
+            doc_id = (
+                chunk.metadata.get('source_id')
+                or chunk.metadata.get('document_id')
+            )
+            if doc_id:
+                chunk_to_doc[chunk.chunk_id] = str(doc_id)
+
+        # Count concept-hit chunks per document (concentration metric).
+        # A document contributing 40/50 concept-hit chunks gets a larger
+        # boost than one contributing only 5/50 — even when only a single
+        # concept is matched by the query.
+        doc_hit_counts: Dict[str, int] = {}
+        total_chunks_with_hits = 0
+        for cid in concept_hits:
+            doc_id = chunk_to_doc.get(cid)
+            if doc_id:
+                doc_hit_counts[doc_id] = doc_hit_counts.get(doc_id, 0) + 1
+                total_chunks_with_hits += 1
+
+        # Concept IDF: rare concepts that appear in few documents get
+        # higher weight in the coverage bonus. Common terms like
+        # "diagnosis" that span many documents contribute less.
+        concept_to_docs: Dict[str, Set[str]] = {}
+        for cid, hits_list in concept_hits.items():
+            doc_id = chunk_to_doc.get(cid)
+            if doc_id:
+                for h in hits_list:
+                    name = re.sub(
+                        r'[^a-z0-9\s]', '',
+                        h["concept_name"].lower(),
+                    ).strip()
+                    if name not in concept_to_docs:
+                        concept_to_docs[name] = set()
+                    concept_to_docs[name].add(doc_id)
+        num_docs = len(set(chunk_to_doc.values()))
+        concept_idf: Dict[str, float] = {}
+        for name, doc_set in concept_to_docs.items():
+            df = len(doc_set)
+            idf_raw = math.log(max(1, num_docs) / max(1, df))
+            concept_idf[name] = min(2.0, max(0.5, idf_raw))
+
+        # Document-title relevance: boost chunks from documents whose
+        # titles overlap with query content words.  A query about
+        # "community-acquired pneumonia" should give higher weight to
+        # chunks from "Diagnosis and Treatment of Adults with
+        # Community-Acquired Pneumonia" than from "Ferris Clinical
+        # Advisor 2021", even when both match the same concepts.
+        # Fetch document titles from PostgreSQL — Milvus chunk metadata
+        # does not include title/document_title fields.
+        doc_id_to_title: Dict[str, str] = {}
+        if chunk_to_doc:
+            try:
+                from src.multimodal_librarian.database.connection import db_manager
+                from sqlalchemy import text
+                if not db_manager.SessionLocal:
+                    db_manager.initialize()
+                doc_ids = list({str(d) for d in chunk_to_doc.values()})
+                with db_manager.get_session() as session:
+                    result = session.execute(
+                        text(
+                            "SELECT id::text, title "
+                            "FROM multimodal_librarian.knowledge_sources "
+                            "WHERE id::text = ANY(:ids)"
+                        ),
+                        {"ids": doc_ids},
+                    )
+                    for row in result:
+                        doc_id_to_title[row[0]] = str(row[1])
+            except Exception as e:
+                logger.warning(
+                    f"Failed to fetch document titles from PostgreSQL: {e}"
+                )
+
+        _QUERY_TITLE_BOOST_WEIGHT = 0.15
+        _CONCEPT_TITLE_BOOST_WEIGHT = 0.30
+        _RATIONALE_WEIGHT = 0.25
+        _rationale_sims = rationale_sim_by_pair or {}
+        _QUERY_STOPWORDS = {
+            'what', 'is', 'the', 'a', 'an', 'and', 'or', 'of', 'in', 'to',
+            'for', 'with', 'on', 'at', 'by', 'from', 'about', 'are', 'was',
+            'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does',
+            'did', 'will', 'would', 'could', 'should', 'may', 'might', 'can',
+            'shall', 'not', 'no', 'so', 'as', 'if', 'then', 'than', 'that',
+            'this', 'these', 'those', 'it', 'its', 'they', 'them', 'their',
+            'we', 'us', 'our', 'you', 'your', 'he', 'she', 'his', 'her',
+            'who', 'whom', 'which', 'how', 'when', 'where', 'why', 'but',
+            'also', 'very', 'just', 'still', 'already', 'only', 'even',
+        }
+        doc_title_boost: Dict[str, float] = {}
+        if query and doc_id_to_title:
+            # Split on whitespace AND hyphens so that both
+            # "community-acquired pneumonia" and
+            # "metlay-et-al-2019-diagnosis-and-treatment-of-adults-with-
+            #  community-acquired-pneumonia-..." produce overlapping tokens.
+            _word_split = re.compile(r'[-\s]+')
+            query_words = {
+                w.lower().strip('?.,!"\'();:[]{}')
+                for w in _word_split.split(query)
+                if len(w) > 2 and w.lower() not in _QUERY_STOPWORDS
+            }
+            for doc_id, title in doc_id_to_title.items():
+                title_words = {
+                    w.lower().strip('?.,!"\'();:[]{}')
+                    for w in _word_split.split(title)
+                    if len(w) > 2
+                }
+                if query_words and title_words:
+                    overlap = query_words & title_words
+                    overlap_ratio = len(overlap) / max(1, len(query_words))
+                    doc_title_boost[doc_id] = 1.0 + overlap_ratio * _QUERY_TITLE_BOOST_WEIGHT
+                    if overlap:
+                        logger.info(
+                            f"Title boost: doc={doc_id[:8]}... "
+                            f"title='{title[:80]}...' "
+                            f"overlap={overlap} ratio={overlap_ratio:.2f} "
+                            f"boost={doc_title_boost[doc_id]:.3f}"
+                        )
+                else:
+                    doc_title_boost[doc_id] = 1.0
+        else:
+            for doc_id in doc_id_to_title:
+                doc_title_boost[doc_id] = 1.0
+
+        # Concept→document title boost: when a concept like
+        # "community-acquired pneumonia" is matched, chunks from
+        # documents whose titles contain that phrase get a stronger
+        # boost than the generic query-word overlap alone provides.
+        # This surfaces treatment chunks from documents that are
+        # specifically about the matched diagnosis, even when NER
+        # only linked one chunk via EXTRACTED_FROM.
+        #
+        # Per-concept scoring: for each matched concept, compute what
+        # fraction of its words appear in the document title.  Sum
+        # contributions across concepts so that a document matching
+        # several specific concepts (e.g. "community-acquired pneumonia"
+        # AND "pneumococcal pneumonia") gets a stronger boost than one
+        # matching only a generic concept ("diagnosis").
+        concept_title_boost: Dict[str, float] = {}
+        if matched_concept_names and doc_id_to_title:
+            _word_split = re.compile(r'[-\s]+')
+            # Pre-tokenize each concept name: list of content words
+            _concept_tokens: List[Tuple[str, List[str]]] = []
+            for cname in matched_concept_names:
+                tokens = [
+                    w.lower().strip('?.,!"\'();:[]{}')
+                    for w in _word_split.split(cname)
+                    if len(w) > 2 and w.lower() not in _QUERY_STOPWORDS
+                ]
+                if tokens:
+                    _concept_tokens.append((cname, tokens))
+            if _concept_tokens:
+                for doc_id, title in doc_id_to_title.items():
+                    title_words = {
+                        w.lower().strip('?.,!"\'();:[]{}')
+                        for w in _word_split.split(title)
+                        if len(w) > 2
+                    }
+                    # Also strip file extensions (.pdf, .txt, etc.)
+                    # from title words so "pneumonia.pdf" matches
+                    # the concept token "pneumonia".
+                    title_words = {
+                        w.rsplit('.', 1)[0] if '.' in w and len(w.rsplit('.', 1)[1]) <= 5 else w
+                        for w in title_words
+                    }
+                    total_boost = 0.0
+                    matched_details: List[str] = []
+                    for cname, ctokens in _concept_tokens:
+                        # Per-concept overlap: what fraction of this
+                        # concept's words appear in the title?
+                        c_overlap = sum(1 for t in ctokens if t in title_words)
+                        c_ratio = c_overlap / len(ctokens)
+                        # Threshold by concept length to avoid weak
+                        # matches inflating the boost.  "antibiotic
+                        # treatment" (2 words) should only match titles
+                        # that contain BOTH words, otherwise "treatment"
+                        # alone would match 50% of medical titles.
+                        if len(ctokens) == 1:
+                            min_ratio = 1.0    # single-word: exact match
+                        elif len(ctokens) == 2:
+                            min_ratio = 1.0    # 2-word: both words required
+                        else:
+                            min_ratio = 0.67   # 3+ word: at least 2/3
+                        if c_ratio >= min_ratio:
+                            total_boost += c_ratio * _CONCEPT_TITLE_BOOST_WEIGHT
+                            matched_details.append(
+                                f"{cname}({c_ratio:.0%})"
+                            )
+                    concept_title_boost[doc_id] = 1.0 + total_boost
+                    if matched_details:
+                        logger.info(
+                            f"Concept-title boost: doc={doc_id[:8]}... "
+                            f"title='{title[:80]}...' "
+                            f"matched_concepts={matched_details} "
+                            f"boost={concept_title_boost[doc_id]:.3f}"
+                        )
+            for doc_id in doc_id_to_title:
+                if doc_id not in concept_title_boost:
+                    concept_title_boost[doc_id] = 1.0
+        else:
+            for doc_id in doc_id_to_title:
+                concept_title_boost[doc_id] = 1.0
+
         # Direct chunks: concept-coverage-aware scoring
         for chunk in direct_chunks:
             if chunk.chunk_id not in seen_ids:
@@ -1044,10 +1975,46 @@ class KGRetrievalService:
                         name for name in distinct_names
                         if not is_generic_concept(name)
                     }
-                    num_concepts = len(specific_names) if specific_names else 1
-                    # log2(1)=0, log2(2)=1, log2(3)=1.58, log2(4)=2
-                    coverage_bonus = math.log2(max(1, num_concepts)) * 0.1
-                    chunk.kg_relevance_score = min(1.0, base_score + coverage_bonus)
+                    # Similarity + distinctiveness weighted coverage.
+                    # Each distinct concept beyond the best contributes
+                    # proportionally to both its match similarity and its
+                    # IDF (rarer concepts across the result set weight more
+                    # heavily).  Capped/clamped to [0.5, 2.0] so a concept
+                    # in 1/N docs gets at most 2× weighting.
+                    specific_pairs = []  # (name, max_score)
+                    for name in specific_names:
+                        max_score = max(
+                            h["match_score"] for h in hits
+                            if re.sub(r'[^a-z0-9\s]', '', h["concept_name"].lower()).strip() == name
+                        )
+                        specific_pairs.append((name, max_score))
+                    if specific_pairs:
+                        specific_pairs.sort(key=lambda x: x[1], reverse=True)
+                        additional_pairs = specific_pairs[1:]
+                        coverage_bonus = sum(
+                            score / 10.0 * 0.15 * concept_idf.get(name, 0.5)
+                            for name, score in additional_pairs
+                        )
+                    else:
+                        coverage_bonus = 0.0
+                    doc_id = chunk_to_doc.get(chunk.chunk_id)
+                    doc_hit_count = doc_hit_counts.get(doc_id, 0) if doc_id else 0
+                    concentration = doc_hit_count / max(1, total_chunks_with_hits)
+                    doc_boost = 1.0 + concentration * 0.2
+                    title_boost = doc_title_boost.get(doc_id, 1.0) if doc_id else 1.0
+                    ctitle_boost = concept_title_boost.get(doc_id, 1.0) if doc_id else 1.0
+                    # Rationale boost: when a concept's persisted LLM rationale
+                    # is semantically close to the query, lift the chunk.  Uses
+                    # the best rationale→query similarity across this chunk's
+                    # concept hits (clamped to non-negative).
+                    best_rat = 0.0
+                    for h in hits:
+                        s = _rationale_sims.get((h["concept_id"], chunk.chunk_id), 0.0)
+                        if s > best_rat:
+                            best_rat = s
+                    rationale_boost = 1.0 + best_rat * _RATIONALE_WEIGHT
+                    chunk.kg_relevance_score = min(1.0, (base_score + coverage_bonus) * doc_boost * title_boost * ctitle_boost * rationale_boost)
+                    chunk.final_score = chunk.kg_relevance_score
                     # Store matched concepts on the chunk for downstream use
                     chunk.matched_concepts = hits
                     # Update concept_name to reflect the best-matching concept
@@ -1057,7 +2024,22 @@ class KGRetrievalService:
                     # Fallback: use source_mapping score
                     mapping = source_mappings.get(chunk.chunk_id)
                     raw_score = mapping.match_score if mapping else 1.0
-                    chunk.kg_relevance_score = min(1.0, max(0.1, raw_score / 10.0))
+                    doc_id = chunk_to_doc.get(chunk.chunk_id)
+                    doc_hit_count = doc_hit_counts.get(doc_id, 0) if doc_id else 0
+                    concentration = doc_hit_count / max(1, total_chunks_with_hits)
+                    doc_boost = 1.0 + concentration * 0.2
+                    title_boost = doc_title_boost.get(doc_id, 1.0) if doc_id else 1.0
+                    ctitle_boost = concept_title_boost.get(doc_id, 1.0) if doc_id else 1.0
+                    # When concept-title alignment is strong, treat the
+                    # chunk as having a synthetic concept hit.  A 100%
+                    # concept→title match (e.g. "community-acquired
+                    # pneumonia" all in the title) adds 0.30 to the
+                    # boost, which translates to a 0.60 score bonus —
+                    # enough to compete with direct NER concept hits.
+                    concept_bonus = max(0.0, ctitle_boost - 1.0)
+                    base_score = max(0.1, raw_score / 10.0) + concept_bonus * 2.0
+                    chunk.kg_relevance_score = min(1.0, base_score * doc_boost * title_boost)
+                    chunk.final_score = chunk.kg_relevance_score
 
                 seen_ids.add(chunk.chunk_id)
                 aggregated.append(chunk)
@@ -1074,10 +2056,30 @@ class KGRetrievalService:
             if chunk.chunk_id not in seen_ids and related_count < self._max_related_chunks:
                 mapping = source_mappings.get(chunk.chunk_id)
                 hop = mapping.hop_distance if mapping else 1
-                chunk.kg_relevance_score = self._hop_distance_decay ** hop
+                # Path-type-aware decay: UMLS clinical paths get minimal decay,
+                # document-extracted edges and co-occurrence get standard decay.
+                pt = mapping.path_type if mapping else None
+                decay = _PATH_TYPE_DECAY.get(pt, self._hop_distance_decay)
+                chunk.kg_relevance_score = decay ** hop
+                chunk.final_score = chunk.kg_relevance_score
+
                 seen_ids.add(chunk.chunk_id)
                 aggregated.append(chunk)
                 related_count += 1
+
+        # Enrich ALL aggregated chunks with document titles from PostgreSQL.
+        # _convert_kg_results in the RAG service reads metadata['document_title']
+        # and surfaces it as "[Source N: <title>]" in the LLM prompt.
+        # Also store the concept-title boost so downstream filters (e.g.
+        # co-occurrence drop) can protect concept-aligned chunks.
+        enriched = 0
+        for chunk in aggregated:
+            doc_id = chunk_to_doc.get(chunk.chunk_id)
+            if doc_id and doc_id in doc_id_to_title:
+                chunk.metadata['document_title'] = doc_id_to_title[doc_id]
+                cboost = concept_title_boost.get(doc_id, 1.0)
+                chunk.metadata['concept_title_boost'] = cboost
+                enriched += 1
 
         logger.debug(
             f"Aggregated {len(aggregated)} unique chunks from "
@@ -1314,8 +2316,9 @@ class KGRetrievalService:
                     return await method(query=query, top_k=top_k)
                 else:
                     loop = asyncio.get_event_loop()
+                    executor = getattr(self._vector_client, '_executor', None)
                     return await loop.run_in_executor(
-                        None, lambda: method(query=query, top_k=top_k)
+                        executor, lambda: method(query=query, top_k=top_k)
                     )
             else:
                 logger.warning("Vector client has no semantic_search method")

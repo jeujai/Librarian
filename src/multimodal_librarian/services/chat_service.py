@@ -931,6 +931,8 @@ class ChatService:
                     })
                 except Exception as e:
                     logger.error(f"Error in enhanced message loop for {connection_id}: {e}")
+                    if "disconnect" in str(e).lower():
+                        raise WebSocketDisconnect(str(e))
                     await self.connection_manager.send_message(connection_id, {
                         "type": "error",
                         "content": "An error occurred processing your message.",

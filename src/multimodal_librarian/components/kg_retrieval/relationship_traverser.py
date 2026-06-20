@@ -187,6 +187,13 @@ class RelationshipTraverser:
         2. UMLSConcept → UMLS_REL → UMLSConcept (clinical relationships)
         3. UMLSConcept ← SAME_AS ← Concept (bridge back to document concepts)
 
+        Collects chunks from BOTH sides of the UMLS path (concept A and B)
+        as well as any document Concepts that bridge to the intermediate
+        UMLS nodes. This ensures treatment-related chunks reachable via
+        clinical relationship paths (e.g., Diabetes → may_be_treated_by →
+        Metformin) are surfaced even when the target concept was not
+        explicitly matched in the query.
+
         Only includes UMLS_REL edges with clinically meaningful rela_type values
         (isa, may_treat, cause_of, due_to, has_manifestation, etc.) and
         excludes qualifier metadata (QB edges), drug composition, and
@@ -202,17 +209,30 @@ class RelationshipTraverser:
         clinical_rela = self.CLINICALLY_MEANINGFUL_UMLS_RELA
 
         cypher = (
-            "MATCH (a:Concept {concept_id: $concept_id_a})-[:SAME_AS]->"
+            "MATCH (a:Concept {concept_id: $concept_id_a})-[:SAME_AS|SIMILAR_TO]->"
             "(ua:UMLSConcept) "
-            "MATCH (b:Concept {concept_id: $concept_id_b})-[:SAME_AS]->"
+            "MATCH (b:Concept {concept_id: $concept_id_b})-[:SAME_AS|SIMILAR_TO]->"
             "(ub:UMLSConcept) "
             "MATCH (ua)-[r:UMLS_REL]-(ub) "
             "WHERE r.rela_type IN $clinical_rela "
             "WITH a, b, ua, r, ub "
             "LIMIT $max_paths "
-            "OPTIONAL MATCH (a)-[:EXTRACTED_FROM]->(ch:Chunk) "
+            # Bridge back from UMLS nodes to document Concepts via SAME_AS.
+            # Both ua and ub may have multiple document Concepts (synonyms,
+            # variants) - collect them all so treatment/diagnostic chunks
+            # attached to the far side of the clinical relationship are found.
+            "OPTIONAL MATCH (cb_ua:Concept)-[:SAME_AS|SIMILAR_TO]->(ua) "
+            "OPTIONAL MATCH (cb_ub:Concept)-[:SAME_AS|SIMILAR_TO]->(ub) "
+            "WITH a, b, ua, r, ub, "
+            "     collect(DISTINCT a) + collect(DISTINCT b) + "
+            "     collect(DISTINCT cb_ua) + collect(DISTINCT cb_ub) "
+            "     AS concept_nodes "
+            "UNWIND concept_nodes AS n "
+            "WITH n, a, b, ua, r, ub "
+            "WHERE n IS NOT NULL "
+            "OPTIONAL MATCH (n)-[:EXTRACTED_FROM]->(ch:Chunk) "
             "RETURN DISTINCT ch.chunk_id AS chunk_id, "
-            "a.concept_id AS via_concept_id, "
+            "n.concept_id AS via_concept_id, "
             "$concept_id_a AS source_concept_a, "
             "$concept_id_b AS source_concept_b, "
             "ua.preferred_name AS umls_source_name, "
@@ -246,6 +266,13 @@ class RelationshipTraverser:
         - Forward-reverse: (ua)-[r1]->(umid)<-[r2]-(ub)
           (e.g., metformin→T2D←DM where DM-[isa]->T2D)
 
+        Collects chunks from BOTH sides of the UMLS path and from document
+        Concepts that bridge to the intermediate UMLS nodes (ua, umid, ub)
+        via SAME_AS. This is critical for surfacing treatment chunks when
+        the clinical path passes through a treatment concept (e.g., the
+        umid node UMLS:Metformin bridges back to a document Concept:Metformin
+        that has EXTRACTED_FROM edges to treatment-content chunks).
+
         Both UMLS_REL hops must use clinically meaningful rela_type values.
 
         Args:
@@ -257,12 +284,10 @@ class RelationshipTraverser:
         """
         clinical_rela = self.CLINICALLY_MEANINGFUL_UMLS_RELA
 
-        # Use two MATCH patterns (UNION-like via OR in path) to cover both
-        # arrow-direction patterns through the intermediate UMLSConcept.
         cypher = (
-            "MATCH (a:Concept {concept_id: $concept_id_a})-[:SAME_AS]->"
+            "MATCH (a:Concept {concept_id: $concept_id_a})-[:SAME_AS|SIMILAR_TO]->"
             "(ua:UMLSConcept) "
-            "MATCH (b:Concept {concept_id: $concept_id_b})-[:SAME_AS]->"
+            "MATCH (b:Concept {concept_id: $concept_id_b})-[:SAME_AS|SIMILAR_TO]->"
             "(ub:UMLSConcept) "
             "MATCH (ua)-[r1:UMLS_REL]-(umid:UMLSConcept)"
             "-[r2:UMLS_REL]-(ub) "
@@ -271,9 +296,26 @@ class RelationshipTraverser:
             "  AND umid <> ua AND umid <> ub "
             "WITH a, b, ua, r1, umid, r2, ub "
             "LIMIT $max_paths "
-            "OPTIONAL MATCH (a)-[:EXTRACTED_FROM]->(ch:Chunk) "
+            # Bridge back from ALL UMLS nodes to document Concepts via
+            # SAME_AS. The intermediate umid node is critical: when the
+            # 2-hop path is Diabetes -> may_be_treated_by -> Metformin ->
+            # isa -> Biguanide, bridging umid (UMLS:Metformin) back to a
+            # document Concept:Metformin surfaces treatment chunks that
+            # neither a nor b could reach.
+            "OPTIONAL MATCH (cb_ua:Concept)-[:SAME_AS|SIMILAR_TO]->(ua) "
+            "OPTIONAL MATCH (cb_umid:Concept)-[:SAME_AS|SIMILAR_TO]->(umid) "
+            "OPTIONAL MATCH (cb_ub:Concept)-[:SAME_AS|SIMILAR_TO]->(ub) "
+            "WITH a, b, ua, r1, umid, r2, ub, "
+            "     collect(DISTINCT a) + collect(DISTINCT b) + "
+            "     collect(DISTINCT cb_ua) + collect(DISTINCT cb_umid) + "
+            "     collect(DISTINCT cb_ub) "
+            "     AS concept_nodes "
+            "UNWIND concept_nodes AS n "
+            "WITH n, a, b, ua, r1, umid, r2, ub "
+            "WHERE n IS NOT NULL "
+            "OPTIONAL MATCH (n)-[:EXTRACTED_FROM]->(ch:Chunk) "
             "RETURN DISTINCT ch.chunk_id AS chunk_id, "
-            "a.concept_id AS via_concept_id, "
+            "n.concept_id AS via_concept_id, "
             "$concept_id_a AS source_concept_a, "
             "$concept_id_b AS source_concept_b, "
             "ua.preferred_name AS umls_source_name, "
@@ -358,7 +400,7 @@ class RelationshipTraverser:
         try:
             async with self._neo4j_client.session() as session:
                 result = await session.run(
-                    "MATCH (c:Concept)-[:SAME_AS]->(:UMLSConcept) "
+                    "MATCH (c:Concept)-[:SAME_AS|SIMILAR_TO]->(:UMLSConcept) "
                     "WHERE c.concept_id IN $concept_ids "
                     "RETURN count(c) > 0 AS has_bridge "
                     "LIMIT 1",

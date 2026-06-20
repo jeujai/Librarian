@@ -78,6 +78,7 @@ try:
         connections,
         utility,
     )
+    from pymilvus.grpc_gen import common_pb2
     MILVUS_AVAILABLE = True
 except ImportError as e:
     MILVUS_AVAILABLE = False
@@ -214,6 +215,15 @@ class MilvusClient:
         self._collection_cache: Dict[str, Collection] = {}
         self._collection_stats_cache: Dict[str, Dict[str, Any]] = {}
         self._cache_ttl = 300  # 5 minutes
+        
+        # Track B — post-restart reconnection / reload retry support.
+        # Subscribers (e.g. MilvusReadinessGate.invalidate) register via
+        # register_failure_callback(); they are invoked after a classified
+        # post-restart failure in the search path so the next gate
+        # evaluation re-probes rather than serving a stale ready=True.
+        # See .kiro/specs/milvus-post-restart-retrieval-regression/design.md
+        # Track B for the full retry invariant.
+        self._failure_callbacks: List[Any] = []
         
         logger.info(f"Initialized MilvusClient for {host}:{port}")
     
@@ -499,6 +509,180 @@ class MilvusClient:
                 port=self.port
             )
     
+    # ------------------------------------------------------------------
+    # Track B — post-restart reconnection / reload retry (search path).
+    #
+    # Narrowly scoped: these helpers fire ONLY from the two user-facing
+    # search entry points (``search_vectors``, ``semantic_search``). The
+    # ingestion path, ``_run_with_retry`` generic retry, and
+    # ``health_check`` semantics are intentionally untouched.
+    # See design.md Track B for the full classification rationale and
+    # the retry_count <= 1 invariant.
+    # ------------------------------------------------------------------
+    
+    def register_failure_callback(self, callback: Any) -> None:
+        """Register a callback to invoke after a classified search failure.
+        
+        Subscribers are called once per classified post-restart failure
+        (collection-not-loaded OR connection-lost fingerprints) from the
+        search path, regardless of whether the subsequent single retry
+        succeeded. This lets ``MilvusReadinessGate.invalidate`` drop its
+        cached ``ready=True`` so the next request re-evaluates the
+        readiness status instead of serving stale cache.
+        
+        Multiple subscribers are supported — callbacks are invoked in
+        registration order. Sync and async callbacks are both accepted;
+        async callbacks are awaited via ``asyncio.iscoroutine`` /
+        ``inspect.iscoroutinefunction`` inspection.
+        
+        Args:
+            callback: Zero-argument callable. May be sync or async.
+        """
+        self._failure_callbacks.append(callback)
+    
+    @staticmethod
+    def _is_post_restart_recoverable(exc: MilvusException) -> bool:
+        """Classify a MilvusException as a Track B recoverable failure.
+        
+        Matches on:
+        
+        * ``"collection not loaded"`` substring in the error message
+          (case-insensitive) — RC2 fingerprint.
+        * ``isinstance(exc, ConnectionNotExistException)`` when that
+          class is importable. Older pymilvus versions expose the
+          hierarchy differently, so the import is guarded.
+        * ``"failed to connect" / "connection refused" /
+          "channel not available"`` substrings in the error message
+          (case-insensitive) — RC5 stale-cached-client fingerprint.
+        
+        Any other ``MilvusException`` is NOT classified — the caller
+        re-raises it without touching connection state so the generic
+        ``_run_with_retry`` path remains authoritative for non-search
+        paths.
+        """
+        message = str(exc).lower()
+        if "collection not loaded" in message:
+            return True
+        if any(
+            needle in message
+            for needle in (
+                "failed to connect",
+                "connection refused",
+                "channel not available",
+            )
+        ):
+            return True
+        try:
+            from pymilvus.exceptions import ConnectionNotExistException
+        except ImportError:
+            ConnectionNotExistException = None  # type: ignore[assignment]
+        if (
+            ConnectionNotExistException is not None
+            and isinstance(exc, ConnectionNotExistException)
+        ):
+            return True
+        return False
+
+    @staticmethod
+    def _is_timestamp_corruption_error(exc: MilvusException) -> bool:
+        """Detect Milvus/etcd timestamp synchronization errors.
+
+        These errors occur when Milvus is started before etcd/MinIO
+        are ready — the timestamp oracle (TSO) and etcd index diverge,
+        and Milvus permanently refuses search requests with
+        "timestamp lag too large" or similar.
+
+        Unlike a dropped connection or unloaded collection, this
+        condition cannot be fixed by reconnect+reload.  The only
+        correct recovery is:
+
+            scripts/stop-databases.sh   # milvus → etcd → minio
+            scripts/start-databases.sh  # etcd → minio → postgres →
+                                          neo4j → redis → milvus
+
+        Detection strategy (dual-layer, either layer matches):
+          L1 — gRPC ErrorCode match (protocol-level, version-stable)
+          L2 — substring match on the server error message
+               (English-language, case-insensitive)
+        """
+        # L1: gRPC error code — TimeTickLongDelay = 0x37 (55)
+        try:
+            if exc.compatible_code == common_pb2.TimeTickLongDelay:
+                return True
+        except Exception:
+            pass
+
+        # L2: substring match on server error message
+        message = str(exc).lower()
+        for needle in (
+            "timestamp lag",
+            "tso timestamp",
+            "timestamp is stale",
+            "timestamp is not current",
+            "time tick long delay",
+            "clock offset is huge",
+        ):
+            if needle in message:
+                return True
+        return False
+
+    async def _recover_collection_for_retry(
+        self, collection_name: str
+    ):
+        """Perform the single recovery sequence before a search retry.
+        
+        Track B invariant: exactly ONE recovery attempt per request.
+        
+        Sequence (per design Track B):
+        
+        1. Drop ``self._collection_cache[name]`` if present — a cached
+           ``Collection`` handle bound to a stale connection alias is
+           what silently serves degraded results after a server restart.
+        2. Set ``self._connected = False`` so ``connect()`` re-runs the
+           connection handshake instead of short-circuiting.
+        3. ``await self.connect()`` — single re-connect.
+        4. ``self._get_collection(name)`` — rebuild the cached handle
+           against the new connection.
+        5. ``collection.load()`` in the executor — idempotent; costs
+           only the load time if already in memory.
+        
+        Returns the freshly-loaded collection so the caller can retry
+        the search against the same handle without another cache lookup.
+        """
+        self._collection_cache.pop(collection_name, None)
+        self._connected = False
+        await self.connect()
+        collection = await self._get_collection(collection_name)
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, collection.load)
+        return collection
+    
+    async def _notify_failure_callbacks(self) -> None:
+        """Invoke every registered failure callback exactly once.
+        
+        Awaits coroutine callbacks; calls sync callbacks directly. A
+        callback that raises is swallowed and logged at WARNING so one
+        misbehaving subscriber never blocks the others or masks the
+        original search failure. Called after Track B's single retry,
+        regardless of whether the retry succeeded — the gate's cache
+        must be invalidated either way so the next request re-probes.
+        """
+        import inspect
+        
+        for callback in list(self._failure_callbacks):
+            try:
+                if inspect.iscoroutinefunction(callback):
+                    await callback()
+                else:
+                    result = callback()
+                    if asyncio.iscoroutine(result):
+                        await result
+            except Exception as cb_exc:  # pragma: no cover — defensive
+                logger.warning(
+                    "Track B failure-callback raised; continuing: %s",
+                    cb_exc,
+                )
+    
     async def _run_with_retry(self, operation, *args, **kwargs):
         """Run operation with retry logic.
         
@@ -747,53 +931,107 @@ class MilvusClient:
         try:
             logger.debug(f"Performing semantic search for: '{query[:50]}...'")
             
-            # Ensure embedding model is loaded
-            await self._ensure_embedding_model()
-            
-            # Generate query embedding (ASYNC - non-blocking)
-            query_embedding = await self.generate_embedding_async(query.strip())
-            
-            # Default collection name
-            collection_name = self._default_collection_name
-            
-            # Ensure collection exists
-            collections = await self.list_collections()
-            if collection_name not in collections:
-                logger.warning(f"Collection '{collection_name}' does not exist, returning empty results")
-                return []
-            
-            # Perform vector search
-            raw_results = await self.search_vectors(
-                collection_name, 
-                query_embedding, 
-                top_k, 
-                filters
-            )
-            
-            # Format results for compatibility
-            formatted_results = []
-            for result in raw_results:
-                metadata = result.get("metadata", {})
+            async def _do_semantic_search() -> SearchResults:
+                """Core semantic search body — wrapped by Track B classify+retry."""
+                # Ensure embedding model is loaded
+                await self._ensure_embedding_model()
                 
-                # Normalize score (convert L2 distance to similarity)
-                # For L2 distance, smaller is better, so we invert it
-                distance = result.get("score", 1.0)
-                similarity_score = 1.0 / (1.0 + distance)  # Convert to 0-1 similarity
+                # Generate query embedding (ASYNC - non-blocking)
+                query_embedding = await self.generate_embedding_async(query.strip())
                 
-                formatted_result = {
-                    "content": metadata.get("content", ""),
-                    "score": similarity_score,
-                    "metadata": metadata,
-                    "source_id": metadata.get("source_id", ""),
-                    "chunk_index": metadata.get("chunk_index", 0),
-                    "id": result.get("id", ""),
-                    "raw_score": distance  # Keep original distance for debugging
-                }
+                # Default collection name
+                collection_name = self._default_collection_name
                 
-                formatted_results.append(formatted_result)
+                # Ensure collection exists
+                collections = await self.list_collections()
+                if collection_name not in collections:
+                    logger.warning(f"Collection '{collection_name}' does not exist, returning empty results")
+                    return []
+                
+                # Perform vector search (this call has its own Track B
+                # retry boundary; a classified failure there surfaces as
+                # QueryError here, not MilvusException, so we never
+                # double-retry — retry count stays <= 1 per request).
+                raw_results = await self.search_vectors(
+                    collection_name, 
+                    query_embedding, 
+                    top_k, 
+                    filters
+                )
+                
+                # Format results for compatibility
+                formatted_results = []
+                for result in raw_results:
+                    metadata = result.get("metadata", {})
+                    
+                    # Normalize score (convert L2 distance to similarity)
+                    # For L2 distance, smaller is better, so we invert it
+                    distance = result.get("score", 1.0)
+                    similarity_score = 1.0 / (1.0 + distance)  # Convert to 0-1 similarity
+                    
+                    formatted_result = {
+                        "content": metadata.get("content", ""),
+                        "score": similarity_score,
+                        "metadata": metadata,
+                        "source_id": metadata.get("source_id", ""),
+                        "chunk_index": metadata.get("chunk_index", 0),
+                        "id": result.get("id", ""),
+                        "raw_score": distance  # Keep original distance for debugging
+                    }
+                    
+                    formatted_results.append(formatted_result)
+                
+                logger.debug(f"Found {len(formatted_results)} results for semantic search")
+                return formatted_results
             
-            logger.debug(f"Found {len(formatted_results)} results for semantic search")
-            return formatted_results
+            # --- Track B retry boundary -------------------------------
+            # Catches MilvusException raised by setup calls that happen
+            # BEFORE search_vectors (e.g. list_collections). Classified
+            # failures trigger exactly ONE reconnect+reload+retry, then
+            # notify subscribers. Unclassified exceptions re-raise.
+            # search_vectors' own Track B retry surfaces as QueryError,
+            # which bypasses this block — retry count stays <= 1.
+            try:
+                return await _do_semantic_search()
+            except MilvusException as first_exc:
+                if self._is_timestamp_corruption_error(first_exc):
+                    logger.critical(
+                        "Milvus/etcd timestamp corruption detected — "
+                        "search will fail until services are restarted "
+                        "in the correct order (scripts/stop-databases.sh "
+                        "then scripts/start-databases.sh). Error: %s",
+                        first_exc,
+                    )
+                    raise
+                if not self._is_post_restart_recoverable(first_exc):
+                    raise
+                logger.warning(
+                    "Track B: classified recoverable Milvus failure in "
+                    "semantic_search; attempting single "
+                    "reconnect+reload+retry: %s",
+                    first_exc,
+                )
+                retry_exception: Optional[MilvusException] = None
+                retry_result: Optional[SearchResults] = None
+                try:
+                    await self._recover_collection_for_retry(
+                        self._default_collection_name
+                    )
+                    retry_result = await _do_semantic_search()
+                except MilvusException as second_exc:
+                    retry_exception = second_exc
+                finally:
+                    await self._notify_failure_callbacks()
+                
+                if retry_exception is not None:
+                    raise QueryError(
+                        f"Semantic search failed after Track B retry: "
+                        f"{retry_exception}",
+                        query_type="semantic_search",
+                        parameters={"query": query[:100], "top_k": top_k},
+                        original_exception=retry_exception,
+                    )
+                return retry_result  # type: ignore[return-value]
             
         except Exception as e:
             if isinstance(e, (ValidationError, QueryError)):
@@ -916,7 +1154,8 @@ class MilvusClient:
                 lambda: collection.query(
                     expr=query_expr,
                     output_fields=["id", "metadata", "vector"],
-                    limit=len(chunk_ids)
+                    limit=len(chunk_ids),
+                    consistency_level="Eventually",
                 )
             )
             
@@ -1906,59 +2145,118 @@ class MilvusClient:
         try:
             logger.debug(f"Searching for {k} similar vectors in collection '{collection_name}'")
             
-            # Get collection
-            collection = await self._get_collection(collection_name)
-            
-            # Ensure collection is loaded
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, collection.load)
-            
-            # Prepare search parameters with dynamic optimization
-            search_params = await self._get_optimized_search_params(collection_name, k)
-            
-            # Build filter expression if provided
-            filter_expr = None
-            if filters:
-                filter_expr = self._build_filter_expression(filters)
-            
-            # Perform search using functools.partial to support keyword arguments
-            import functools
-            search_func = functools.partial(
-                collection.search,
-                data=[query_vector],
-                anns_field="vector",
-                param=search_params,
-                limit=k,
-                expr=filter_expr,
-                output_fields=["id", "metadata"]
-            )
-            search_result = await loop.run_in_executor(None, search_func)
-            
-            # Process results
-            results = []
-            if search_result and len(search_result) > 0:
-                hits = search_result[0]  # First query results
+            async def _do_search() -> SearchResults:
+                """Core search body — wrapped by Track B classify+retry below."""
+                # Get collection (freshly re-cached after a Track B recovery,
+                # or read from the long-lived cache on the healthy path).
+                collection = await self._get_collection(collection_name)
                 
-                for hit in hits:
-                    result = {
-                        "id": hit.id,
-                        "score": float(hit.distance),  # Distance score
-                        "metadata": hit.entity.get("metadata", {}),
-                    }
+                # Ensure collection is loaded (idempotent).
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, collection.load)
+                
+                # Prepare search parameters with dynamic optimization
+                search_params = await self._get_optimized_search_params(collection_name, k)
+                
+                # Build filter expression if provided
+                filter_expr = None
+                if filters:
+                    filter_expr = self._build_filter_expression(filters)
+                
+                # Perform search using functools.partial to support keyword arguments
+                import functools
+                search_func = functools.partial(
+                    collection.search,
+                    data=[query_vector],
+                    anns_field="vector",
+                    param=search_params,
+                    limit=k,
+                    expr=filter_expr,
+                    output_fields=["id", "metadata"],
+                    consistency_level="Eventually",
+                )
+                search_result = await loop.run_in_executor(None, search_func)
+                
+                # Process results
+                results = []
+                if search_result and len(search_result) > 0:
+                    hits = search_result[0]  # First query results
                     
-                    # Add vector if requested (for debugging)
-                    if filters and filters.get("include_vector", False):
-                        try:
-                            vector_data = await self._get_vector_by_id_internal(collection, hit.id)
-                            if vector_data:
-                                result["vector"] = vector_data.get("vector")
-                        except:
-                            pass  # Skip if vector retrieval fails
-                    
-                    results.append(result)
+                    for hit in hits:
+                        result = {
+                            "id": hit.id,
+                            "score": float(hit.distance),  # Distance score
+                            "metadata": hit.entity.get("metadata", {}),
+                        }
+                        
+                        # Add vector if requested (for debugging)
+                        if filters and filters.get("include_vector", False):
+                            try:
+                                vector_data = await self._get_vector_by_id_internal(collection, hit.id)
+                                if vector_data:
+                                    result["vector"] = vector_data.get("vector")
+                            except:
+                                pass  # Skip if vector retrieval fails
+                        
+                        results.append(result)
+                
+                logger.debug(f"Found {len(results)} similar vectors")
+                return results
             
-            logger.debug(f"Found {len(results)} similar vectors")
-            return results
+            # --- Track B retry boundary -------------------------------
+            # Classify any MilvusException raised by the first attempt.
+            # If recoverable (RC2/RC5 fingerprint), perform exactly ONE
+            # reconnect + reload + retry, then notify subscribers so the
+            # readiness gate invalidates its cache regardless of retry
+            # outcome. Non-classified MilvusExceptions re-raise without
+            # touching connection state — the generic _run_with_retry
+            # path at lines ~640-680 remains authoritative for them.
+            try:
+                return await _do_search()
+            except MilvusException as first_exc:
+                if self._is_timestamp_corruption_error(first_exc):
+                    logger.critical(
+                        "Milvus/etcd timestamp corruption detected in "
+                        "search_vectors('%s') — search will fail until "
+                        "services are restarted in the correct order "
+                        "(scripts/stop-databases.sh then "
+                        "scripts/start-databases.sh). Error: %s",
+                        collection_name,
+                        first_exc,
+                    )
+                    raise
+                if not self._is_post_restart_recoverable(first_exc):
+                    raise
+                logger.warning(
+                    "Track B: classified recoverable Milvus failure in "
+                    "search_vectors('%s'); attempting single "
+                    "reconnect+reload+retry: %s",
+                    collection_name,
+                    first_exc,
+                )
+                retry_exception: Optional[MilvusException] = None
+                retry_result: Optional[SearchResults] = None
+                try:
+                    await self._recover_collection_for_retry(collection_name)
+                    retry_result = await _do_search()
+                except MilvusException as second_exc:
+                    retry_exception = second_exc
+                finally:
+                    # Fire callbacks regardless of retry outcome so the
+                    # gate re-probes on the next request even on success
+                    # (the server has just restarted; readiness should
+                    # not be trusted without a fresh evaluation).
+                    await self._notify_failure_callbacks()
+                
+                if retry_exception is not None:
+                    raise QueryError(
+                        f"Vector search failed after Track B retry in "
+                        f"collection '{collection_name}': {retry_exception}",
+                        query_type="vector_search",
+                        parameters={"k": k, "filters": filters},
+                        original_exception=retry_exception,
+                    )
+                return retry_result  # type: ignore[return-value]
             
         except Exception as e:
             if isinstance(e, (ValidationError, QueryError)):
@@ -2034,9 +2332,11 @@ class MilvusClient:
             # Query by ID
             query_result = await loop.run_in_executor(
                 None,
-                collection.query,
-                f'id == "{vector_id}"',  # Filter expression
-                ["id", "vector", "metadata"]  # Output fields
+                lambda: collection.query(
+                    expr=f'id == "{vector_id}"',
+                    output_fields=["id", "vector", "metadata"],
+                    consistency_level="Eventually",
+                )
             )
             
             if query_result and len(query_result) > 0:
@@ -2673,10 +2973,12 @@ class MilvusClient:
             # Query random vectors
             sample_results = await loop.run_in_executor(
                 None,
-                collection.query,
-                "",  # Empty expression to get all
-                ["vector"],
-                limit=num_queries
+                lambda: collection.query(
+                    expr="",
+                    output_fields=["vector"],
+                    limit=num_queries,
+                    consistency_level="Eventually",
+                )
             )
             
             test_queries = []
@@ -2726,13 +3028,14 @@ class MilvusClient:
                     
                     await loop.run_in_executor(
                         None,
-                        collection.search,
-                        [query_vector],
-                        "vector",
-                        search_params,
-                        10,  # k=10 for testing
-                        None,  # No filters
-                        ["id"]  # Minimal output fields
+                        lambda: collection.search(
+                            data=[query_vector],
+                            anns_field="vector",
+                            param=search_params,
+                            limit=10,
+                            output_fields=["id"],
+                            consistency_level="Eventually",
+                        )
                     )
                 else:
                     # Use default search

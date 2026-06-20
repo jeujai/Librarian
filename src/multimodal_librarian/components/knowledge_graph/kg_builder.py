@@ -95,9 +95,12 @@ Valid concept types: {concept_types}
 
 Return ONLY a JSON array. No explanation, no markdown, no extra text.
 Each element must have "name", "type", and "rationale" fields.
+The "rationale" is a brief (one clause) explanation of why the concept
+matters in this context — a paraphrase in your own words, NOT a verbatim
+quote copied from the text.
 
 Example output:
-[{{"name": "neural network", "type": "ENTITY", "rationale": "neural network architecture"}}]
+[{{"name": "neural network", "type": "ENTITY", "rationale": "core model architecture under discussion"}}]
 
 Only extract terms explicitly mentioned in the text.
 
@@ -301,7 +304,7 @@ class ConceptExtractor:
                 )
                 return []
 
-            grounded = self._filter_by_rationale(entries, text)
+            grounded = self._attach_rationale(entries)
             return grounded  # Return raw dicts; caller builds ConceptNodes
         except Exception as e:
             logger.warning("Gemini concept extraction failed: %s", e)
@@ -330,32 +333,21 @@ class ConceptExtractor:
     # LLM-based concept extraction (Ollama)
     # ------------------------------------------------------------------
 
-    def _filter_by_rationale(
-        self, candidates: List[Dict], source_text: str
-    ) -> List[Dict]:
-        """Filter LLM concept candidates by rationale grounding.
+    def _attach_rationale(self, candidates: List[Dict]) -> List[Dict]:
+        """Normalize the rationale on each LLM concept candidate.
 
-        Keeps only candidates whose ``rationale`` field is a non-empty string
-        that appears as a case-insensitive substring of *source_text*.
+        Pure soft-weight policy: no candidate is dropped.  Each candidate's
+        ``rationale`` is coerced to a stripped string (empty when missing or
+        malformed).  The rationale is later embedded and persisted on the
+        EXTRACTED_FROM edge, where it boosts chunk ranking via similarity to
+        the query at inference time.
         """
-        source_lower = source_text.lower()
-        kept: List[Dict] = []
         for candidate in candidates:
             rationale = candidate.get("rationale", "")
-            if not rationale or not isinstance(rationale, str) or not rationale.strip():
-                logger.debug(
-                    "Discarding concept %s: empty or missing rationale",
-                    candidate.get("name", "<unknown>"),
-                )
-                continue
-            if rationale.lower() not in source_lower:
-                logger.debug(
-                    "Discarding concept %s: rationale not found in source text",
-                    candidate.get("name", "<unknown>"),
-                )
-                continue
-            kept.append(candidate)
-        return kept
+            if not isinstance(rationale, str):
+                rationale = ""
+            candidate["rationale"] = rationale.strip()
+        return candidates
 
     async def extract_concepts_ollama(
         self, text: str, content_type: ContentType = ContentType.GENERAL
@@ -485,7 +477,7 @@ class ConceptExtractor:
                 )
                 return []
 
-            grounded = self._filter_by_rationale(entries, text)
+            grounded = self._attach_rationale(entries)
             return grounded
         except Exception as e:
             logger.warning("Unexpected error in Ollama concept extraction: %s", e)
@@ -508,6 +500,7 @@ class ConceptExtractor:
                 concept_type=ctype,
                 confidence=base_confidence,
                 source_chunks=[],
+                rationale=(entry.get("rationale") or None),
             )
             concepts.append(concept)
 
@@ -849,13 +842,24 @@ class ConceptExtractor:
         ollama_concepts, llm_failed = ollama_result
         regex_concepts = self.extract_concepts_regex(text)
 
-        # Merge: index by normalized name, keep higher confidence
+        # Merge: index by normalized name, keep higher confidence.
+        # Only the LLM (ollama) extractor produces a rationale, and it is
+        # iterated last, so a same-named NER/regex concept with >= confidence
+        # would otherwise discard the LLM object and lose its rationale. Keep
+        # the confidence winner but carry any rationale across the merge so it
+        # survives onto whichever object proceeds downstream.
         merged: Dict[str, ConceptNode] = {}
         for concept in ner_concepts + regex_concepts + ollama_concepts:
             key = self._normalize_concept_name(concept.concept_name)
             existing = merged.get(key)
-            if existing is None or concept.confidence > existing.confidence:
+            if existing is None:
                 merged[key] = concept
+                continue
+            winner = concept if concept.confidence > existing.confidence else existing
+            loser = existing if winner is concept else concept
+            if not getattr(winner, "rationale", None) and getattr(loser, "rationale", None):
+                winner.rationale = loser.rationale
+            merged[key] = winner
         return (list(merged.values()), ner_failed, llm_failed)
 
     def extract_concepts_definition_patterns(self, text: str, chunk_id: str) -> List[ConceptNode]:

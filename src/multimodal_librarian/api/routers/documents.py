@@ -477,6 +477,105 @@ async def retry_document_processing(
         )
 
 
+@router.post("/{document_id}/bridges/regenerate")
+async def regenerate_document_bridges(
+    document_id: UUID,
+    force_all: bool = False,
+    document_manager: DocumentManager = Depends(get_document_manager)
+):
+    """
+    Regenerate bridge chunks for a COMPLETED document.
+    
+    Reads existing chunks, runs gap analysis, and generates bridges
+    without re-running the full extraction/chunking pipeline.
+    
+    - **document_id**: Unique document identifier
+    - **force_all**: If true, force bridge generation for all adjacent chunk pairs
+    
+    Returns task ID for tracking progress.
+    """
+    try:
+        result = await document_manager.regenerate_bridges_for_document(
+            document_id, force_all
+        )
+
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={
+                "message": "Bridge regeneration initiated",
+                "document_id": str(document_id),
+                "task_id": result["task_id"],
+                "force_all": result["force_all"],
+            }
+        )
+
+    except HTTPException:
+        raise
+    except DocumentManagerError as e:
+        logger.error(f"Error regenerating bridges for document {document_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error regenerating bridges for document {document_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to regenerate bridges"
+        )
+
+
+@router.post("/{document_id}/re-extract-concepts")
+async def re_extract_document_concepts(
+    document_id: UUID,
+    document_manager: DocumentManager = Depends(get_document_manager)
+):
+    """
+    Re-run NER and concept extraction for a COMPLETED document.
+
+    Reads the document's existing chunks from PostgreSQL, cleans up old
+    Neo4j Chunk nodes and EXTRACTED_FROM relationships, and re-runs the
+    knowledge graph update task to extract concepts from scratch.
+
+    This is a surgical operation — it does NOT re-extract PDF text or
+    re-generate chunks. Only the NER/LLM/regex concept extraction,
+    UMLS linking, concept embedding, and Neo4j persistence stages are
+    re-executed.
+
+    - **document_id**: Unique document identifier
+
+    Returns task ID for tracking progress.
+    """
+    try:
+        result = await document_manager.re_extract_concepts_for_document(
+            document_id
+        )
+
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={
+                "message": "Concept re-extraction initiated",
+                "document_id": str(document_id),
+                "task_id": result["task_id"],
+            }
+        )
+
+    except HTTPException:
+        raise
+    except DocumentManagerError as e:
+        logger.error(f"Error re-extracting concepts for document {document_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error re-extracting concepts for document {document_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to re-extract concepts"
+        )
+
+
 @router.get("/{document_id}/summary")
 async def get_document_content_summary(
     document_id: UUID,

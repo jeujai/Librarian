@@ -60,7 +60,7 @@ async def health_check():
         factory = get_database_factory()
         
         # Perform health check
-        health_result = factory.health_check()
+        health_result = await factory.health_check()
         
         if health_result["overall_status"] in ["healthy", "degraded"]:
             # Get graph database info
@@ -101,7 +101,7 @@ async def create_node(
 ):
     """Create a new node in the knowledge graph."""
     try:
-        node = kg_service.create_node(
+        node = await kg_service.create_node(
             label=request.label,
             properties=request.properties,
             merge_on=request.merge_on
@@ -128,7 +128,7 @@ async def get_node(
 ):
     """Get a node by ID."""
     try:
-        node = kg_service.get_node_by_id(node_id)
+        node = await kg_service.get_node_by_id(node_id)
         
         if not node:
             raise HTTPException(status_code=404, detail=f"Node {node_id} not found")
@@ -157,7 +157,7 @@ async def get_nodes(
 ):
     """Get nodes by label."""
     try:
-        nodes = kg_service.get_nodes_by_label(label=label, limit=limit)
+        nodes = await kg_service.get_nodes_by_label(label=label, limit=limit)
         
         return [
             NodeResponse(
@@ -184,7 +184,7 @@ async def update_node(
 ):
     """Update a node's properties."""
     try:
-        node = kg_service.update_node(node_id, request.properties)
+        node = await kg_service.update_node(node_id, request.properties)
         
         return NodeResponse(
             id=node["id"],
@@ -208,7 +208,7 @@ async def delete_node(
 ):
     """Delete a node and optionally its relationships."""
     try:
-        success = kg_service.delete_node(node_id, delete_relationships)
+        success = await kg_service.delete_node(node_id, delete_relationships)
         
         if success:
             return SuccessResponse(
@@ -237,7 +237,7 @@ async def create_relationship(
 ):
     """Create a relationship between two nodes."""
     try:
-        relationship = kg_service.create_relationship(
+        relationship = await kg_service.create_relationship(
             from_node_id=request.from_node_id,
             to_node_id=request.to_node_id,
             relationship_type=request.relationship_type,
@@ -268,7 +268,7 @@ async def get_node_relationships(
 ):
     """Get relationships for a node."""
     try:
-        relationships = kg_service.get_node_relationships(node_id, direction)
+        relationships = await kg_service.get_node_relationships(node_id, direction)
         
         return [
             RelationshipResponse(
@@ -294,7 +294,7 @@ async def delete_relationship(
 ):
     """Delete a relationship."""
     try:
-        success = kg_service.delete_relationship(relationship_id)
+        success = await kg_service.delete_relationship(relationship_id)
         
         if success:
             return SuccessResponse(
@@ -324,7 +324,7 @@ async def execute_cypher_query(
     """Execute a custom Cypher query."""
     try:
         start_time = time.time()
-        results = kg_service.execute_cypher(request.query, request.parameters)
+        results = await kg_service.execute_cypher(request.query, request.parameters)
         execution_time = (time.time() - start_time) * 1000  # Convert to milliseconds
         
         return CypherQueryResponse(
@@ -347,7 +347,7 @@ async def search_nodes(
 ):
     """Search for nodes containing a term."""
     try:
-        nodes = kg_service.search_nodes(
+        nodes = await kg_service.search_nodes(
             search_term=request.search_term,
             labels=request.labels,
             properties=request.properties,
@@ -384,7 +384,7 @@ async def get_graph_statistics(
 ):
     """Get knowledge graph statistics."""
     try:
-        stats = kg_service.get_graph_stats()
+        stats = await kg_service.get_graph_stats()
         
         return GraphStatsResponse(
             total_nodes=stats["total_nodes"],

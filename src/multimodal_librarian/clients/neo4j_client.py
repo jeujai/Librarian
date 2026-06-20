@@ -300,6 +300,14 @@ class Neo4jClient:
             "CALL db.index.vector.createNodeIndex("
             "'concept_embedding_index', 'Concept', 'embedding', 768, 'cosine')"
         )
+
+        # Vector index over clinically-relevant UMLSConcept embeddings, used to
+        # bridge extracted concepts to canonical UMLS concepts via cosine
+        # similarity (SIMILAR_TO edges) when no exact-name SAME_AS match exists.
+        umls_vector_index_statement = (
+            "CALL db.index.vector.createNodeIndex("
+            "'umls_embedding_index', 'UMLSConcept', 'embedding', 768, 'cosine')"
+        )
         
         try:
             async with self.driver.session(database=self.database) as session:
@@ -318,7 +326,14 @@ class Neo4jClient:
                 except Exception as e:
                     # Index may already exist - this is expected and safe to ignore
                     logger.warning(f"Vector index creation warning (may already exist): {e}")
-                
+
+                # Create vector index for UMLS concept matching
+                try:
+                    await session.run(umls_vector_index_statement)
+                    logger.debug("Created vector index: umls_embedding_index")
+                except Exception as e:
+                    logger.warning(f"UMLS vector index creation warning (may already exist): {e}")
+
                 logger.info("Neo4j indexes and constraints ensured")
                 
         except Exception as e:

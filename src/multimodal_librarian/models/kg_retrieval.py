@@ -359,6 +359,7 @@ class ChunkSourceMapping:
     relationship_path: Optional[List[str]] = None
     hop_distance: int = 0
     match_score: float = 1.0  # Concept match score from fulltext search
+    path_type: Optional[str] = None  # umls_1hop, umls_2hop, direct, shared_chunk
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -370,6 +371,7 @@ class ChunkSourceMapping:
             'relationship_path': self.relationship_path,
             'hop_distance': self.hop_distance,
             'match_score': self.match_score,
+            'path_type': self.path_type,
         }
 
     @classmethod
@@ -383,6 +385,7 @@ class ChunkSourceMapping:
             relationship_path=data.get('relationship_path'),
             hop_distance=data.get('hop_distance', 0),
             match_score=data.get('match_score', 1.0),
+            path_type=data.get('path_type'),
         )
 
     def validate(self) -> bool:

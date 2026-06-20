@@ -361,7 +361,7 @@ class PrivacyService:
 
             try:
                 # Step 0: Delete RELATED_DOCS edges involving this document
-                result_rd = kg_service.execute_cypher(
+                result_rd = await kg_service.execute_cypher(
                     """
                     MATCH ()-[r:RELATED_DOCS]->()
                     WHERE r.source_doc_id = $source_id
@@ -374,7 +374,7 @@ class PrivacyService:
                 deleted_rd = result_rd[0].get("deleted_rd", 0) if result_rd else 0
 
                 # Step 1: Delete EXTRACTED_FROM relationships to this source's Chunk nodes
-                result_rels = kg_service.execute_cypher(
+                result_rels = await kg_service.execute_cypher(
                     """
                     MATCH (ch:Chunk {source_id: $source_id})<-[r:EXTRACTED_FROM]-(c:Concept)
                     DELETE r
@@ -385,7 +385,7 @@ class PrivacyService:
                 deleted_rels = result_rels[0].get("deleted_rels", 0) if result_rels else 0
 
                 # Step 2: Delete Chunk nodes for this source_id
-                result_chunks = kg_service.execute_cypher(
+                result_chunks = await kg_service.execute_cypher(
                     """
                     MATCH (ch:Chunk {source_id: $source_id})
                     DELETE ch
@@ -396,7 +396,7 @@ class PrivacyService:
                 deleted_chunks = result_chunks[0].get("deleted_chunks", 0) if result_chunks else 0
 
                 # Step 3: Delete orphaned Concepts (no remaining EXTRACTED_FROM and no SAME_AS)
-                result_concepts = kg_service.execute_cypher(
+                result_concepts = await kg_service.execute_cypher(
                     """
                     MATCH (c:Concept)
                     WHERE NOT EXISTS { MATCH (c)-[:EXTRACTED_FROM]->() }

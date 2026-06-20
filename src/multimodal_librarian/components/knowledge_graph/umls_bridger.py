@@ -151,6 +151,98 @@ class UMLSBridger:
             return results[0].get("cnt", 0)
         return 0
 
+    async def bridge_concepts_semantic(
+        self,
+        concept_ids: List[str],
+        threshold: float = 0.85,
+        top_k: int = 1,
+        batch_size: int = 500,
+    ) -> int:
+        """Create SIMILAR_TO edges to the nearest clinically-relevant UMLSConcept.
+
+        Runs AFTER exact-name SAME_AS bridging.  For each of the document's
+        Concept nodes that has an embedding but no SAME_AS edge, queries the
+        ``umls_embedding_index`` for the nearest UMLSConcept and MERGEs a
+        SIMILAR_TO edge when cosine >= ``threshold``.  This bridges layman /
+        non-canonical terms (e.g. "Kidney Disease") to canonical UMLS concepts
+        ("Renal Failure"), so they can ride the UMLS clinical relationship
+        graph at retrieval time.
+
+        Embeddings are read from the persisted Concept nodes (no in-memory
+        carry).  Degrades silently when the UMLS vector index is absent or
+        empty.  Returns the number of SIMILAR_TO edges created.
+        """
+        if not concept_ids:
+            return 0
+
+        # Concepts from this document with an embedding and no exact match yet.
+        try:
+            candidates = await self._neo4j.execute_query(
+                "MATCH (c:Concept) "
+                "WHERE c.concept_id IN $ids AND c.embedding IS NOT NULL "
+                "AND NOT EXISTS { MATCH (c)-[:SAME_AS]->(:UMLSConcept) } "
+                "RETURN c.concept_id AS concept_id, c.embedding AS embedding",
+                {"ids": list(concept_ids)},
+            )
+        except Exception as e:
+            logger.warning(f"umls_semantic_fetch_candidates_failed: {e}")
+            return 0
+
+        if not candidates:
+            return 0
+
+        timestamp = datetime.now(timezone.utc).isoformat()
+        edge_rows: List[Dict[str, Any]] = []
+        for cand in candidates:
+            cid = cand.get("concept_id")
+            emb = cand.get("embedding")
+            if not cid or not emb:
+                continue
+            try:
+                rows = await self._neo4j.execute_query(
+                    "CALL db.index.vector.queryNodes("
+                    "'umls_embedding_index', $top_k, $embedding) "
+                    "YIELD node, score "
+                    "WHERE score >= $threshold "
+                    "RETURN node.cui AS cui, score AS score "
+                    "ORDER BY score DESC LIMIT 1",
+                    {"top_k": top_k, "embedding": emb, "threshold": threshold},
+                )
+            except Exception as e:
+                logger.warning(f"umls_semantic_vector_query_failed: {e}")
+                continue
+            if rows and rows[0].get("cui"):
+                edge_rows.append({
+                    "concept_id": cid,
+                    "cui": rows[0]["cui"],
+                    "score": rows[0]["score"],
+                    "created_at": timestamp,
+                })
+
+        total = 0
+        for i in range(0, len(edge_rows), batch_size):
+            batch = edge_rows[i:i + batch_size]
+            results = await self._neo4j.execute_write_query(
+                "UNWIND $items AS item "
+                "MATCH (c:Concept {concept_id: item.concept_id}) "
+                "MATCH (u:UMLSConcept {cui: item.cui}) "
+                "MERGE (c)-[r:SIMILAR_TO]->(u) "
+                "ON CREATE SET r.score = item.score, "
+                "r.created_at = item.created_at, r.bridge = 'semantic' "
+                "RETURN count(r) AS cnt",
+                {"items": batch},
+            )
+            if results:
+                total += results[0].get("cnt", 0)
+
+        logger.info(
+            "umls_semantic_bridge_complete",
+            candidates=len(candidates),
+            matched=len(edge_rows),
+            similar_to_edges_created=total,
+        )
+        return total
+
     async def bridge_concepts(
         self, concept_names: List[str], batch_size: int = 500
     ) -> BridgeResult:

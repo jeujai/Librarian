@@ -945,32 +945,42 @@ async def handle_chat_message(message_data: dict, connection_id: str, manager: C
             'message': 'Processing your message...'
         }, connection_id)
         
-        # Classify intent before entering the RAG pipeline so we can
-        # intercept status_report requests and bypass RAG entirely.
+        # Only run AI intent classification for messages that contain
+        # system-report keywords. Medical and general queries skip this
+        # expensive extra AI call — process_query inside the RAG pipeline
+        # already classifies intent downstream.
         if manager.rag_available and manager.rag_service and hasattr(manager.rag_service, 'query_processor'):
-            try:
-                conversation_context = manager.get_conversation_context(connection_id)
-                intent, _ = await manager.rag_service.query_processor._classify_query_intent(
-                    user_message, conversation_context
-                )
-                if intent == "status_report":
-                    await _handle_status_report(connection_id, manager)
-                    return
-                if intent == "throughput_report":
-                    await _handle_throughput_report(connection_id, manager)
-                    return
-                if intent == "enrichment_report":
-                    await _handle_enrichment_report(connection_id, manager)
-                    return
-                if intent == "failed_uploads_report":
-                    await _handle_failed_uploads_report(connection_id, manager)
-                    return
-                if intent == "system_commands":
-                    await _handle_system_commands(connection_id, manager)
-                    return
-            except Exception as e:
-                logger.warning(f"Intent classification for status_report check failed: {e}")
-                # Fall through to normal RAG flow
+            quick_check = user_message.lower()
+            system_intent_keywords = [
+                'status report', 'system status', 'throughput report',
+                'enrichment report', 'failed uploads', 'system commands',
+                'processing status', 'document stats', 'pipeline status',
+                'queue status'
+            ]
+            if any(kw in quick_check for kw in system_intent_keywords):
+                try:
+                    conversation_context = manager.get_conversation_context(connection_id)
+                    intent, _ = await manager.rag_service.query_processor._classify_query_intent(
+                        user_message, conversation_context
+                    )
+                    if intent == "status_report":
+                        await _handle_status_report(connection_id, manager)
+                        return
+                    if intent == "throughput_report":
+                        await _handle_throughput_report(connection_id, manager)
+                        return
+                    if intent == "enrichment_report":
+                        await _handle_enrichment_report(connection_id, manager)
+                        return
+                    if intent == "failed_uploads_report":
+                        await _handle_failed_uploads_report(connection_id, manager)
+                        return
+                    if intent == "system_commands":
+                        await _handle_system_commands(connection_id, manager)
+                        return
+                except Exception as e:
+                    logger.warning(f"Intent classification for status_report check failed: {e}")
+                    # Fall through to normal RAG flow
 
         # Try RAG-powered response first
         if manager.rag_available and manager.rag_service:

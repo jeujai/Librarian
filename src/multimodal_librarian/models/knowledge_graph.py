@@ -80,7 +80,8 @@ class ConceptNode:
     source_chunks: List[str] = field(default_factory=list)  # In-memory only – not persisted to Neo4j
     source_document: Optional[str] = None  # In-memory only – not persisted to Neo4j
     external_ids: Dict[str, str] = field(default_factory=dict)  # YAGO, ConceptNet IDs
-    
+    rationale: Optional[str] = None  # LLM semantic rationale; persisted on EXTRACTED_FROM edge
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
@@ -91,7 +92,8 @@ class ConceptNode:
             'confidence': self.confidence,
             'source_chunks': self.source_chunks,
             'source_document': self.source_document,
-            'external_ids': self.external_ids
+            'external_ids': self.external_ids,
+            'rationale': self.rationale
         }
     
     @classmethod
@@ -105,7 +107,8 @@ class ConceptNode:
             confidence=data.get('confidence', 0.0),
             source_chunks=data.get('source_chunks', []),
             source_document=data.get('source_document'),
-            external_ids=data.get('external_ids', {})
+            external_ids=data.get('external_ids', {}),
+            rationale=data.get('rationale')
         )
     
     def validate(self) -> bool:

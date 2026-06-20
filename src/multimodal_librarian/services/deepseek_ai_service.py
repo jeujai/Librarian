@@ -768,7 +768,7 @@ class DeepSeekAIService:
         messages: List[Dict[str, str]],
         context: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: int = 2048,
+        max_tokens: int = 4096,
         preferred_provider: Optional[Any] = None,
     ) -> AsyncGenerator[AIResponse, None]:
         """Stream the DeepSeek chat-completions response token-by-token.

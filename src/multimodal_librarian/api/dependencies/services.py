@@ -1598,6 +1598,14 @@ async def get_ner_extractor(
     if _ner_extractor is not None:
         return _ner_extractor
 
+    # Resolve umls_client when called directly (not through FastAPI DI),
+    # in which case the parameter is the unresolved Depends object.
+    if type(umls_client).__name__ == 'Depends':
+        try:
+            umls_client = await get_umls_client_optional()
+        except Exception:
+            umls_client = None
+
     from ...components.kg_retrieval.ner_extractor import NER_Extractor
 
     # Load en_core_web_sm (Layer 1) — independent
@@ -1724,6 +1732,14 @@ async def get_relevance_detector(
     Validates: Requirements 6.1, 6.2, 6.3, 7.1
     """
     global _relevance_detector
+
+    # Resolve `ner_extractor` when called directly (not through FastAPI DI),
+    # in which case the parameter is the unresolved Depends object.
+    if type(ner_extractor).__name__ == 'Depends':
+        try:
+            ner_extractor = await get_ner_extractor()
+        except Exception:
+            ner_extractor = None
 
     if _relevance_detector is None:
         from ...components.kg_retrieval.relevance_detector import RelevanceDetector

@@ -326,6 +326,109 @@ class DocumentManager:
             logger.error(f"Failed to retry document processing: {e}")
             raise DocumentManagerError(f"Failed to retry processing: {e}")
     
+    async def regenerate_bridges_for_document(
+        self, document_id: UUID, force_all: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Regenerate bridge chunks for a COMPLETED document from existing chunks.
+
+        Reads existing chunks, runs gap analysis, and generates bridges
+        without re-running the full extraction/chunking pipeline.
+
+        Args:
+            document_id: Document identifier
+            force_all: If True, generate bridges for ALL adjacent chunk pairs
+
+        Returns:
+            Dict with task_id, document_id, and force_all
+        """
+        try:
+            document = await self.upload_service.get_document(document_id)
+            if not document:
+                raise DocumentManagerError(f"Document not found: {document_id}")
+
+            if document.status != DocumentStatus.COMPLETED:
+                raise DocumentManagerError(
+                    f"Document must be COMPLETED to regenerate bridges, "
+                    f"current status: {document.status.value if hasattr(document.status, 'value') else document.status}"
+                )
+
+            logger.info(
+                f"Regenerating bridges for document {document_id} "
+                f"(force_all={force_all})"
+            )
+
+            task_id = await self.processing_service.celery_service.queue_bridge_regeneration(
+                document_id, force_all
+            )
+
+            logger.info(
+                f"Bridge regeneration queued for document {document_id} "
+                f"with task {task_id}"
+            )
+
+            return {
+                'document_id': str(document_id),
+                'task_id': task_id,
+                'force_all': force_all,
+            }
+
+        except DocumentManagerError:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to regenerate bridges: {e}")
+            raise DocumentManagerError(f"Failed to regenerate bridges: {e}")
+
+    async def re_extract_concepts_for_document(
+        self, document_id: UUID
+    ) -> Dict[str, Any]:
+        """
+        Re-run NER/concept extraction for a COMPLETED document.
+
+        Reads existing chunks, cleans up old Neo4j data, and dispatches
+        update_knowledge_graph_task to re-extract concepts from scratch.
+
+        Args:
+            document_id: Document identifier
+
+        Returns:
+            Dict with task_id and document_id
+        """
+        try:
+            document = await self.upload_service.get_document(document_id)
+            if not document:
+                raise DocumentManagerError(f"Document not found: {document_id}")
+
+            if document.status != DocumentStatus.COMPLETED:
+                raise DocumentManagerError(
+                    f"Document must be COMPLETED to re-extract concepts, "
+                    f"current status: {document.status}"
+                )
+
+            logger.info(
+                f"Re-extracting concepts for document {document_id}"
+            )
+
+            task_id = await self.processing_service.celery_service.re_extract_concepts(
+                document_id
+            )
+
+            logger.info(
+                f"Concept re-extraction queued for document {document_id} "
+                f"with task {task_id}"
+            )
+
+            return {
+                'document_id': str(document_id),
+                'task_id': task_id,
+            }
+
+        except DocumentManagerError:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to re-extract concepts: {e}")
+            raise DocumentManagerError(f"Failed to re-extract concepts: {e}")
+
     async def _get_failed_stage(self, document_id: UUID) -> Optional[str]:
         """
         Get the failed stage for a document from processing job metadata.

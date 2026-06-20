@@ -10,7 +10,7 @@ import logging
 import os
 import time
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
 import redis
@@ -190,7 +190,9 @@ celery_app.conf.update(
         'extract_pdf_content_task': {'queue': 'pdf_processing'},
         'generate_chunks_task': {'queue': 'chunking'},
         'generate_bridges_task': {'queue': 'chunking'},
+        'regenerate_bridges_task': {'queue': 'chunking'},
         'update_knowledge_graph_task': {'queue': 'knowledge_graph'},
+        're_extract_concepts_task': {'queue': 'knowledge_graph'},
         'finalize_processing_task': {'queue': 'document_processing'},
         'enrich_concepts_task': {'queue': 'enrichment'}
     }
@@ -306,7 +308,133 @@ class CeleryService:
         except Exception as e:
             logger.error(f"Failed to queue document processing: {e}")
             raise
-    
+
+    async def queue_bridge_regeneration(self, document_id: UUID, force_all: bool = False) -> str:
+        """
+        Queue bridge regeneration for a COMPLETED document.
+
+        Dispatches a Celery task that reads existing chunks, runs gap
+        analysis, and regenerates bridges without re-running extraction.
+
+        Args:
+            document_id: Document to regenerate bridges for
+            force_all: If True, force bridges for all adjacent pairs
+
+        Returns:
+            str: Celery task ID
+        """
+        try:
+            # Create processing job record
+            await self._create_processing_job(document_id)
+
+            # Mark document as processing
+            from ..models.documents import DocumentStatus
+            from .upload_service import UploadService
+            upload_service = UploadService()
+            await upload_service.update_document_status(
+                document_id, DocumentStatus.PROCESSING
+            )
+
+            # Queue Celery task
+            task = regenerate_bridges_task.delay(str(document_id), force_all)
+
+            # Update job with task ID
+            await self._update_job_task_id(document_id, task.id)
+
+            self.processing_stats['total_jobs_queued'] += 1
+            self.processing_stats['active_jobs'] += 1
+
+            logger.info(
+                f"Document {document_id} queued for bridge regeneration "
+                f"with task ID {task.id} (force_all={force_all})"
+            )
+            return task.id
+
+        except Exception as e:
+            logger.error(f"Failed to queue bridge regeneration: {e}")
+            raise
+
+    async def re_extract_concepts(self, document_id: UUID) -> str:
+        """
+        Re-run NER/concept extraction for a COMPLETED document.
+
+        Reads the document's existing chunks, cleans up old Neo4j Chunk
+        nodes and EXTRACTED_FROM relationships, and dispatches a standalone
+        Celery task that re-extracts concepts and finalizes the document.
+
+        Args:
+            document_id: Document to re-extract concepts for
+
+        Returns:
+            str: Celery task ID
+        """
+        try:
+            logger.info(f"Re-extracting concepts for document {document_id}")
+
+            # Verify chunks exist
+            chunks = await _read_document_chunks(str(document_id))
+            if not chunks:
+                raise ValueError(
+                    f"No chunks found for document {document_id} — "
+                    f"cannot re-extract concepts"
+                )
+            logger.info(
+                f"Read {len(chunks)} existing chunks for document {document_id}"
+            )
+
+            # Create processing job and mark as processing
+            await self._create_processing_job(document_id)
+            from ..models.documents import DocumentStatus
+            from .upload_service import UploadService
+            upload_service = UploadService()
+            await upload_service.update_document_status(
+                document_id, DocumentStatus.PROCESSING
+            )
+
+            # Build a minimal processing payload for the task
+            serialized_processed = {
+                'document_id': str(document_id),
+                'chunks': [
+                    {
+                        'id': c['id'],
+                        'content': c['content'],
+                        'chunk_index': c.get('chunk_index', 0),
+                        'chunk_type': 'general',
+                        'start_position': 0,
+                        'end_position': len(c.get('content', '')),
+                        'page_number': c.get('metadata', {}).get('page_number', 1),
+                        'metadata': c.get('metadata', {}),
+                    }
+                    for c in chunks
+                ],
+                'bridges': [],
+                'bridge_generation_data': {},
+                'content_profile': {
+                    'content_type': 'general',
+                    'complexity_score': 0.5,
+                    'domain_categories': [],
+                },
+                'processing_stats': {},
+            }
+            await _store_processing_payload(str(document_id), serialized_processed)
+
+            # Dispatch standalone re-extraction task
+            task = re_extract_concepts_task.delay(str(document_id))
+            await self._update_job_task_id(document_id, task.id)
+
+            self.processing_stats['total_jobs_queued'] += 1
+            self.processing_stats['active_jobs'] += 1
+
+            logger.info(
+                f"Document {document_id} queued for concept re-extraction "
+                f"with task ID {task.id}"
+            )
+            return task.id
+
+        except Exception as e:
+            logger.error(f"Failed to queue concept re-extraction: {e}")
+            raise
+
     async def get_job_status(self, document_id: UUID) -> Optional[Dict[str, Any]]:
         """
         Get processing job status.
@@ -1872,6 +2000,323 @@ def generate_bridges_task(upstream_result: Dict[str, Any], document_id: str):
         asyncio.set_event_loop(None)
 
 
+@celery_app.task(name='regenerate_bridges_task', time_limit=TASK_HARD_TIME_LIMIT, soft_time_limit=TASK_SOFT_TIME_LIMIT)
+@redis_task_lock("regenerate_bridges_lock:{document_id}")
+def regenerate_bridges_task(document_id: str, force_all: bool = False):
+    """
+    Regenerate bridge chunks for a COMPLETED document from existing chunks.
+
+    Reads existing chunks from PostgreSQL, runs gap analysis, and generates
+    bridges without re-running the full extraction/chunking pipeline.
+
+    Idempotent — deletes old bridges before generating new ones.
+
+    Args:
+        document_id: Document identifier
+        force_all: If True, generate bridges for ALL adjacent chunk pairs
+                   regardless of gap analysis necessity scores.
+
+    Returns:
+        Dict with bridge generation results
+    """
+    _task_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(_task_loop)
+
+    bridges_stored_counter = [0]
+    storage_error = [None]
+    total_bridges_expected = [0]
+    old_count = 0
+
+    try:
+        import time as _time
+        from uuid import UUID
+
+        from ..components.chunking_framework.framework import (
+            GenericMultiLevelChunkingFramework,
+        )
+        from ..database.connection import db_manager
+        from ..models.core import DocumentContent
+
+        _t0 = _time.monotonic()
+        logger.info(f"Regenerating bridges for document {document_id} (force_all={force_all})")
+
+        _check_document_deleted(document_id, "regenerate_bridges start")
+
+        if not db_manager.AsyncSessionLocal:
+            db_manager.initialize()
+
+        # Phase 1: Read existing chunks
+        logger.info(f"Reading existing chunks for document {document_id}")
+        _task_loop.run_until_complete(_update_job_status_sync(
+            document_id, 'running', 0, 'Reading existing chunks'
+        ))
+
+        chunks_result = _task_loop.run_until_complete(_read_document_chunks(document_id))
+        if not chunks_result:
+            raise ValueError(f"No chunks found for document {document_id}")
+
+        total_chunks = len(chunks_result)
+        logger.info(f"Read {total_chunks} chunks for document {document_id}")
+
+        # Phase 2: Content profile + domain config
+        _task_loop.run_until_complete(_update_job_status_sync(
+            document_id, 'running', 2, 'Analyzing content profile'
+        ))
+
+        full_text = '\n\n'.join(chunk['content'] for chunk in chunks_result)
+        doc_content = DocumentContent(text=full_text)
+
+        chunking_framework = GenericMultiLevelChunkingFramework()
+        content_profile = chunking_framework.generate_content_profile(doc_content)
+        domain_config = chunking_framework.get_or_create_domain_config(content_profile)
+        content_type = content_profile.content_type
+
+        # Phase 3: Gap analysis (or force_all bypass)
+        _task_loop.run_until_complete(_update_job_status_sync(
+            document_id, 'running', 5, 'Running gap analysis'
+        ))
+
+        bridge_threshold = domain_config.bridge_thresholds.get('default', 0.7)
+        bridge_needed_serialized = []
+
+        for i in range(total_chunks - 1):
+            chunk1 = chunks_result[i]
+            chunk2 = chunks_result[i + 1]
+
+            if force_all:
+                bridge_needed_serialized.append({
+                    'boundary_index': i,
+                    'chunk1_id': chunk1['id'],
+                    'chunk1_content': chunk1['content'],
+                    'chunk2_id': chunk2['id'],
+                    'chunk2_content': chunk2['content'],
+                    'gap_type': 'semantic_gap',
+                    'bridge_strategy': 'semantic_overlap',
+                    'necessity_score': 1.0,
+                    'semantic_distance': 0.5,
+                    'concept_overlap': 0.3,
+                    'cross_reference_density': 0.0,
+                    'domain_specific_gaps': {},
+                })
+            else:
+                gap_analysis = chunking_framework.gap_analyzer.analyze_boundary_gap(
+                    chunk1['content'], chunk2['content'],
+                    content_type, domain_config
+                )
+                if gap_analysis.necessity_score >= bridge_threshold:
+                    bridge_needed_serialized.append({
+                        'boundary_index': i,
+                        'chunk1_id': chunk1['id'],
+                        'chunk1_content': chunk1['content'],
+                        'chunk2_id': chunk2['id'],
+                        'chunk2_content': chunk2['content'],
+                        'gap_type': gap_analysis.gap_type.value,
+                        'bridge_strategy': gap_analysis.bridge_strategy.value,
+                        'necessity_score': gap_analysis.necessity_score,
+                        'semantic_distance': gap_analysis.semantic_distance,
+                        'concept_overlap': gap_analysis.concept_overlap,
+                        'cross_reference_density': gap_analysis.cross_reference_density,
+                        'domain_specific_gaps': gap_analysis.domain_specific_gaps,
+                    })
+
+        logger.info(
+            f"Gap analysis complete: {len(bridge_needed_serialized)} bridges needed "
+            f"out of {total_chunks - 1} boundaries (force_all={force_all})"
+        )
+
+        bridge_generation_data = {
+            'bridge_needed': bridge_needed_serialized,
+            'all_unresolved_bisections': {},
+            'content_type': content_type.value,
+            'domain_config_dict': {
+                'domain_name': domain_config.domain_name,
+                'bridge_thresholds': domain_config.bridge_thresholds,
+                'preservation_patterns': domain_config.preservation_patterns,
+            },
+        }
+
+        total_bridges_expected[0] = len(bridge_needed_serialized)
+
+        if not bridge_needed_serialized:
+            logger.info(f"No bridges needed for document {document_id}")
+            _task_loop.run_until_complete(_update_job_status_sync(
+                document_id, 'completed', 100, 'No bridges needed',
+                metadata={'bridges_generated': 0, 'bridges_stored': 0, 'force_all': force_all}
+            ))
+            _task_loop.run_until_complete(_update_document_status_sync(document_id, 'completed'))
+            _task_loop.run_until_complete(_record_stage_timing(document_id, "regenerate_bridges", _time.monotonic() - _t0))
+            return {
+                'status': 'completed',
+                'document_id': document_id,
+                'bridges_generated': 0,
+                'bridges_stored': 0,
+                'force_all': force_all,
+            }
+
+        # Phase 4: Delete old bridges (idempotent)
+        _task_loop.run_until_complete(_update_job_status_sync(
+            document_id, 'running', 8, 'Clearing old bridges'
+        ))
+        old_count = _task_loop.run_until_complete(_delete_document_bridges(document_id))
+        logger.info(f"Deleted {old_count} old bridges for document {document_id}")
+
+        # Phase 5: Generate bridges with incremental storage
+        document_title = None
+        first_metadata = chunks_result[0].get('metadata', {}) if chunks_result else {}
+        if isinstance(first_metadata, dict):
+            document_title = first_metadata.get('title')
+
+        _last_progress_time = [0.0]
+
+        def _bridge_progress(bridges_so_far, total_bridges, failed):
+            now = _time.time()
+            if now - _last_progress_time[0] < 5.0:
+                return
+            _last_progress_time[0] = now
+
+            try:
+                _check_document_deleted(document_id, "bridge_regen_progress")
+            except DocumentDeletedError:
+                raise
+
+            fraction = bridges_so_far / max(total_bridges, 1)
+            pct = 10 + int(fraction * 80)  # 10-90%
+            asyncio.set_event_loop(_task_loop)
+            _task_loop.run_until_complete(_update_job_status_sync(
+                document_id, 'running', pct,
+                'Generating bridges',
+                metadata={
+                    'bridges_generated': bridges_so_far,
+                    'bridges_stored': bridges_stored_counter[0],
+                    'total_bridges': total_bridges,
+                    'bridges_failed': failed,
+                }
+            ))
+
+        async def _incremental_storage_async(batch_bridges):
+            nonlocal bridges_stored_counter, storage_error
+
+            if not batch_bridges:
+                return
+
+            serialized_batch = [
+                {
+                    'id': bridge.id,
+                    'content': bridge.content,
+                    'source_chunks': bridge.source_chunks,
+                    'generation_method': bridge.generation_method,
+                    'confidence_score': bridge.confidence_score
+                }
+                for bridge in batch_bridges
+            ]
+
+            batch_size = len(serialized_batch)
+
+            try:
+                await _store_bridge_chunks_in_database(document_id, serialized_batch)
+                logger.info(f"Stored {batch_size} bridges in PostgreSQL for document {document_id}")
+
+                await _store_bridge_embeddings_in_vector_db(
+                    document_id, serialized_batch, document_title=document_title
+                )
+                logger.info(f"Stored {batch_size} bridge embeddings in Milvus for document {document_id}")
+
+                bridges_stored_counter[0] += batch_size
+
+            except Exception as e:
+                logger.error(
+                    f"Incremental storage failed for batch of {batch_size} bridges "
+                    f"(document {document_id}, stored so far: {bridges_stored_counter[0]}): {e}"
+                )
+                storage_error[0] = str(e)
+                raise
+
+        def _incremental_storage_callback(batch_bridges):
+            asyncio.set_event_loop(_task_loop)
+            _task_loop.run_until_complete(_incremental_storage_async(batch_bridges))
+
+        bridges, batch_stats = chunking_framework.generate_bridges_for_document(
+            bridge_generation_data,
+            progress_callback=_bridge_progress,
+            storage_callback=_incremental_storage_callback
+        )
+
+        asyncio.set_event_loop(_task_loop)
+
+        logger.info(
+            f"Bridge regeneration complete for document {document_id}: "
+            f"{len(bridges)} generated, {bridges_stored_counter[0]} stored"
+        )
+
+        # Phase 6: Finalize
+        _task_loop.run_until_complete(_update_job_status_sync(
+            document_id, 'completed', 100, 'Bridge regeneration complete',
+            metadata={
+                'bridges_generated': len(bridges),
+                'bridges_stored': bridges_stored_counter[0],
+                'force_all': force_all,
+                'old_bridges_deleted': old_count,
+            }
+        ))
+        _task_loop.run_until_complete(_update_document_status_sync(document_id, 'completed'))
+        _task_loop.run_until_complete(
+            _record_stage_timing(document_id, "regenerate_bridges", _time.monotonic() - _t0)
+        )
+
+        if storage_error[0] and bridges_stored_counter[0] > 0:
+            return {
+                'status': 'partial',
+                'document_id': document_id,
+                'bridges_generated': len(bridges),
+                'bridges_stored': bridges_stored_counter[0],
+                'force_all': force_all,
+                'storage_error': storage_error[0],
+            }
+
+        return {
+            'status': 'completed',
+            'document_id': document_id,
+            'bridges_generated': len(bridges),
+            'bridges_stored': bridges_stored_counter[0],
+            'force_all': force_all,
+            'old_bridges_deleted': old_count,
+        }
+
+    except DocumentDeletedError:
+        logger.info(f"Bridge regeneration aborted — document {document_id} was deleted")
+        _task_loop.run_until_complete(
+            _record_stage_timing(document_id, "regenerate_bridges", _time.monotonic() - _t0)
+        )
+        return {
+            'status': 'aborted',
+            'document_id': document_id,
+            'bridges_generated': 0,
+            'bridges_stored': bridges_stored_counter[0],
+        }
+    except Exception as e:
+        logger.error(f"Bridge regeneration failed for document {document_id}: {e}")
+        _task_loop.run_until_complete(_update_job_status_sync(
+            document_id, 'failed', 0, 'Bridge regeneration failed',
+            error_message=str(e)
+        ))
+        _task_loop.run_until_complete(
+            _update_document_status_sync(document_id, 'failed', str(e))
+        )
+        if bridges_stored_counter[0] > 0:
+            logger.info(f"Partial success: {bridges_stored_counter[0]} bridges stored before failure")
+        return {
+            'status': 'failed' if bridges_stored_counter[0] == 0 else 'partial',
+            'document_id': document_id,
+            'bridges_generated': bridges_stored_counter[0],
+            'bridges_stored': bridges_stored_counter[0],
+            'force_all': force_all,
+            'error': str(e)
+        }
+    finally:
+        _task_loop.close()
+        asyncio.set_event_loop(None)
+
+
 @celery_app.task(name='store_embeddings_task', time_limit=TASK_HARD_TIME_LIMIT, soft_time_limit=TASK_SOFT_TIME_LIMIT)
 @redis_task_lock("embeddings_lock:{document_id}")
 def store_embeddings_task(processed_document: Dict[str, Any], document_id: str):
@@ -2192,6 +2637,148 @@ def update_knowledge_graph_task(upstream_result: Dict[str, Any], document_id: st
         raise
 
 
+@celery_app.task(
+    name='re_extract_concepts_task',
+    time_limit=TASK_HARD_TIME_LIMIT,
+    soft_time_limit=TASK_SOFT_TIME_LIMIT,
+)
+@redis_task_lock("kg_re_extract_lock:{document_id}")
+def re_extract_concepts_task(document_id: str):
+    """
+    Re-extract NER/concepts for a COMPLETED document from existing chunks.
+
+    Reads the document's chunks from PostgreSQL, cleans up old Neo4j
+    Chunk nodes and EXTRACTED_FROM relationships, re-runs concept
+    extraction via _update_knowledge_graph, and finalizes the document
+    back to COMPLETED status.
+
+    This is a surgical task — it does NOT re-extract PDF text or
+    re-generate chunks.
+
+    Args:
+        document_id: Document identifier
+
+    Returns:
+        Dict with status and kg_failures
+    """
+    import time as _time
+    from uuid import UUID
+
+    from ..models.documents import DocumentStatus
+
+    _t0 = _time.monotonic()
+    _task_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(_task_loop)
+
+    try:
+        logger.info(
+            f"Starting concept re-extraction for document {document_id}"
+        )
+
+        _check_document_deleted(document_id, "re_extract_concepts start")
+
+        # Read existing chunks
+        chunks = _task_loop.run_until_complete(
+            _read_document_chunks(document_id)
+        )
+        if not chunks:
+            raise ValueError(
+                f"No chunks found for document {document_id}"
+            )
+        logger.info(
+            f"Read {len(chunks)} chunks for document {document_id}"
+        )
+
+        # Update progress
+        _task_loop.run_until_complete(_update_job_status_sync(
+            UUID(document_id), 'running', 5.0,
+            'Cleaning up old concept data'
+        ))
+
+        # Clean up old Neo4j data
+        _task_loop.run_until_complete(
+            _cleanup_neo4j_document_chunks(document_id, chunks)
+        )
+
+        # Re-run concept extraction
+        _task_loop.run_until_complete(_update_job_status_sync(
+            UUID(document_id), 'running', 10.0,
+            'Re-extracting concepts'
+        ))
+
+        kg_failures = _task_loop.run_until_complete(
+            _update_knowledge_graph(document_id, chunks)
+        )
+
+        logger.info(
+            f"Concept re-extraction complete for document {document_id}"
+        )
+
+        # Finalize: mark document as COMPLETED
+        _task_loop.run_until_complete(_update_job_status_sync(
+            UUID(document_id), 'completed', 100.0,
+            'Concept re-extraction complete',
+            metadata={
+                'kg_failures': kg_failures,
+                'chunks_processed': len(chunks),
+            }
+        ))
+        _task_loop.run_until_complete(
+            _update_document_status_sync(UUID(document_id), 'completed')
+        )
+        _task_loop.run_until_complete(
+            _record_stage_timing(
+                document_id, "re_extract_concepts",
+                _time.monotonic() - _t0
+            )
+        )
+
+        # Clean up processing payload
+        try:
+            _task_loop.run_until_complete(
+                _delete_processing_payload(document_id)
+            )
+        except Exception:
+            pass
+
+        return {
+            'status': 'completed',
+            'document_id': document_id,
+            'kg_failures': kg_failures,
+        }
+
+    except DocumentDeletedError:
+        logger.info(
+            f"Concept re-extraction aborted — "
+            f"document {document_id} was deleted"
+        )
+        return {'status': 'aborted', 'document_id': document_id}
+    except Exception as e:
+        logger.error(
+            f"Concept re-extraction failed for document {document_id}: {e}"
+        )
+        _task_loop.run_until_complete(_update_job_status_sync(
+            UUID(document_id), 'failed', 0,
+            'Concept re-extraction failed', str(e),
+            failed_stage='re_extract_concepts'
+        ))
+        _task_loop.run_until_complete(
+            _update_document_status_sync(
+                UUID(document_id), DocumentStatus.FAILED, str(e)
+            )
+        )
+        try:
+            _task_loop.run_until_complete(
+                _delete_processing_payload(document_id)
+            )
+        except Exception:
+            pass
+        raise
+    finally:
+        _task_loop.close()
+        asyncio.set_event_loop(None)
+
+
 async def _execute_with_retry(client, query, params, max_retries=3):
     """Execute a Neo4j query with exponential backoff retry on failure.
 
@@ -2450,6 +3037,37 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
                 batch_concepts.extend(concept_extraction.extracted_concepts)
                 batch_relationships.extend(concept_extraction.extracted_relationships)
 
+            # --- Per-(concept, chunk) rationale map for EXTRACTED_FROM edges ---
+            # Capture rationale + its embedding BEFORE validate_batch_concepts
+            # dedups concepts by name (which collapses per-chunk objects and
+            # would lose per-chunk rationales).  The embedding is persisted on
+            # the EXTRACTED_FROM edge and compared to the query at inference
+            # time to boost chunk ranking.
+            rationale_by_pair: Dict[Tuple[str, str], Dict[str, Any]] = {}
+            rationale_concepts = [
+                c for c in batch_concepts
+                if getattr(c, 'rationale', None) and c.source_chunks
+            ]
+            if rationale_concepts and model_client:
+                rationale_texts = sorted({c.rationale for c in rationale_concepts})
+                try:
+                    embs = await model_client.generate_embeddings(rationale_texts)
+                except Exception as e:
+                    logger.warning(f"Rationale embeddings failed for batch {batch_num}: {e}")
+                    embs = None
+
+                if embs and len(embs) == len(rationale_texts):
+                    rat_emb = dict(zip(rationale_texts, embs))
+                    for c in rationale_concepts:
+                        r_emb = rat_emb.get(c.rationale)
+                        if r_emb is None:
+                            continue
+                        for cid in c.source_chunks:
+                            rationale_by_pair[(c.concept_id, cid)] = {
+                                'rationale': c.rationale,
+                                'embedding': r_emb,
+                            }
+
             # --- Batch-level ConceptNet validation (2 Neo4j queries per batch) ---
             validated_concepts, conceptnet_rels, _val_stats = \
                 await kg_builder.validate_batch_concepts(batch_concepts)
@@ -2638,11 +3256,18 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
                     continue
                 for chunk_id in (concept.source_chunks or []):
                     if chunk_id:
-                        ef_rows.append({
+                        row = {
                             'concept_id': concept.concept_id,
                             'chunk_id': chunk_id,
                             'created_at': now_ts,
-                        })
+                            'rationale': None,
+                            'rationale_embedding': None,
+                        }
+                        rat = rationale_by_pair.get((concept.concept_id, chunk_id))
+                        if rat:
+                            row['rationale'] = rat['rationale']
+                            row['rationale_embedding'] = rat['embedding']
+                        ef_rows.append(row)
 
             EF_BATCH_SIZE = _NEO4J_SUB_BATCH
             for sub_start in range(0, len(ef_rows), EF_BATCH_SIZE):
@@ -2654,7 +3279,9 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
                     MATCH (c:Concept {concept_id: row.concept_id})
                     MATCH (ch:Chunk {chunk_id: row.chunk_id})
                     MERGE (c)-[r:EXTRACTED_FROM]->(ch)
-                    ON CREATE SET r.created_at = row.created_at
+                    ON CREATE SET r.created_at = row.created_at,
+                                  r.rationale = row.rationale,
+                                  r.rationale_embedding = row.rationale_embedding
                     RETURN count(r) AS cnt
                     """,
                     {'rows': sub_batch}
@@ -2756,6 +3383,22 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
                     f"{bridge_result.unmatched_concepts} unmatched, "
                     f"{bridge_result.elapsed_seconds}s"
                 )
+                # Semantic pass: bridge concepts that got no exact SAME_AS match
+                # to the nearest clinically-relevant UMLSConcept via embedding
+                # cosine (SIMILAR_TO).  Reads embeddings from the persisted
+                # Concept nodes; no-op if the UMLS vector index is empty.
+                try:
+                    similar_edges = await umls_bridger.bridge_concepts_semantic(
+                        all_concept_ids
+                    )
+                    logger.info(
+                        f"UMLS semantic bridging for document {document_id}: "
+                        f"{similar_edges} SIMILAR_TO edges created"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"UMLS semantic bridging failed for document {document_id}: {e}"
+                    )
             except Exception as e:
                 logger.warning(f"UMLS bridging failed for document {document_id}: {e}")
 
@@ -3821,6 +4464,199 @@ async def _delete_document_chunks(document_id: str) -> int:
     except Exception as e:
         logger.error(f"Error deleting chunks for document {document_id}: {e}")
         raise
+
+
+async def _delete_document_bridges(document_id: str) -> int:
+    """Delete existing bridge chunks for a document from PostgreSQL and Milvus.
+
+    Preserves content chunk vectors. Used for bridge regeneration on
+    COMPLETED documents that were processed before bridges existed.
+
+    Args:
+        document_id: The document ID (source_id) to delete bridges for
+
+    Returns:
+        Total number of bridges deleted (PostgreSQL + Milvus)
+    """
+    total_deleted = 0
+
+    try:
+        logger.info(f"Deleting existing bridges for document {document_id}")
+
+        # Step 1: Delete from PostgreSQL bridge_chunks table
+        from ..database.connection import get_async_connection
+
+        conn = await get_async_connection()
+        try:
+            result = await conn.execute("""
+                DELETE FROM multimodal_librarian.bridge_chunks
+                WHERE source_chunk_id IN (
+                    SELECT id FROM multimodal_librarian.knowledge_chunks
+                    WHERE source_id = $1::uuid
+                )
+            """, document_id)
+
+            pg_deleted = 0
+            if result:
+                parts = result.split()
+                if len(parts) >= 2 and parts[0] == 'DELETE':
+                    try:
+                        pg_deleted = int(parts[1])
+                    except ValueError:
+                        pass
+
+            total_deleted += pg_deleted
+            logger.info(f"Deleted {pg_deleted} bridge chunks from PostgreSQL for document {document_id}")
+        finally:
+            await conn.close()
+
+        # Step 2: Delete from Milvus
+        from ..clients.database_factory import DatabaseClientFactory
+        from ..config.config_factory import get_database_config
+
+        config = get_database_config()
+        factory = DatabaseClientFactory(config)
+        vector_client = factory.get_vector_client()
+
+        await vector_client.connect()
+
+        try:
+            vector_deleted = await vector_client.delete_bridges_by_source(document_id)
+            total_deleted += vector_deleted
+            logger.info(f"Deleted {vector_deleted} bridge vectors from Milvus for document {document_id}")
+        except Exception as e:
+            logger.warning(f"Vector database bridge deletion warning for document {document_id}: {e}")
+
+        logger.info(f"Total deleted: {total_deleted} bridges for document {document_id}")
+        return total_deleted
+
+    except Exception as e:
+        logger.error(f"Error deleting bridges for document {document_id}: {e}")
+        raise
+
+
+async def _cleanup_neo4j_document_chunks(
+    document_id: str, chunks: List[Dict[str, Any]]
+) -> None:
+    """Delete EXTRACTED_FROM relationships and Chunk nodes for a document's chunks.
+
+    Called before re-running concept extraction to ensure a clean slate.
+    Concept nodes are preserved — they are global and may be referenced
+    by other documents. Only the chunk-specific data is removed.
+
+    Args:
+        document_id: The document ID (source_id)
+        chunks: List of chunk dicts with at least 'id' key
+    """
+    from ..clients.database_factory import get_database_factory
+
+    chunk_ids = [c['id'] for c in chunks if c.get('id')]
+    if not chunk_ids:
+        logger.info(f"No chunk IDs to clean up for document {document_id}")
+        return
+
+    logger.info(
+        f"Cleaning up Neo4j data for {len(chunk_ids)} chunks "
+        f"of document {document_id}"
+    )
+
+    factory = get_database_factory()
+    graph_client = factory.get_graph_client()
+    if not getattr(graph_client, '_is_connected', False):
+        await graph_client.connect()
+
+    try:
+        # Delete EXTRACTED_FROM relationships in sub-batches
+        NEO4J_BATCH = 100
+        total_rels_deleted = 0
+        for i in range(0, len(chunk_ids), NEO4J_BATCH):
+            batch = chunk_ids[i:i + NEO4J_BATCH]
+            result = await graph_client.execute_query(
+                """
+                UNWIND $chunk_ids AS cid
+                MATCH (c:Concept)-[r:EXTRACTED_FROM]->(ch:Chunk {chunk_id: cid})
+                DELETE r
+                RETURN count(r) AS cnt
+                """,
+                {'chunk_ids': batch},
+            )
+            if result:
+                total_rels_deleted += result[0].get('cnt', 0)
+
+        logger.info(
+            f"Deleted {total_rels_deleted} EXTRACTED_FROM relationships "
+            f"for document {document_id}"
+        )
+
+        # Delete Chunk nodes
+        total_chunks_deleted = 0
+        for i in range(0, len(chunk_ids), NEO4J_BATCH):
+            batch = chunk_ids[i:i + NEO4J_BATCH]
+            result = await graph_client.execute_query(
+                """
+                UNWIND $chunk_ids AS cid
+                MATCH (ch:Chunk {chunk_id: cid})
+                DETACH DELETE ch
+                RETURN count(ch) AS cnt
+                """,
+                {'chunk_ids': batch},
+            )
+            if result:
+                total_chunks_deleted += result[0].get('cnt', 0)
+
+        logger.info(
+            f"Deleted {total_chunks_deleted} Chunk nodes "
+            f"for document {document_id}"
+        )
+
+    finally:
+        # Don't disconnect — the client is shared
+        pass
+
+
+async def _read_document_chunks(document_id: str) -> List[Dict[str, Any]]:
+    """Read existing content chunks for a document ordered by chunk_index.
+
+    Used by the bridge regeneration task to reconstruct the document
+    without re-running extraction.
+
+    Args:
+        document_id: The document ID (source_id)
+
+    Returns:
+        List of chunk dicts with id, content, chunk_index, metadata
+    """
+    from ..database.connection import get_async_connection
+
+    conn = await get_async_connection()
+    try:
+        rows = await conn.fetch(
+            """
+            SELECT id, content, chunk_index, metadata
+            FROM multimodal_librarian.knowledge_chunks
+            WHERE source_id = $1::uuid
+            ORDER BY chunk_index ASC
+            """,
+            document_id
+        )
+        chunks = []
+        for row in rows:
+            metadata = row['metadata']
+            if isinstance(metadata, str):
+                import json
+                try:
+                    metadata = json.loads(metadata)
+                except (json.JSONDecodeError, TypeError):
+                    metadata = {}
+            chunks.append({
+                'id': str(row['id']),
+                'content': row['content'],
+                'chunk_index': row['chunk_index'],
+                'metadata': metadata or {},
+            })
+        return chunks
+    finally:
+        await conn.close()
 
 
 async def _store_chunks_in_database(document_id: str, chunks: List[Dict[str, Any]],

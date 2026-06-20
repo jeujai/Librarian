@@ -431,7 +431,32 @@ class CachedRAGService(RAGService):
         processed_query, related_concepts, kg_metadata = await self.query_processor.process_query(
             query, conversation_context
         )
-        
+
+        # Step 1b: If the LLM classified this as not needing retrieval,
+        # skip search entirely and go straight to fallback response.
+        if kg_metadata.get('skip_retrieval'):
+            logger.info(f"Skipping retrieval for query (cached, non-streaming): '{query}'")
+            ai_response = await self._generate_fallback_response(
+                query, conversation_context, preferred_ai_provider,
+                skip_retrieval=True,
+            )
+            processing_time = 0
+            return RAGResponse(
+                response=ai_response.content,
+                sources=[],
+                confidence_score=0.5,
+                processing_time_ms=processing_time,
+                tokens_used=ai_response.tokens_used,
+                search_results_count=0,
+                fallback_used=True,
+                metadata={
+                    "processed_query": processed_query,
+                    "skip_retrieval": True,
+                    "ai_provider": ai_response.provider,
+                    "ai_model": ai_response.model,
+                }
+            )
+
         # Step 2: Search for relevant documents (cached)
         search_results = await self._search_documents(
             processed_query, user_id, document_filter, related_concepts, kg_metadata,

@@ -12,6 +12,7 @@ Requirements: 4.1, 4.2, 4.3, 4.4, 4.5
 import asyncio
 import hashlib
 import logging
+import re
 from typing import Any, Dict, List, Optional, Set
 
 from ...models.kg_retrieval import QueryDecomposition
@@ -202,8 +203,8 @@ class QueryDecomposer:
         self,
         neo4j_client: Optional[Any] = None,
         model_server_client: Optional[Any] = None,
-        similarity_threshold: float = 0.75,
-        semantic_max_results: int = 15,
+        similarity_threshold: float = 0.70,
+        semantic_max_results: int = 30,
         semantic_enabled: bool = True,
         ner_extractor: Optional[Any] = None,
     ):
@@ -290,12 +291,32 @@ class QueryDecomposer:
         )
         
         if self._neo4j_client:
+            # Run lexical matching immediately (it completes in ~0.1s).
+            # Semantic matching uses the Neo4j vector index which can hang
+            # when the index is degraded, so we wrap it in its own timeout
+            # to prevent it from taking down the entire decomposition.
             try:
-                lexical_coro = self._find_entity_matches(query)
-                semantic_coro = self._find_semantic_matches(query)
-                lexical_matches, semantic_matches = await asyncio.gather(
-                    lexical_coro, semantic_coro
+                lexical_task = asyncio.ensure_future(
+                    self._find_entity_matches(query)
                 )
+                semantic_task = asyncio.ensure_future(
+                    self._find_semantic_matches(query)
+                )
+
+                # Wait for lexical first (always fast), then semantic with timeout
+                lexical_matches = await lexical_task
+                try:
+                    semantic_matches = await asyncio.wait_for(
+                        semantic_task, timeout=3.0
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "Semantic matching timed out (3s), using lexical results only"
+                    )
+                    semantic_matches = []
+                    semantic_was_available = False
+                    if not semantic_task.done():
+                        semantic_task.cancel()
             except Exception as e:
                 logger.warning(f"Error finding matches: {e}")
         else:
@@ -452,7 +473,28 @@ class QueryDecomposer:
         # OPTIMIZATION: Try full-text index first (fastest), fall back to CONTAINS
         try:
             # Build full-text search query string (OR between words)
-            search_terms = " OR ".join(all_words)
+            # Escape Lucene special characters that break the query parser
+            _LUCENE_SPECIAL = str.maketrans({
+                '/': r'\/',
+                '\\': r'\\',
+                '+': r'\+',
+                '-': r'\-',
+                '!': r'\!',
+                '(': r'\(',
+                ')': r'\)',
+                ':': r'\:',
+                '^': r'\^',
+                '[': r'\[',
+                ']': r'\]',
+                '{': r'\{',
+                '}': r'\}',
+                '~': r'\~',
+                '*': r'\*',
+                '?': r'\?',
+                '"': r'\"',
+            })
+            escaped_words = [w.translate(_LUCENE_SPECIAL) for w in all_words]
+            search_terms = " OR ".join(escaped_words)
             
             # Use full-text index for faster search
             cypher_query = """
@@ -517,14 +559,21 @@ class QueryDecomposer:
 
     async def _find_semantic_matches(self, query: str) -> List[Dict[str, Any]]:
         """
-        Find concepts via vector similarity search.
-        
-        Embeds the query using the model server client and performs
-        approximate nearest-neighbor search against the Neo4j vector index.
-        
+        Find concepts via multi-phrase vector similarity search.
+
+        Decomposes the query into search phrases (full query + NER key terms),
+        embeds all phrases in one batch call, then runs concurrent vector
+        index searches via asyncio.gather.  Results are deduplicated by
+        concept_id, keeping the highest similarity score from any phrase.
+
+        This prevents the full query embedding from being diluted by
+        symptom/context words — a standalone "empiric antibiotic regimen"
+        embedding lands on treatment concepts even when the full query
+        embedding is pulled toward diagnosis concepts.
+
         Args:
             query: User query text
-            
+
         Returns:
             List of concept match dicts annotated with match_type="semantic".
             Returns empty list if model server is unavailable or semantic
@@ -537,69 +586,131 @@ class QueryDecomposer:
             return []
 
         try:
-            # Use cached embedding if available to ensure deterministic
-            # results for identical queries within the same session.
-            cache_key = hashlib.sha256(query.encode('utf-8')).hexdigest()
-            query_embedding = self._embedding_cache.get(cache_key)
+            # ── 1. Extract search phrases ──────────────────────────────
+            search_phrases = [query]
 
-            if query_embedding is None:
-                embeddings = await self._model_server_client.generate_embeddings([query])
+            if self.ner_extractor is not None:
+                try:
+                    ner_result = await self.ner_extractor.extract_key_terms(query)
+                    for term in ner_result.key_terms:
+                        term_lower = term.lower().strip()
+                        # Only add multi-word terms (single words are noisy
+                        # in semantic search) and skip duplicates of the
+                        # full query.
+                        if " " in term_lower and term_lower != query.lower():
+                            search_phrases.append(term)
+                except Exception as e:
+                    logger.warning(
+                        f"NER extraction failed in semantic search: {e}"
+                    )
+
+            # Cap phrases to avoid overwhelming Neo4j with concurrent searches
+            _MAX_PHRASES = 8
+            search_phrases = search_phrases[:_MAX_PHRASES]
+
+            logger.info(
+                f"Multi-phrase semantic search: {len(search_phrases)} phrases "
+                f"(query + {len(search_phrases) - 1} NER key terms)"
+            )
+
+            # ── 2. Batch embed all phrases ────────────────────────────
+            embeddings = await self._model_server_client.generate_embeddings(
+                search_phrases
+            )
+            if not embeddings or len(embeddings) != len(search_phrases):
+                logger.warning(
+                    f"Embedding mismatch: got {len(embeddings)} vectors "
+                    f"for {len(search_phrases)} phrases"
+                )
                 if not embeddings:
                     return []
-                query_embedding = embeddings[0]
-                # Evict oldest entries if cache is full
-                if len(self._embedding_cache) >= self._max_embedding_cache_size:
-                    oldest_key = next(iter(self._embedding_cache))
-                    del self._embedding_cache[oldest_key]
-                self._embedding_cache[cache_key] = query_embedding
+                # Truncate to minimum length if mismatch
+                min_len = min(len(embeddings), len(search_phrases))
+                search_phrases = search_phrases[:min_len]
+                embeddings = embeddings[:min_len]
 
-            cypher = """
-            CALL db.index.vector.queryNodes(
-                'concept_embedding_index', $top_k, $embedding
-            )
-            YIELD node, score
-            WHERE score >= $threshold
-            RETURN node.concept_id AS concept_id,
-                   node.name AS name,
-                   node.type AS type,
-                   node.confidence AS confidence,
-                   node.source_document AS source_document,
-                   node.source_chunks AS source_chunks,
-                   score AS similarity_score
-            """
-            results = await self._neo4j_client.execute_query(cypher, {
-                'embedding': query_embedding,
-                'top_k': self._semantic_max_results,
-                'threshold': self._similarity_threshold,
-            })
+            # ── 3. Run concurrent vector searches ──────────────────────
+            async def _search_one(embedding):
+                cypher = """
+                CALL db.index.vector.queryNodes(
+                    'concept_embedding_index', $top_k, $embedding
+                )
+                YIELD node, score
+                WHERE score >= $threshold
+                RETURN node.concept_id AS concept_id,
+                       node.name AS name,
+                       node.type AS type,
+                       node.confidence AS confidence,
+                       node.source_document AS source_document,
+                       node.source_chunks AS source_chunks,
+                       score AS similarity_score
+                """
+                try:
+                    results = await self._neo4j_client.execute_query(cypher, {
+                        'embedding': embedding,
+                        'top_k': self._semantic_max_results,
+                        'threshold': self._similarity_threshold,
+                    })
+                    return [
+                        {**record, 'match_type': 'semantic'}
+                        for record in (results or [])
+                    ]
+                except Exception as e:
+                    logger.warning(f"Vector search failed for a phrase: {e}")
+                    return []
 
-            matches = [
-                {**record, 'match_type': 'semantic'}
-                for record in (results or [])
-            ]
+            all_match_lists = await asyncio.gather(*[
+                _search_one(emb) for emb in embeddings
+            ])
 
-            # --- Annotate matches with generic/specific classification ---
-            # We do NOT remove generic concepts here because their
-            # EXTRACTED_FROM edges may lead to relevant chunks (e.g.,
-            # page 114 is linked via "we observe" concepts).  Instead,
-            # we annotate each match so that downstream scoring
-            # (_aggregate_and_deduplicate) can downweight generic
-            # concepts in the coverage_bonus calculation.
-            for m in matches:
+            # ── 4. Merge, deduplicate, keep highest score ─────────────
+            # Phase 1: deduplicate by concept_id (different phrases may
+            # return the same concept node).
+            seen: Dict[str, Dict[str, Any]] = {}
+            for match_list in all_match_lists:
+                for m in match_list:
+                    cid = m.get('concept_id')
+                    if cid is None:
+                        continue
+                    current_score = m.get('similarity_score', 0)
+                    if cid not in seen or current_score > seen[cid].get('similarity_score', 0):
+                        seen[cid] = m
+
+            # Phase 2: deduplicate by case-normalized name.  Neo4j stores
+            # "Chest X-ray", "chest x-ray", "cHest X-RAy" as separate
+            # concept nodes.  Keeping only the highest-scoring variant per
+            # normalized name prevents near-duplicates from eating slots.
+            name_deduped: Dict[str, Dict[str, Any]] = {}
+            for m in seen.values():
+                name_key = re.sub(
+                    r'[^a-z0-9\s]', '',
+                    m.get('name', '').lower(),
+                ).strip()
+                if name_key not in name_deduped or m.get('similarity_score', 0) > name_deduped[name_key].get('similarity_score', 0):
+                    name_deduped[name_key] = m
+
+            merged = sorted(
+                name_deduped.values(),
+                key=lambda m: m.get('similarity_score', 0),
+                reverse=True
+            )[:self._semantic_max_results]
+
+            # ── 5. Annotate with generic/specific classification ──────
+            for m in merged:
                 m['is_generic'] = is_generic_concept(m.get('name', ''))
 
-            specific_count = sum(1 for m in matches if not m['is_generic'])
-            generic_count = sum(1 for m in matches if m['is_generic'])
+            specific_count = sum(1 for m in merged if not m['is_generic'])
+            generic_count = sum(1 for m in merged if m['is_generic'])
 
-            if generic_count > 0:
-                logger.info(
-                    f"Semantic match classification: {len(matches)} total — "
-                    f"{specific_count} specific, {generic_count} generic "
-                    f"(generic concepts kept for edge traversal, "
-                    f"downweighted in scoring)"
-                )
+            logger.info(
+                f"Multi-phrase semantic search: {len(search_phrases)} phrases "
+                f"→ {sum(len(ml) for ml in all_match_lists)} raw matches "
+                f"→ {len(seen)} by-id → {len(name_deduped)} by-name "
+                f"→ {len(merged)} final "
+                f"({specific_count} specific, {generic_count} generic)"
+            )
 
-            return matches
+            return merged
         except Exception as e:
             logger.warning(f"Semantic matching failed, falling back to lexical only: {e}")
             return []
