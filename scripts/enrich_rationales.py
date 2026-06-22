@@ -122,6 +122,25 @@ _READ_QUERY_ALL = (
     + "RETURN ch.chunk_id AS chunk_id, c.concept_id AS cid, c.name AS name\n"
 )
 
+# --zero-chunks-only variant: like the resume-safe query, but additionally
+# restrict to chunks that came out of the previous pass with NO rationale at
+# all (every EXTRACTED_FROM edge into the chunk is still null).  Partial-
+# coverage chunks are left untouched; this concentrates a tuned retry pass
+# (smaller MAX_CONCEPTS, longer timeout) on the genuine zero-yield failures --
+# typically dense chunks that timed out or that the small model couldn't parse
+# in one shot -- rather than redoing chunks that already have some coverage.
+_ZERO_CHUNK_GUARD = (
+    "  AND NOT EXISTS { (:Concept)-[rr:EXTRACTED_FROM]->(ch) "
+    "WHERE rr.rationale IS NOT NULL }\n"
+)
+_READ_QUERY_ZERO_CHUNKS = (
+    "MATCH (c:Concept)-[r:EXTRACTED_FROM]->(ch:Chunk {source_id: $doc})\n"
+    "WHERE r.rationale IS NULL\n"
+    + _ZERO_CHUNK_GUARD
+    + _CLINICAL_FILTER
+    + "RETURN ch.chunk_id AS chunk_id, c.concept_id AS cid, c.name AS name\n"
+)
+
 # Plain SET on the existing edge (NOT ON CREATE) -- the edge is already there.
 _WRITE_QUERY = """
 UNWIND $rows AS row
@@ -229,10 +248,16 @@ async def _enrich_document(
     sem: asyncio.Semaphore,
     include_enriched: bool = False,
     dry_run: bool = False,
+    zero_chunks_only: bool = False,
 ) -> Tuple[int, int]:
     """Enrich one document.  Returns (edges_updated, chunks_processed)."""
     # 1. Edges needing rationale, grouped by chunk.
-    read_query = _READ_QUERY_ALL if include_enriched else _READ_QUERY
+    if zero_chunks_only:
+        read_query = _READ_QUERY_ZERO_CHUNKS
+    elif include_enriched:
+        read_query = _READ_QUERY_ALL
+    else:
+        read_query = _READ_QUERY
     cid_to_name: Dict[str, str] = {}
     async with driver.session() as session:
         result = await session.run(read_query, {"doc": doc_id})
@@ -321,10 +346,17 @@ async def _enrich_document(
                 {"cid": cid, "chid": chunk_id, "rationale": r, "emb": emb_by_text[r]}
                 for cid, r in chunk_pairs
             ]
-            async with driver.session() as session:
-                res = await session.run(_WRITE_QUERY, {"rows": write_rows})
+            async def _write_tx(tx):
+                res = await tx.run(_WRITE_QUERY, {"rows": write_rows})
                 rec = await res.single()
-                stats["updated"] += rec["cnt"] if rec else 0
+                return rec["cnt"] if rec else 0
+
+            # Managed write: auto-retries transient failures with backoff --
+            # notably LockAcquisitionTimeout, which fires when two concurrent
+            # per-chunk SETs touch a hot shared Concept node.  Without this a
+            # single transient lock timeout aborts the whole multi-hour run.
+            async with driver.session() as session:
+                stats["updated"] += await session.execute_write(_write_tx)
 
         stats["done"] += 1
         if stats["done"] % 50 == 0 or stats["done"] == total:
@@ -352,7 +384,12 @@ async def _enrich_document(
     return (stats["updated"], total)
 
 
-async def main(doc_ids: List[str], include_enriched: bool = False, dry_run: bool = False):
+async def main(
+    doc_ids: List[str],
+    include_enriched: bool = False,
+    dry_run: bool = False,
+    zero_chunks_only: bool = False,
+):
     driver = AsyncGraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
     pg = await asyncpg.connect(
         host=PG_HOST, port=PG_PORT, database=PG_DB, user=PG_USER, password=PG_PASSWORD
@@ -362,7 +399,15 @@ async def main(doc_ids: List[str], include_enriched: bool = False, dry_run: bool
     total_updated = 0
     total_chunks = 0
 
-    mode = "DRY-RUN" if dry_run else ("ALL edges" if include_enriched else "resume-safe")
+    mode = (
+        "DRY-RUN"
+        if dry_run
+        else (
+            "zero-chunks-only"
+            if zero_chunks_only
+            else ("ALL edges" if include_enriched else "resume-safe")
+        )
+    )
     logger.info(
         f"Enriching rationales for {len(doc_ids)} document(s) [{mode}] "
         f"(model={OLLAMA_MODEL}, concurrency={CONCURRENCY})"
@@ -382,7 +427,7 @@ async def main(doc_ids: List[str], include_enriched: bool = False, dry_run: bool
         for doc_id in doc_ids:
             try:
                 updated, chunks = await _enrich_document(
-                    doc_id, driver, pg, http, sem, include_enriched, dry_run
+                    doc_id, driver, pg, http, sem, include_enriched, dry_run, zero_chunks_only
                 )
                 total_updated += updated
                 total_chunks += chunks
@@ -412,7 +457,19 @@ if __name__ == "__main__":
         action="store_true",
         help="Generate and print rationales but do not write to Neo4j",
     )
+    parser.add_argument(
+        "--zero-chunks-only",
+        action="store_true",
+        dest="zero_chunks_only",
+        help="Only reprocess chunks that have NO rationale on any edge "
+        "(targeted retry of zero-yield chunks; tune with ENRICH_MAX_CONCEPTS/OLLAMA_TIMEOUT)",
+    )
     args = parser.parse_args()
     asyncio.run(
-        main(args.source_ids, include_enriched=args.include_enriched, dry_run=args.dry_run)
+        main(
+            args.source_ids,
+            include_enriched=args.include_enriched,
+            dry_run=args.dry_run,
+            zero_chunks_only=args.zero_chunks_only,
+        )
     )
