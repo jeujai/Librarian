@@ -2,12 +2,12 @@
 Ollama-backed AI Service for training data and eval set generation.
 
 Drop-in replacement for ``AIService`` that routes ``generate_response()``
-calls to a local Ollama instance instead of Gemini.  Used exclusively by
+calls to a local Ollama instance instead of a cloud LLM.  Used exclusively by
 the ML training pipeline so that RAG gold-answer generation and eval-set
 generation run against a local model (e.g. ``llama3.1:8b``) with zero
 API cost.
 
-The rest of the application continues to use ``AIService`` (Gemini) for
+The rest of the application continues to use ``AIService`` (DeepSeek) for
 user-facing chat and ``OllamaClient`` (llama3.2:3b) for bridge
 generation and KG extraction.
 """
@@ -228,7 +228,7 @@ class OllamaAIService:
         start = time.time()
 
         # If context is provided separately, fold it into the messages
-        # the same way GeminiProvider does.
+        # the same way DeepSeekAIService does.
         if context:
             messages = list(messages)  # shallow copy
             if messages and messages[-1].get("role") == "user":

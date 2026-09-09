@@ -103,8 +103,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     
     # Initialize startup phase manager (non-blocking)
     try:
-        from .startup.phase_manager import StartupPhaseManager
+        from .startup.phase_manager import StartupPhaseManager, set_phase_manager
         app.state.startup_phase_manager = StartupPhaseManager()
+        set_phase_manager(app.state.startup_phase_manager)
         if logger:
             logger.info("StartupPhaseManager initialized successfully")
     except Exception as e:
@@ -1428,44 +1429,7 @@ def create_minimal_app() -> FastAPI:
         def __init__(self):
             self.active_connections = {}
             self.conversation_history = {}
-            self._gemini_model = None
-            self._gemini_configured = False
-            self._gemini_init_lock = asyncio.Lock()
-        
-        async def get_gemini_model_async(self):
-            """Get or create cached Gemini model (lazy initialization, non-blocking)."""
-            if self._gemini_configured:
-                return self._gemini_model
-            
-            async with self._gemini_init_lock:
-                # Double-check after acquiring lock
-                if self._gemini_configured:
-                    return self._gemini_model
-                
-                gemini_key = os.environ.get('GEMINI_API_KEY', '')
-                if gemini_key and gemini_key not in ('', 'your-gemini-api-key-here'):
-                    try:
-                        import google.generativeai as genai
 
-                        # Run blocking init in thread pool
-                        loop = asyncio.get_event_loop()
-                        def init_gemini():
-                            genai.configure(api_key=gemini_key)
-                            return genai.GenerativeModel('gemini-2.5-flash')
-                        
-                        self._gemini_model = await loop.run_in_executor(None, init_gemini)
-                        self._gemini_configured = True
-                        if logger:
-                            logger.info("Gemini model initialized and cached")
-                    except Exception as e:
-                        if logger:
-                            logger.warning(f"Failed to initialize Gemini: {e}")
-                        self._gemini_configured = True  # Don't retry
-                else:
-                    self._gemini_configured = True  # No key, don't retry
-                    
-            return self._gemini_model
-        
         async def connect(self, websocket: WebSocket, connection_id: str):
             await websocket.accept()
             self.active_connections[connection_id] = websocket
@@ -1603,53 +1567,14 @@ def create_minimal_app() -> FastAPI:
                     # Add to history
                     inline_manager.add_to_history(connection_id, user_message, 'user')
                     
-                    # Try to use Gemini AI for response
-                    response_text = None
-                    ai_provider = "inline"
+                    # Use the simple inline processor. This is a dead fallback
+                    # endpoint (/ws/chat-inline-fallback); the live /ws/chat
+                    # router handles LLM responses via DeepSeek.
+                    response_text = process_inline_message(
+                        user_message, inline_manager.get_history(connection_id)
+                    )
+                    ai_provider = "inline_fallback"
                     tokens_used = 0
-                    
-                    # Check for Gemini API key
-                    gemini_key = os.environ.get('GEMINI_API_KEY', '')
-                    
-                    if gemini_key and gemini_key not in ('', 'your-gemini-api-key-here'):
-                        try:
-                            # Get cached Gemini model (lazy init on first use, non-blocking)
-                            model = await inline_manager.get_gemini_model_async()
-                            
-                            if model:
-                                # Build conversation context
-                                history = inline_manager.get_history(connection_id)
-                                conversation_parts = []
-                                
-                                # Add system context
-                                conversation_parts.append("You are a helpful AI assistant called Librarian. Provide clear, concise, and helpful responses. Answer questions directly and accurately.")
-                                
-                                # Add conversation history
-                                for msg in history[-6:]:
-                                    role = "User" if msg.get("type") == "user" else "Assistant"
-                                    conversation_parts.append(f"{role}: {msg.get('content', '')}")
-                                
-                                prompt = "\n\n".join(conversation_parts)
-                                
-                                # Generate response asynchronously
-                                response = await model.generate_content_async(prompt)
-                                
-                                response_text = response.text
-                                ai_provider = "gemini"
-                                
-                                if logger:
-                                    logger.info(f"Gemini response generated for {connection_id}")
-                                
-                        except Exception as ai_error:
-                            if logger:
-                                logger.warning(f"Gemini AI failed, using fallback: {ai_error}")
-                            response_text = None
-                    
-                    # Fall back to simple processor if AI failed or not configured
-                    if not response_text:
-                        history = inline_manager.get_history(connection_id)
-                        response_text = process_inline_message(user_message, history)
-                        ai_provider = "inline_fallback"
                     
                     # Add response to history
                     inline_manager.add_to_history(connection_id, response_text, 'assistant')
@@ -1666,7 +1591,7 @@ def create_minimal_app() -> FastAPI:
                             "rag_enabled": False,
                             "fallback_mode": ai_provider == "inline_fallback",
                             "processing_time_ms": 50,
-                            "confidence_score": 0.9 if ai_provider == "gemini" else 0.6,
+                            "confidence_score": 0.6,
                             "search_results_count": 0,
                             "fallback_used": ai_provider == "inline_fallback",
                             "ai_provider": ai_provider,
@@ -3028,7 +2953,7 @@ def create_minimal_app() -> FastAPI:
                     "redis_host": settings.redis_host,
                 },
                 "api_keys_status": {
-                    "gemini_configured": bool(getattr(settings, 'gemini_api_key', None) or getattr(settings, 'google_api_key', None)),
+                    "deepseek_configured": bool(os.environ.get("DEEPSEEK_API_KEY")),
                 },
                 "file_storage": {
                     "upload_dir": settings.upload_dir,

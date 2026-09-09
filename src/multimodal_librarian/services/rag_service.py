@@ -25,6 +25,7 @@ from typing import (
     List,
     Optional,
     Protocol,
+    Set,
     Tuple,
     runtime_checkable,
 )
@@ -541,23 +542,55 @@ class ContextPreparer:
         
         return formatted_context, citations
     
+    @staticmethod
+    def _page_of(chunk: DocumentChunk) -> Optional[int]:
+        """Extract page number from a chunk, normalizing to int."""
+        page = chunk.page_number
+        if page is None and chunk.metadata:
+            page = chunk.metadata.get('page_number')
+        if page is not None:
+            try:
+                return int(page)
+            except (ValueError, TypeError):
+                pass
+        return None
+
     def _rank_chunks(self, chunks: List[DocumentChunk], query: str) -> List[DocumentChunk]:
         """Rank chunks by relevance and diversity."""
         # Sort by similarity score first
         chunks_by_score = sorted(chunks, key=lambda x: x.similarity_score, reverse=True)
-        
-        # Apply diversity filtering to avoid too many chunks from same document
+
+        # Within each document, prefer chunks from unseen pages so that
+        # multi-page documents contribute content from different sections.
+        # When many chunks have identical scores (capped at 1.0), this
+        # prevents all slots from going to the same few pages.
         ranked_chunks = []
-        document_counts = {}
-        max_per_document = 3
-        
+        document_counts: dict = {}
+        pages_by_doc: dict = {}  # doc_id -> set of page_numbers already included
+        max_per_document = 6
+
         for chunk in chunks_by_score:
-            doc_count = document_counts.get(chunk.document_id, 0)
-            
-            if doc_count < max_per_document:
-                ranked_chunks.append(chunk)
-                document_counts[chunk.document_id] = doc_count + 1
-        
+            doc_id = chunk.document_id
+            doc_count = document_counts.get(doc_id, 0)
+
+            if doc_count >= max_per_document:
+                continue
+
+            page = self._page_of(chunk)
+            pages_seen = pages_by_doc.get(doc_id, set())
+
+            # After 2 chunks from the same document, require diversity:
+            # skip chunks from pages already represented.
+            if doc_count >= 2 and page is not None and page in pages_seen:
+                continue
+
+            ranked_chunks.append(chunk)
+            document_counts[doc_id] = doc_count + 1
+            if page is not None:
+                if doc_id not in pages_by_doc:
+                    pages_by_doc[doc_id] = set()
+                pages_by_doc[doc_id].add(page)
+
         return ranked_chunks
     
     def _select_chunks_by_length(self, chunks: List[DocumentChunk]) -> List[DocumentChunk]:
@@ -692,7 +725,7 @@ class RAGService:
         # For Milvus L2 distance: 1/(1+d), scores ~0.36-0.45 are typical
         # for unrelated content; genuinely relevant content scores > 0.5.
         self.relevance_confidence_threshold = 0.5
-        self.max_search_results = 15
+        self.max_search_results = 40
         self.fallback_to_general_ai = True
         self.use_knowledge_graph = True  # Enable KG features
         
@@ -713,6 +746,16 @@ class RAGService:
         # SHA-256(query + user_id + document_filter).
         self._retrieval_cache: Dict[str, List["DocumentChunk"]] = {}
         self._max_retrieval_cache_size = 64
+
+        # Conversation source validation cache.
+        # When KG retrieval falls back to semantic search, conversation
+        # chunks whose source thread has been deleted can surface as
+        # "sources" that don't exist.  This cache tracks valid source_ids
+        # (UUID5 of thread_id) for active conversation threads, refreshed
+        # every 5 minutes from Postgres.
+        self._valid_conversation_sources: Set[str] = set()
+        self._conv_source_cache_ts: float = 0.0
+        self._conv_source_cache_ttl: float = 300.0  # 5 minutes
         
         if self.use_source_prioritization:
             logger.info("RAG Service initialized with source prioritization support")
@@ -727,6 +770,90 @@ class RAGService:
         self._retrieval_cache.clear()
         logger.info(f"Cleared {count} retrieval cache entries")
         return count
+
+    async def _refresh_conversation_source_cache(self) -> None:
+        """Refresh the set of valid conversation source_ids from Postgres.
+
+        source_id = uuid.uuid5(uuid.NAMESPACE_URL, thread_id), computed
+        for every non-archived conversation_threads row.  The result is
+        cached for _conv_source_cache_ttl seconds.
+        """
+        import uuid as _uuid
+        import asyncpg
+
+        now = time.monotonic()
+        if self._valid_conversation_sources and (
+            now - self._conv_source_cache_ts < self._conv_source_cache_ttl
+        ):
+            return
+
+        try:
+            conn = await asyncpg.connect(
+                host=self.settings.postgres_host,
+                port=self.settings.postgres_port,
+                user=self.settings.postgres_user,
+                password=self.settings.postgres_password,
+                database=self.settings.postgres_db,
+                timeout=5,
+            )
+            try:
+                rows = await conn.fetch(
+                    "SELECT id FROM multimodal_librarian.conversation_threads "
+                    "WHERE is_archived = FALSE"
+                )
+                self._valid_conversation_sources = {
+                    str(_uuid.uuid5(_uuid.NAMESPACE_URL, str(r["id"])))
+                    for r in rows
+                }
+                self._conv_source_cache_ts = now
+                logger.debug(
+                    f"Refreshed conversation source cache: "
+                    f"{len(self._valid_conversation_sources)} valid sources"
+                )
+            finally:
+                await conn.close()
+        except Exception as e:
+            logger.warning(f"Failed to refresh conversation source cache: {e}")
+            # On failure, keep the stale cache rather than clearing it.
+            # Bump the timestamp so we don't retry on every query.
+            self._conv_source_cache_ts = now
+
+    async def _filter_orphan_conversation_chunks(
+        self, chunks: List[DocumentChunk]
+    ) -> List[DocumentChunk]:
+        """Remove chunks whose conversation source no longer exists.
+
+        When a conversation is deleted but Milvus cleanup fails (timeout,
+        connection error, or predates the cleanup code), its chunks remain
+        in the vector store.  This method filters them out by checking
+        against the conversation_threads table.
+        """
+        conv_source_ids = {
+            c.metadata.get("source_id")
+            for c in chunks
+            if c.metadata.get("source_type") == "conversation"
+            and c.metadata.get("source_id")
+        }
+        if not conv_source_ids:
+            return chunks
+
+        await self._refresh_conversation_source_cache()
+        valid = self._valid_conversation_sources
+
+        before = len(chunks)
+        filtered = [
+            c for c in chunks
+            if c.metadata.get("source_type") != "conversation"
+            or c.metadata.get("source_id") in valid
+        ]
+        removed = before - len(filtered)
+        if removed:
+            orphan_ids = conv_source_ids - valid
+            logger.info(
+                f"Filtered {removed} orphan conversation chunks "
+                f"(deleted sources: {orphan_ids})"
+            )
+        return filtered
         
     async def generate_response(
         self,
@@ -1068,7 +1195,7 @@ class RAGService:
                     metadata={
                         "processed_query": processed_query,
                         "skip_retrieval": True,
-                        "ai_provider": "gemini",
+                        "ai_provider": "deepseek",
                     }
                 )
                 return
@@ -1175,7 +1302,7 @@ class RAGService:
                     metadata={
                         "processed_query": processed_query,
                         "web_search_only": True,
-                        "ai_provider": "gemini",
+                        "ai_provider": "deepseek",
                     }
                 )
                 return
@@ -1251,8 +1378,8 @@ class RAGService:
             # Create a mock AIResponse for confidence calculation
             mock_response = AIResponse(
                 content=cumulative_content,
-                provider="gemini",
-                model="gemini-2.5-flash",
+                provider="deepseek",
+                model=getattr(self.ai_service, "model", "deepseek-chat"),
                 tokens_used=cumulative_tokens,
                 processing_time_ms=0
             )
@@ -1290,7 +1417,7 @@ class RAGService:
                 fallback_used=fallback_used,
                 metadata={
                     "processed_query": processed_query,
-                    "ai_provider": "gemini",
+                    "ai_provider": "deepseek",
                     "search_threshold": self.min_similarity_threshold,
                     "context_length": len(context) if context else 0,
                     "related_concepts": related_concepts,
@@ -1489,14 +1616,21 @@ RESPONSE RULES:
         cached = self._retrieval_cache.get(cache_key)
         if cached is not None:
             logger.info(
-                f"Retrieval cache hit for query: {query[:50]}..."
+                f"RETRIEVAL_CACHE_HIT for query: {query[:50]}... ({len(cached)} chunks)"
             )
             return cached
+        logger.info(f"RETRIEVAL_CACHE_MISS for query: {query[:50]}...")
 
         # Phase 1: Retrieval
         chunks = await self._retrieval_phase(
             query, user_id, document_filter, related_concepts, kg_metadata,
         )
+
+        # Filter orphaned conversation chunks whose source thread was deleted
+        # but whose vectors were not cleaned up from the store. Must run here
+        # (not just in _semantic_search_documents) so KG-retrieved chunks are
+        # also filtered.
+        chunks = await self._filter_orphan_conversation_chunks(chunks)
 
         # Extract precomputed decomposition for relevance detection (Req 4.1)
         query_decomposition = (kg_metadata or {}).get('_decomposition')
@@ -1697,9 +1831,7 @@ RESPONSE RULES:
 
         # Apply Librarian boost (Req 2.3)
         for chunk in librarian_chunks:
-            chunk.similarity_score = min(
-                1.0, chunk.similarity_score * self.librarian_boost_factor,
-            )
+            chunk.similarity_score = chunk.similarity_score * self.librarian_boost_factor
             chunk.metadata['librarian_boost_applied'] = True
 
         # When librarian results are irrelevant, drop them so they don't
@@ -1746,17 +1878,33 @@ RESPONSE RULES:
                     c for c in librarian_chunks
                     if c.metadata['chunk_noun_score'] >= adaptive_thresh
                     or c.metadata.get('concept_title_boost', 1.0) >= 1.3
+                    or c.metadata.get('kg_provenance')
                 ]
-                if not kept and librarian_chunks:
+                min_kept = max(15, self.web_search_result_count_threshold)
+                if len(kept) < min_kept and librarian_chunks:
                     # Fallback: retain top chunks by noun score weighted
                     # by concept-title boost so that chunks from
                     # concept-aligned documents get priority.
                     def _weighted_noun(c):
                         noun = c.metadata.get('chunk_noun_score', 0.0)
                         cboost = c.metadata.get('concept_title_boost', 1.0)
-                        return noun * cboost
+                        # Floor: when a document's title strongly matches
+                        # query concepts, its chunks get a base score even
+                        # with zero noun overlap.  Bridges the vocabulary
+                        # gap between query phrasing and document text
+                        # (e.g. "work restrictions" vs "exposure-prone
+                        # procedures").
+                        floor = max(0.0, cboost - 1.0) * 0.1
+                        return max(noun, floor) * cboost
                     librarian_chunks.sort(key=_weighted_noun, reverse=True)
-                    kept = librarian_chunks[:max(10, self.web_search_result_count_threshold)]
+                    # Take the best of: chunks that passed the strict filter,
+                    # plus top-scoring chunks to reach the minimum.
+                    kept_ids = {c.chunk_id for c in kept}
+                    for c in librarian_chunks:
+                        if len(kept) >= min_kept:
+                            break
+                        if c.chunk_id not in kept_ids:
+                            kept.append(c)
                 dropped = len(librarian_chunks) - len(kept)
                 logger.info(
                     f"Co-occurrence drop (adaptive): kept {len(kept)}, "
@@ -1770,7 +1918,8 @@ RESPONSE RULES:
                 and tc is not None
                 and tc.proper_nouns
             ):
-                # Selective drop: keep chunks containing proper nouns
+                # Selective drop: keep chunks containing proper nouns,
+                # or chunks with KG provenance (concept→EXTRACTED_FROM path)
                 proper_nouns_lower = [
                     pn.lower() for pn in tc.proper_nouns
                 ]
@@ -1780,7 +1929,30 @@ RESPONSE RULES:
                         pn in (c.content or "").lower()
                         for pn in proper_nouns_lower
                     )
+                    or c.metadata.get('kg_provenance')
                 ]
+                min_kept = max(15, self.web_search_result_count_threshold)
+                if len(kept) < min_kept and librarian_chunks:
+                    # Supplement with top chunks by concept-title boost
+                    # to ensure the AI has enough source material, even
+                    # when medical terminology doesn't substring-match
+                    # the query phrasing (e.g. "HCP" vs "healthcare worker").
+                    kept_ids = {c.chunk_id for c in kept}
+                    for c in sorted(
+                        librarian_chunks,
+                        key=lambda c: (
+                            max(
+                                c.metadata.get('chunk_noun_score', 0.0),
+                                max(0.0, c.metadata.get('concept_title_boost', 1.0) - 1.0) * 0.1,
+                            )
+                            * c.metadata.get('concept_title_boost', 1.0)
+                        ),
+                        reverse=True,
+                    ):
+                        if len(kept) >= min_kept:
+                            break
+                        if c.chunk_id not in kept_ids:
+                            kept.append(c)
                 dropped = len(librarian_chunks) - len(kept)
                 logger.info(
                     f"Selective drop: kept {len(kept)}, "
@@ -1824,17 +1996,25 @@ RESPONSE RULES:
                 c for c in librarian_chunks
                 if c.metadata['chunk_noun_score'] >= adaptive_thresh
                 or c.metadata.get('concept_title_boost', 1.0) >= 1.3
+                or c.metadata.get('kg_provenance')
             ]
-            if not kept and librarian_chunks:
+            min_kept = max(15, self.web_search_result_count_threshold)
+            if len(kept) < min_kept and librarian_chunks:
                 # Fallback: retain top chunks by noun score weighted
                 # by concept-title boost so chunks from concept-aligned
                 # documents get priority.
                 def _weighted_noun2(c):
                     noun = c.metadata.get('chunk_noun_score', 0.0)
                     cboost = c.metadata.get('concept_title_boost', 1.0)
-                    return noun * cboost
+                    floor = max(0.0, cboost - 1.0) * 0.1
+                    return max(noun, floor) * cboost
                 librarian_chunks.sort(key=_weighted_noun2, reverse=True)
-                kept = librarian_chunks[:max(10, self.web_search_result_count_threshold)]
+                kept_ids = {c.chunk_id for c in kept}
+                for c in librarian_chunks:
+                    if len(kept) >= min_kept:
+                        break
+                    if c.chunk_id not in kept_ids:
+                        kept.append(c)
             dropped = before_count - len(kept)
             if dropped > 0:
                 logger.info(
@@ -2039,7 +2219,13 @@ RESPONSE RULES:
                         'relationship_path': retrieved_chunk.relationship_path,
                         'kg_relevance_score': retrieved_chunk.kg_relevance_score,
                         'semantic_score': retrieved_chunk.semantic_score,
-                    }
+                    },
+                    # KG provenance: this chunk was retrieved via an explicit
+                    # concept→EXTRACTED_FROM→chunk path in the knowledge graph,
+                    # not via embedding similarity. This is a structural fact
+                    # that bypasses lexical noun-coverage filters — the KG has
+                    # already determined relevance through concept extraction.
+                    'kg_provenance': retrieved_chunk.is_from_kg(),
                 }
             )
             # Fallback: extract page number from [Page N] markers in content
@@ -2214,9 +2400,13 @@ RESPONSE RULES:
             # Note: Enrichment with document titles is now done in _search_documents
             # after all retrieval phases complete
             
+            # Filter orphaned conversation chunks whose source thread was deleted
+            # but whose vectors were not cleaned up from the store.
+            chunks = await self._filter_orphan_conversation_chunks(chunks)
+
             logger.info(f"Found {len(chunks)} relevant chunks for query: {query[:50]}...")
             return chunks
-            
+
         except Exception as e:
             logger.error(f"Document search failed: {e}")
             return []

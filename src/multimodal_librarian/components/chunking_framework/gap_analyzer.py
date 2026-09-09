@@ -678,10 +678,10 @@ class ConceptualGapAnalyzer:
         # Determine bridge strategy based on gap characteristics
         if semantic_distance > 0.8 or concept_overlap < 0.2:
             # Large semantic gap requires LLM bridge
-            bridge_strategy = BridgeStrategy.GEMINI_FLASH
+            bridge_strategy = BridgeStrategy.DEEPSEEK
         elif cross_ref_density > 0.5 or structural_continuity < 0.3:
             # High reference density or low continuity needs LLM bridge
-            bridge_strategy = BridgeStrategy.GEMINI_FLASH
+            bridge_strategy = BridgeStrategy.DEEPSEEK
         elif semantic_distance > 0.6:
             # Moderate gap can use semantic overlap
             bridge_strategy = BridgeStrategy.SEMANTIC_OVERLAP
@@ -693,7 +693,7 @@ class ConceptualGapAnalyzer:
         if content_type in [ContentType.MEDICAL, ContentType.LEGAL]:
             # High-precision domains prefer LLM bridges
             if semantic_distance > 0.5:
-                bridge_strategy = BridgeStrategy.GEMINI_FLASH
+                bridge_strategy = BridgeStrategy.DEEPSEEK
         
         elif content_type == ContentType.NARRATIVE:
             # Narrative content can often use mechanical fallback

@@ -7,6 +7,7 @@ including AWS-native databases, external APIs, and internal services.
 
 import asyncio
 import logging
+import os
 import time
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
@@ -277,25 +278,27 @@ class HealthChecker:
         components = {}
         overall_status = "healthy"
         
-        # Check Google/Gemini API (only supported AI provider)
-        gemini_key = getattr(self.settings, 'gemini_api_key', None) or getattr(self.settings, 'google_api_key', None)
-        if gemini_key:
+        # Check DeepSeek API (primary AI provider)
+        deepseek_key = os.environ.get("DEEPSEEK_API_KEY")
+        deepseek_base = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+        if deepseek_key:
             try:
                 response = await asyncio.wait_for(
                     asyncio.to_thread(
                         lambda: requests.get(
-                            f"https://generativelanguage.googleapis.com/v1/models?key={gemini_key}",
+                            f"{deepseek_base.rstrip('/')}/models",
+                            headers={"Authorization": f"Bearer {deepseek_key}"},
                             timeout=5
                         )
                     ),
                     timeout=10
                 )
-                components["gemini_api"] = "ok" if response.status_code == 200 else f"error_{response.status_code}"
+                components["deepseek_api"] = "ok" if response.status_code == 200 else f"error_{response.status_code}"
             except Exception as e:
-                components["gemini_api"] = f"error: {str(e)[:50]}"
+                components["deepseek_api"] = f"error: {str(e)[:50]}"
                 overall_status = "degraded"
         else:
-            components["gemini_api"] = "not_configured"
+            components["deepseek_api"] = "not_configured"
         
         # Check YAGO endpoint
         try:

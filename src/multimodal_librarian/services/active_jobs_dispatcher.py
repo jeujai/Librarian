@@ -158,20 +158,32 @@ class ActiveJobsDispatcher:
             r = _redis.Redis.from_url(broker_url)
             bridge_val = r.get(f"docprog:{document_id}:bridges")
             kg_val = r.get(f"docprog:{document_id}:kg")
+            enrich_val = r.get(f"docprog:{document_id}:enrich")
 
-            if bridge_val is None and kg_val is None:
+            if bridge_val is None and kg_val is None and enrich_val is None:
                 return None
 
             b = float(bridge_val) if bridge_val else 0.0
             k = float(kg_val) if kg_val else 0.0
+            e = float(enrich_val) if enrich_val else 0.0
 
-            if b >= 1.0 and k >= 1.0:
+            if b >= 1.0 and k >= 1.0 and e >= 1.0:
                 return None
 
-            return [
-                SubstageInfo(label="Bridges", percentage=min(int(b * 100), 100)),
-                SubstageInfo(label="KG", percentage=min(int(k * 100), 100)),
-            ]
+            result = []
+            if b < 1.0:
+                result.append(SubstageInfo(
+                    label="Bridges", percentage=min(int(b * 100), 100)
+                ))
+            if k < 1.0:
+                result.append(SubstageInfo(
+                    label="KG", percentage=min(int(k * 100), 100)
+                ))
+            if e > 0 and e < 1.0:
+                result.append(SubstageInfo(
+                    label="Rationales", percentage=min(int(e * 100), 100)
+                ))
+            return result if result else None
         except Exception:
             return None
 

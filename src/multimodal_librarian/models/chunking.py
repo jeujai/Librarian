@@ -379,7 +379,7 @@ class BridgeChunk:
     content: str
     source_chunks: List[str]  # IDs of connected chunks
     id: str = field(default_factory=lambda: str(uuid.uuid4()))  # UUID for storage consistency
-    generation_method: str = "gemini_25_flash"  # gemini_25_flash, mechanical_fallback
+    generation_method: str = "deepseek_v4_flash"  # deepseek_v4_flash, mechanical_fallback
     gap_analysis: Optional[GapAnalysis] = None
     validation_result: Optional[ValidationResult] = None
     confidence_score: float = 0.0
@@ -414,7 +414,7 @@ class BridgeChunk:
             id=data.get('id', str(uuid.uuid4())),
             content=data['content'],
             source_chunks=data.get('source_chunks', []),
-            generation_method=data.get('generation_method', 'gemini_25_flash'),
+            generation_method=data.get('generation_method', 'deepseek_v4_flash'),
             gap_analysis=GapAnalysis.from_dict(data['gap_analysis']) if data.get('gap_analysis') else None,
             validation_result=ValidationResult.from_dict(data['validation_result']) if data.get('validation_result') else None,
             confidence_score=data.get('confidence_score', 0.0),

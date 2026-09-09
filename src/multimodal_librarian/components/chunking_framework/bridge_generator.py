@@ -3,7 +3,7 @@ Smart Bridge Generator with Multi-Provider LLM Support.
 
 This module implements LLM-powered bridge generation supporting multiple providers:
 - Ollama (local, fast, GPU-accelerated via Metal on Apple Silicon)
-- Gemini 2.5 Flash (cloud, higher quality)
+- DeepSeek V4 Flash (cloud, higher quality)
 
 The provider can be configured via BRIDGE_GENERATION_PROVIDER environment variable.
 Default is "ollama" for faster local processing.
@@ -16,14 +16,6 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
-
-try:
-    import google.generativeai as genai
-    from google.generativeai.types import HarmBlockThreshold, HarmCategory
-    GEMINI_AVAILABLE = True
-except ImportError:
-    GEMINI_AVAILABLE = False
-    genai = None
 
 from ...clients.ollama_client import OllamaClient, get_ollama_client
 from ...config import get_settings
@@ -86,8 +78,8 @@ class SmartBridgeGenerator:
     
     Supports:
     - Ollama (local, fast, GPU-accelerated) - default
-    - Gemini 2.5 Flash (cloud, higher quality)
-    
+    - DeepSeek V4 Flash (cloud, higher quality)
+
     The provider is selected via settings.bridge_generation_provider.
     
     IMPORTANT: LLM initialization is LAZY to avoid blocking the event loop.
@@ -106,8 +98,8 @@ class SmartBridgeGenerator:
         self.provider = getattr(self.settings, 'bridge_generation_provider', 'ollama')
         
         # Lazy initialization - models are None until first use
-        self._gemini_model = None
-        self._gemini_initialized = False
+        self._deepseek_service = None
+        self._deepseek_initialized = False
         self._ollama_client: Optional[OllamaClient] = None
         self._ollama_available: Optional[bool] = None
         
@@ -121,7 +113,7 @@ class SmartBridgeGenerator:
             'provider_used': {}
         }
         
-        # Rate limiting (mainly for Gemini)
+        # Rate limiting (mainly for cloud providers)
         self.rate_limit_delay = 0.1  # Reduced from 1.0s for faster processing
         self.last_request_time = 0.0
         
@@ -146,17 +138,6 @@ class SmartBridgeGenerator:
         
         logger.info(f"Bridge generator initialized with provider: {self.provider}")
     
-    @property
-    def model(self):
-        """Lazy property to get the Gemini model. Initializes on first access."""
-        if not self._gemini_initialized:
-            self._initialize_gemini()
-        return self._gemini_model
-    
-    def _get_model(self):
-        """Get the Gemini model, initializing lazily if needed."""
-        return self.model
-    
     async def _get_ollama_client(self) -> Optional[OllamaClient]:
         """Get Ollama client, checking availability.
         
@@ -180,58 +161,32 @@ class SmartBridgeGenerator:
         else:
             logger.warning(
                 "Ollama not available, will fall back to "
-                "Gemini or mechanical"
+                "DeepSeek or mechanical"
             )
             return None
-    
-    def _initialize_gemini(self):
-        """Initialize Gemini API client (called lazily on first use).
-        
-        WARNING: This method performs blocking I/O. It should only be called
-        when actually needed for bridge generation, not during startup.
+
+    def _ensure_deepseek(self):
+        """Lazily initialize DeepSeek for bridge generation fallback.
+
+        Uses a per-thread cached service because each pool worker thread has
+        its own event loop and the service's httpx.AsyncClient binds to the
+        loop that created it.  Returns the service, or ``None`` when DeepSeek
+        is unavailable (no API key, etc.).
         """
-        if self._gemini_initialized:
-            return
-            
-        self._gemini_initialized = True  # Mark as initialized even if it fails
-        
-        if not GEMINI_AVAILABLE:
-            logger.warning("google-generativeai not installed - Gemini unavailable")
-            self._gemini_model = None
-            return
-        
+        if self._deepseek_initialized:
+            return self._deepseek_service
+        self._deepseek_initialized = True
+
         try:
-            api_key = getattr(self.settings, 'GEMINI_API_KEY', None) or getattr(self.settings, 'gemini_api_key', None)
-            if not api_key:
-                logger.warning("GEMINI_API_KEY not found in settings - Gemini unavailable")
-                self._gemini_model = None
-                return
-            
-            genai.configure(api_key=api_key)
-            
-            # Configure the model
-            self._gemini_model = genai.GenerativeModel(
-                model_name="gemini-2.5-flash",  # Using Gemini 2.5 Flash
-                generation_config=genai.types.GenerationConfig(
-                    temperature=0.3,  # Lower temperature for more consistent bridges
-                    top_p=0.8,
-                    top_k=40,
-                    max_output_tokens=1000,
-                    candidate_count=1
-                ),
-                safety_settings={
-                    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-                    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-                    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-                    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-                }
-            )
-            
-            logger.info("Initialized Gemini 2.5 Flash for bridge generation (lazy init)")
-        
+            from ...services.deepseek_ai_service import DeepSeekAIService
+
+            self._deepseek_service = DeepSeekAIService()
+            logger.info("Initialized DeepSeek for bridge generation fallback (lazy init)")
         except Exception as e:
-            logger.error(f"Failed to initialize Gemini API: {e}")
-            self._gemini_model = None
+            logger.error(f"Failed to initialize DeepSeek API: {e}")
+            self._deepseek_service = None
+
+        return self._deepseek_service
     
     def _initialize_domain_strategies(self) -> Dict[ContentType, Dict[str, Any]]:
         """Initialize domain-specific prompting strategies."""
@@ -391,7 +346,7 @@ Bridge:""",
                        context: Optional[str] = None,
                        bisected_concepts: Optional[List[str]] = None) -> BridgeChunk:
         """
-        Generate contextual bridge using Gemini 2.5 Flash.
+        Generate contextual bridge using the configured LLM provider.
         
         Args:
             chunk1: Content of first chunk
@@ -550,10 +505,10 @@ Bridge:""",
         """Generate a single bridge with error handling and rate limiting."""
         start_time = time.time()
         
-        # Rate limiting (mainly for Gemini)
-        if self.provider == 'gemini':
+        # Rate limiting (mainly for cloud providers)
+        if self.provider == 'deepseek':
             self._apply_rate_limiting()
-        
+
         try:
             # Create adaptive prompt
             prompt = self.create_adaptive_prompt(
@@ -564,20 +519,19 @@ Bridge:""",
                 request.domain_config,
                 bisected_concepts=request.bisected_concepts
             )
-            
-            # Try Ollama first if configured
+
+            # Try Ollama first if configured as the primary provider
             if self.provider == 'ollama':
                 result = self._generate_with_ollama_sync(request, prompt, start_time)
                 if result.is_successful():
                     return result
-                # Fall through to Gemini if Ollama fails
-                logger.info("Ollama generation failed, falling back to Gemini")
-            
-            # Try Gemini
-            if self.model is not None:
-                result = self._generate_with_gemini(request, prompt, start_time)
-                if result.is_successful():
-                    return result
+                # Fall through to DeepSeek if Ollama fails
+                logger.info("Ollama generation failed, falling back to DeepSeek")
+
+            # Try DeepSeek (primary when provider == 'deepseek', fallback otherwise)
+            result = self._generate_with_deepseek(request, prompt, start_time)
+            if result.is_successful():
+                return result
             
             # Fallback to mechanical bridge
             bridge_content = self._generate_mechanical_fallback(
@@ -708,7 +662,7 @@ Bridge:""",
         generation_time = time.time() - start_time
         
         # Clean up the response (remove any thinking tags from DeepSeek-R1)
-        bridge_content = self._clean_ollama_response(response.content)
+        bridge_content = self._clean_llm_response(response.content)
         
         # Update statistics
         self.generation_stats['total_requests'] += 1
@@ -729,8 +683,8 @@ Bridge:""",
             }
         )
     
-    def _clean_ollama_response(self, content: str) -> str:
-        """Clean Ollama response, removing thinking tags from DeepSeek-R1."""
+    def _clean_llm_response(self, content: str) -> str:
+        """Clean LLM response, removing thinking tags from reasoning models."""
         import re
 
         # If there's a </think> tag, extract only what comes after it
@@ -745,61 +699,109 @@ Bridge:""",
         
         return content.strip()
     
-    def _generate_with_gemini(
-        self, 
-        request: BridgeGenerationRequest, 
-        prompt: str, 
+    def _generate_with_deepseek(
+        self,
+        request: BridgeGenerationRequest,
+        prompt: str,
         start_time: float
     ) -> BridgeGenerationResult:
-        """Generate bridge using Gemini."""
+        """Generate bridge using DeepSeek (sync wrapper).
+
+        Mirrors ``_generate_with_ollama_sync``: runs the async DeepSeek call on
+        a per-thread event loop so the service's httpx.AsyncClient stays bound
+        to the correct loop.
+        """
         try:
-            response = self.model.generate_content(prompt)
-            
-            if response.candidates and response.candidates[0].content.parts:
-                bridge_content = response.candidates[0].content.parts[0].text.strip()
-                generation_method = "gemini_2_5_flash"
-                confidence_score = self._calculate_confidence_score(response, request.gap_analysis)
-                token_usage = self._extract_token_usage(response)
-            else:
-                return BridgeGenerationResult(
-                    request_id=request.get_request_id(),
-                    bridge_content="",
-                    generation_method="gemini_no_response",
-                    confidence_score=0.0,
-                    generation_time=time.time() - start_time,
-                    token_usage={'input_tokens': 0, 'output_tokens': 0, 'total_tokens': 0},
-                    error="No valid response from Gemini"
+            local = self._thread_local
+            loop = getattr(local, 'event_loop', None)
+            if loop is None or loop.is_closed():
+                loop = asyncio.new_event_loop()
+                local.event_loop = loop
+            return loop.run_until_complete(
+                self._generate_with_deepseek_async(
+                    request, prompt, start_time
                 )
-            
-            generation_time = time.time() - start_time
-            
-            # Update statistics
-            self.generation_stats['total_requests'] += 1
-            self.generation_stats['successful_generations'] += 1
-            self.generation_stats['total_tokens'] += token_usage.get('total_tokens', 0)
-            self.generation_stats['total_cost'] += self._estimate_cost(token_usage)
-            self._track_provider('gemini')
-            
-            return BridgeGenerationResult(
-                request_id=request.get_request_id(),
-                bridge_content=bridge_content,
-                generation_method=generation_method,
-                confidence_score=confidence_score,
-                generation_time=generation_time,
-                token_usage=token_usage
             )
-            
         except Exception as e:
-            logger.warning(f"Gemini generation failed: {e}")
+            logger.warning(f"DeepSeek sync wrapper failed: {e}")
             return BridgeGenerationResult(
                 request_id=request.get_request_id(),
                 bridge_content="",
-                generation_method="gemini_error",
+                generation_method="deepseek_failed",
+                confidence_score=0.0,
+                generation_time=time.time() - start_time,
+                token_usage={
+                    'input_tokens': 0,
+                    'output_tokens': 0,
+                    'total_tokens': 0
+                },
+                error=str(e)
+            )
+
+    async def _generate_with_deepseek_async(
+        self,
+        request: BridgeGenerationRequest,
+        prompt: str,
+        start_time: float
+    ) -> BridgeGenerationResult:
+        """Generate bridge using DeepSeek (async)."""
+        service = self._ensure_deepseek()
+        if service is None:
+            return BridgeGenerationResult(
+                request_id=request.get_request_id(),
+                bridge_content="",
+                generation_method="deepseek_unavailable",
                 confidence_score=0.0,
                 generation_time=time.time() - start_time,
                 token_usage={'input_tokens': 0, 'output_tokens': 0, 'total_tokens': 0},
-                error=str(e)
+                error="DeepSeek not available"
             )
+
+        system_prompt = (
+            "You are a technical writer creating smooth transitions between document sections. "
+            "Generate concise bridge text (2-3 sentences max) that connects the ideas naturally. "
+            "Output ONLY the bridge text, no explanations or metadata."
+        )
+
+        response = await service.generate_response(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.3,
+            max_tokens=800,
+        )
+
+        if not response.content or response.confidence_score <= 0:
+            return BridgeGenerationResult(
+                request_id=request.get_request_id(),
+                bridge_content="",
+                generation_method="deepseek_error",
+                confidence_score=0.0,
+                generation_time=time.time() - start_time,
+                token_usage={'input_tokens': 0, 'output_tokens': 0, 'total_tokens': 0},
+                error="DeepSeek returned an empty or failed response"
+            )
+
+        generation_time = time.time() - start_time
+
+        bridge_content = self._clean_llm_response(response.content)
+        token_usage = self._deepseek_token_usage(response)
+
+        self.generation_stats['total_requests'] += 1
+        self.generation_stats['successful_generations'] += 1
+        self.generation_stats['total_tokens'] += token_usage.get('total_tokens', 0)
+        self.generation_stats['total_cost'] += self._estimate_cost(token_usage)
+        self._track_provider('deepseek')
+
+        return BridgeGenerationResult(
+            request_id=request.get_request_id(),
+            bridge_content=bridge_content,
+            generation_method="deepseek_v4_flash",
+            confidence_score=0.7,
+            generation_time=generation_time,
+            token_usage=token_usage
+        )
     
     def _track_provider(self, provider: str):
         """Track which provider was used."""
@@ -1113,67 +1115,32 @@ Bridge:""",
         
         self.last_request_time = time.time()
     
-    def _calculate_confidence_score(self, response: Any, gap_analysis: GapAnalysis) -> float:
-        """Calculate confidence score for generated bridge."""
-        base_confidence = 0.7  # Base confidence for successful generation
-        
-        # Adjust based on gap analysis
-        if gap_analysis.necessity_score > 0.8:
-            base_confidence += 0.1  # High necessity suggests good bridge needed
-        elif gap_analysis.necessity_score < 0.3:
-            base_confidence -= 0.1  # Low necessity might not need complex bridge
-        
-        # Adjust based on semantic distance
-        if gap_analysis.semantic_distance > 0.7:
-            base_confidence += 0.1  # Large gap successfully bridged
-        
-        # Adjust based on response quality indicators
-        if hasattr(response, 'candidates') and response.candidates:
-            candidate = response.candidates[0]
-            
-            # Check for safety ratings (lower is better)
-            if hasattr(candidate, 'safety_ratings'):
-                for rating in candidate.safety_ratings:
-                    if rating.probability.name in ['HIGH', 'MEDIUM']:
-                        base_confidence -= 0.2
-                        break
-            
-            # Check finish reason
-            if hasattr(candidate, 'finish_reason'):
-                if candidate.finish_reason.name == 'STOP':
-                    base_confidence += 0.05  # Natural completion
-                elif candidate.finish_reason.name in ['MAX_TOKENS', 'SAFETY']:
-                    base_confidence -= 0.1  # Truncated or safety-stopped
-        
-        return max(0.0, min(1.0, base_confidence))
-    
-    def _extract_token_usage(self, response: Any) -> Dict[str, int]:
-        """Extract token usage information from response."""
-        token_usage = {'input_tokens': 0, 'output_tokens': 0, 'total_tokens': 0}
-        
-        try:
-            if hasattr(response, 'usage_metadata'):
-                usage = response.usage_metadata
-                token_usage['input_tokens'] = getattr(usage, 'prompt_token_count', 0)
-                token_usage['output_tokens'] = getattr(usage, 'candidates_token_count', 0)
-                token_usage['total_tokens'] = getattr(usage, 'total_token_count', 0)
-        except Exception as e:
-            logger.debug(f"Could not extract token usage: {e}")
-        
-        return token_usage
-    
+    def _deepseek_token_usage(self, response: Any) -> Dict[str, int]:
+        """Extract token usage from a DeepSeek AIResponse."""
+        metadata = getattr(response, 'metadata', None) or {}
+        input_tokens = int(metadata.get('prompt_tokens', 0) or 0)
+        output_tokens = int(metadata.get('completion_tokens', 0) or 0)
+        total_tokens = int(getattr(response, 'tokens_used', 0) or 0)
+        if total_tokens <= 0:
+            total_tokens = input_tokens + output_tokens
+        return {
+            'input_tokens': input_tokens,
+            'output_tokens': output_tokens,
+            'total_tokens': total_tokens,
+        }
+
     def _estimate_cost(self, token_usage: Dict[str, int]) -> float:
-        """Estimate cost based on token usage."""
-        # Gemini 2.0 Flash pricing (approximate)
-        input_cost_per_1k = 0.000075  # $0.000075 per 1K input tokens
-        output_cost_per_1k = 0.0003   # $0.0003 per 1K output tokens
-        
+        """Estimate cost based on token usage (DeepSeek pricing, approximate)."""
+        # DeepSeek pricing (approximate, USD per 1K tokens)
+        input_cost_per_1k = 0.00027   # $0.27 per 1M input tokens
+        output_cost_per_1k = 0.0011   # $1.10 per 1M output tokens
+
         input_tokens = token_usage.get('input_tokens', 0)
         output_tokens = token_usage.get('output_tokens', 0)
-        
+
         input_cost = (input_tokens / 1000) * input_cost_per_1k
         output_cost = (output_tokens / 1000) * output_cost_per_1k
-        
+
         return input_cost + output_cost
     
     def get_generation_statistics(self) -> Dict[str, Any]:

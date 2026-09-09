@@ -6,6 +6,7 @@ documents asynchronously with Redis as the message broker.
 """
 
 import asyncio
+import json
 import logging
 import os
 import time
@@ -55,6 +56,12 @@ def _set_parallel_progress(document_id: str, task_name: str, fraction: float):
     Monotonic: the stored fraction never decreases.  This prevents the
     progress bar from jumping backwards when a duplicate task delivery
     (acks_late + broker hiccup) restarts from zero.
+
+    Pipeline phases:
+      0–30%  bridge generation
+      30–80% KG update (parallel with bridges)
+      80–97% lean rationale enrichment
+      97–100% finalization
     """
     r = _get_progress_redis()
     key = f"docprog:{document_id}:{task_name}"
@@ -66,57 +73,431 @@ def _set_parallel_progress(document_id: str, task_name: str, fraction: float):
         if new_val < old_val:
             new_val = old_val
     r.set(key, str(new_val), ex=PROGRESS_KEY_TTL)
-    # Read both fractions
+    # Read all fractions
     bridge_val = r.get(f"docprog:{document_id}:bridges")
     kg_val = r.get(f"docprog:{document_id}:kg")
+    enrich_val = r.get(f"docprog:{document_id}:enrich")
     b = float(bridge_val) if bridge_val else 0.0
     k = float(kg_val) if kg_val else 0.0
-    avg = (b + k) / 2.0
-    return int(30 + avg * 60)  # 30–90%
+    e = float(enrich_val) if enrich_val else 0.0
+    # bridges+kg parallel phase → 30–80%, enrichment sequential → 80–97%
+    parallel_done = min((b + k) / 2.0, 1.0)
+    return int(30 + parallel_done * 50 + e * 17)
 
 
 def _get_parallel_step_label(document_id: str) -> str:
-    """Return a progress label reflecting which parallel tasks are still running."""
+    """Return a progress label reflecting which pipeline stage is active."""
     r = _get_progress_redis()
     bridge_val = r.get(f"docprog:{document_id}:bridges")
     kg_val = r.get(f"docprog:{document_id}:kg")
+    enrich_val = r.get(f"docprog:{document_id}:enrich")
     b = float(bridge_val) if bridge_val else 0.0
     k = float(kg_val) if kg_val else 0.0
+    e = float(enrich_val) if enrich_val else 0.0
     bridges_done = b >= 1.0
     kg_done = k >= 1.0
+    enrich_done = e >= 1.0
+    if not bridges_done and not kg_done:
+        return 'Generating bridges & knowledge graph'
     if bridges_done and not kg_done:
         return 'Updating knowledge graph'
     if kg_done and not bridges_done:
         return 'Generating bridges'
-    if not bridges_done and not kg_done:
-        return 'Generating bridges & knowledge graph'
+    if not enrich_done:
+        return 'Enriching rationales'
     return 'Finalizing'
 
 
 def _get_parallel_substage_pcts(document_id: str) -> Optional[str]:
-    """Return a formatted substage breakdown string, or None if not in parallel phase."""
+    """Return a formatted substage breakdown string, or None if not in active phase."""
     r = _get_progress_redis()
     bridge_val = r.get(f"docprog:{document_id}:bridges")
     kg_val = r.get(f"docprog:{document_id}:kg")
-    if bridge_val is None and kg_val is None:
+    enrich_val = r.get(f"docprog:{document_id}:enrich")
+    if bridge_val is None and kg_val is None and enrich_val is None:
         return None
     b = float(bridge_val) if bridge_val else 0.0
     k = float(kg_val) if kg_val else 0.0
-    if b >= 1.0 and k >= 1.0:
+    e = float(enrich_val) if enrich_val else 0.0
+    if b >= 1.0 and k >= 1.0 and e >= 1.0:
         return None
     b_pct = min(int(b * 100), 100)
     k_pct = min(int(k * 100), 100)
+    e_pct = min(int(e * 100), 100)
     parts = []
     if b < 1.0:
         parts.append(f"Bridges: {b_pct}%")
     if k < 1.0:
         parts.append(f"KG: {k_pct}%")
+    if e > 0 and e < 1.0:
+        parts.append(f"Rationales: {e_pct}%")
     return "  ·  ".join(parts)
 
 def _cleanup_parallel_progress(document_id: str):
     """Remove Redis keys after finalization."""
     r = _get_progress_redis()
-    r.delete(f"docprog:{document_id}:bridges", f"docprog:{document_id}:kg")
+    r.delete(
+        f"docprog:{document_id}:bridges",
+        f"docprog:{document_id}:kg",
+        f"docprog:{document_id}:enrich",
+    )
+
+
+# ------------------------------------------------------------------
+# Lean rationale enrichment (post-extraction density pass)
+# ------------------------------------------------------------------
+
+# Enrichment constants — mirrored from scripts/enrich_rationales.py
+_ENRICH_MAX_CONCEPTS = int(os.environ.get("ENRICH_MAX_CONCEPTS", "15"))
+_ENRICH_CONCURRENCY = int(os.environ.get("ENRICH_CONCURRENCY", "3"))
+_ENRICH_WRITE_CONCURRENCY = int(os.environ.get("ENRICH_WRITE_CONCURRENCY", "1"))
+_ENRICH_MAX_CHARS = int(os.environ.get("ENRICH_MAX_CHARS", "2000"))
+_ENRICH_OLLAMA_TIMEOUT = float(os.environ.get("OLLAMA_TIMEOUT", "180"))
+
+_ENRICH_CLINICAL_FILTER = """  AND (
+    EXISTS { (c)-[:SAME_AS]->(:UMLSConcept) }
+    OR EXISTS { (c)-[:SIMILAR_TO]->(:UMLSConcept) }
+    OR (
+      c.concept_id STARTS WITH 'multi_word_'
+      AND c.name =~ '^[A-Za-z][A-Za-z ]{4,}[A-Za-z]$'
+      AND c.name CONTAINS ' '
+    )
+  )
+"""
+
+_ENRICH_READ_QUERY = (
+    "MATCH (c:Concept)-[r:EXTRACTED_FROM]->(ch:Chunk {source_id: $doc})\n"
+    "WHERE r.rationale IS NULL\n"
+    + _ENRICH_CLINICAL_FILTER
+    + "RETURN ch.chunk_id AS chunk_id, c.concept_id AS cid, c.name AS name\n"
+)
+
+_ENRICH_WRITE_QUERY = """
+UNWIND $rows AS row
+MATCH (c:Concept {concept_id: row.cid})-[r:EXTRACTED_FROM]->(ch:Chunk {chunk_id: row.chid})
+SET r.rationale = row.rationale, r.rationale_embedding = row.emb
+RETURN count(r) AS cnt
+"""
+
+_ENRICH_PROMPT = """You are given a passage from a clinical document and a list of \
+concept names already extracted from it. For EACH concept name, write a brief \
+one-clause reason it matters in THIS passage -- a paraphrase in your own words, \
+NOT a quote copied from the text.
+
+Return ONLY a JSON array. No markdown, no explanation, no extra text:
+[{{"name": "<exact concept name>", "rationale": "<one clause>"}}]
+
+Concept names:
+{names}
+
+Passage:
+{text}
+
+JSON:"""
+
+
+def _extract_enrich_json_objects(text: str) -> list:
+    """Extract complete JSON objects via brace-balanced scanning.
+
+    Tolerant of a missing closing ']' or trailing prose: llama3.2:3b often
+    emits a valid array of {"name","rationale"} objects then stops without
+    the closing bracket, which makes a strict array parse drop the whole batch.
+    """
+    objs: list = []
+    i, n = 0, len(text)
+    while i < n:
+        if text[i] != "{":
+            i += 1
+            continue
+        depth = 0
+        in_str = False
+        esc = False
+        j = i
+        while j < n:
+            ch = text[j]
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = not in_str
+            elif not in_str:
+                if ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0:
+                        try:
+                            o = json.loads(text[i : j + 1])
+                            if isinstance(o, dict):
+                                objs.append(o)
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                        break
+            j += 1
+        i = j + 1
+    return objs
+
+
+def _parse_enrich_json_array(text: str) -> list:
+    """Extract a JSON array of objects from a (possibly noisy) LLM response.
+
+    Fast path parses a well-formed ``[ ... ]`` array; fallback recovers the
+    objects when the model omits the closing ']' or appends trailing prose.
+    """
+    if not text:
+        return []
+    t = text.strip()
+    if t.startswith("```"):
+        t = t.split("```", 2)[-1] if t.count("```") >= 2 else t.strip("`")
+    start = t.find("[")
+    end = t.rfind("]")
+    if start != -1 and end != -1 and end > start:
+        try:
+            parsed = json.loads(t[start : end + 1])
+            if isinstance(parsed, list):
+                dicts = [p for p in parsed if isinstance(p, dict)]
+                if dicts:
+                    return dicts
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return _extract_enrich_json_objects(t)
+
+
+async def _write_with_retry(session, write_tx_fn, *, max_retries: int = 5, base_delay: float = 1.0):
+    """Execute a Neo4j write transaction with exponential backoff + jitter."""
+    import random
+    for attempt in range(max_retries + 1):
+        try:
+            return await session.execute_write(write_tx_fn)
+        except Exception as e:
+            msg = str(e)
+            is_transient = (
+                "LockAcquisitionTimeout" in msg
+                or "TransientError" in msg
+                or "Unable to acquire lock" in msg
+                or "BookmarkTimeout" in msg
+                or "ForbiddenDueToTransactionNotOpen" in msg
+            )
+            if not is_transient or attempt == max_retries:
+                raise
+            delay = base_delay * (2 ** attempt) + random.uniform(0, base_delay)
+            logger.info(
+                f"Write lock contention (attempt {attempt + 1}/{max_retries}), "
+                f"retrying in {delay:.1f}s"
+            )
+            await asyncio.sleep(delay)
+
+
+async def _run_lean_rationale_enrichment(
+    document_id: str,
+    kg_client,
+    model_client,
+    ollama_url: str = "http://localhost:11434",
+    ollama_model: str = "llama3.2:3b",
+) -> dict:
+    """Run lean rationale enrichment on a freshly-extracted document.
+
+    Reads null-rationale clinical EXTRACTED_FROM edges from Neo4j, generates
+    rationales via Ollama, embeds them, and SETs the edge properties.  This is
+    the post-extraction density pass — it fills what the extraction prompt
+    (now rationale-free) intentionally leaves empty.
+
+    Returns a dict with ``edges_enriched`` and ``chunks_processed`` counts.
+    """
+    import asyncpg
+
+    # 1. Read edges needing rationale, grouped by chunk
+    cid_to_name: dict = {}
+    async with kg_client.session() as session:
+        result = await session.run(_ENRICH_READ_QUERY, {"doc": document_id})
+        by_chunk: dict = {}
+        async for rec in result:
+            by_chunk.setdefault(rec["chunk_id"], []).append(
+                (rec["cid"], rec["name"])
+            )
+            cid_to_name[rec["cid"]] = rec["name"]
+
+    if not by_chunk:
+        logger.info(
+            f"Lean enrichment [{document_id}]: no edges need rationale "
+            f"(already enriched or no clinical concepts)"
+        )
+        return {"edges_enriched": 0, "chunks_processed": 0}
+
+    # 2. Chunk text from Postgres (only the chunks we need)
+    from ..database.connection import get_async_connection
+
+    pg_conn = await get_async_connection()
+    try:
+        rows = await pg_conn.fetch(
+            "SELECT id, content FROM multimodal_librarian.knowledge_chunks "
+            "WHERE source_id = $1::uuid",
+            document_id,
+        )
+        text_by_chunk = {str(r["id"]): (r["content"] or "") for r in rows}
+    finally:
+        await pg_conn.close()
+
+    logger.info(
+        f"Lean enrichment [{document_id}]: {len(by_chunk)} chunks, "
+        f"{sum(len(v) for v in by_chunk.values())} edges to enrich"
+    )
+
+    # 3. Per-chunk: Ollama → rationales → embed → SET edges
+    import httpx
+    import json as _json
+
+    sem = asyncio.Semaphore(_ENRICH_CONCURRENCY)
+    write_sem = asyncio.Semaphore(_ENRICH_WRITE_CONCURRENCY)
+    stats = {"updated": 0, "done": 0}
+    total = len(by_chunk)
+
+    def _norm(name: str) -> str:
+        return (name or "").strip().lower()
+
+    async def _process_chunk(http: httpx.AsyncClient, chunk_id: str, concepts):
+        text = text_by_chunk.get(chunk_id)
+        if not text:
+            stats["done"] += 1
+            return
+        # name → [cids] (a name may map to several concept_ids)
+        name_to_cids: dict = {}
+        for cid, name in concepts:
+            name_to_cids.setdefault(_norm(name), []).append(cid)
+        # de-dup names preserving order
+        seen: set = set()
+        unique_names = [
+            n
+            for _, n in concepts
+            if not (_norm(n) in seen or seen.add(_norm(n)))
+        ]
+
+        async with sem:
+            merged: dict = {}
+            for i in range(0, len(unique_names), _ENRICH_MAX_CONCEPTS):
+                sub = unique_names[i : i + _ENRICH_MAX_CONCEPTS]
+                prompt = _ENRICH_PROMPT.format(
+                    names="\n".join(f"- {n}" for n in sub),
+                    text=text[:_ENRICH_MAX_CHARS],
+                )
+                try:
+                    resp = await http.post(
+                        f"{ollama_url}/api/generate",
+                        json={
+                            "model": ollama_model,
+                            "prompt": prompt,
+                            "stream": False,
+                            "options": {
+                                "temperature": 0.2,
+                                "num_predict": 4096,
+                                "num_ctx": 4096,
+                            },
+                        },
+                        timeout=_ENRICH_OLLAMA_TIMEOUT,
+                    )
+                    resp.raise_for_status()
+                    content = resp.json().get("response", "")
+                except Exception as exc:
+                    logger.warning(
+                        f"Lean enrichment [{document_id}] chunk {chunk_id}: "
+                        f"Ollama call failed: {type(exc).__name__}: {exc}"
+                    )
+                    content = ""
+
+                for entry in _parse_enrich_json_array(content):
+                    name = entry.get("name")
+                    rationale = entry.get("rationale")
+                    if (
+                        isinstance(name, str)
+                        and isinstance(rationale, str)
+                        and rationale.strip()
+                    ):
+                        merged[_norm(name)] = rationale.strip()
+
+            # (cid, rationale) for THIS chunk
+            chunk_pairs = [
+                (cid, rationale)
+                for norm_name, rationale in merged.items()
+                for cid in name_to_cids.get(norm_name, [])
+            ]
+            if not chunk_pairs:
+                stats["done"] += 1
+                return
+
+            # Embed distinct rationales
+            distinct = sorted({r for _, r in chunk_pairs})
+            try:
+                embs = await model_client.generate_embeddings(distinct)
+            except Exception as exc:
+                logger.warning(
+                    f"Lean enrichment [{document_id}] chunk {chunk_id}: "
+                    f"embedding failed: {exc}"
+                )
+                stats["done"] += 1
+                return
+
+            if len(embs) != len(distinct):
+                logger.warning(
+                    f"Lean enrichment [{document_id}] chunk {chunk_id}: "
+                    f"embed mismatch ({len(embs)} != {len(distinct)})"
+                )
+                stats["done"] += 1
+                return
+
+            emb_by_text = dict(zip(distinct, embs))
+            # Sort by concept_id so all writers lock nodes in the same order.
+            write_rows = sorted(
+                (
+                    {
+                        "cid": cid,
+                        "chid": chunk_id,
+                        "rationale": r,
+                        "emb": emb_by_text[r],
+                    }
+                    for cid, r in chunk_pairs
+                ),
+                key=lambda row: row["cid"],
+            )
+
+            async def _write_tx(tx):
+                res = await tx.run(_ENRICH_WRITE_QUERY, {"rows": write_rows})
+                rec = await res.single()
+                return rec["cnt"] if rec else 0
+
+            # Writer semaphore + exponential-backoff retry for lock contention.
+            async with write_sem:
+                async with kg_client.session() as session:
+                    stats["updated"] += await _write_with_retry(session, _write_tx)
+
+        stats["done"] += 1
+        if stats["done"] % 50 == 0 or stats["done"] == total:
+            fraction = stats["done"] / total
+            _set_parallel_progress(document_id, "enrich", fraction)
+            logger.info(
+                f"Lean enrichment [{document_id}] progress "
+                f"{stats['done']}/{total} chunks, "
+                f"{stats['updated']} edges written"
+            )
+
+    async with httpx.AsyncClient() as http:
+        await asyncio.gather(
+            *(
+                _process_chunk(http, cid, concepts)
+                for cid, concepts in by_chunk.items()
+            )
+        )
+
+    if stats["updated"] == 0:
+        logger.warning(
+            f"Lean enrichment [{document_id}]: LLM produced no usable rationales"
+        )
+    else:
+        logger.info(
+            f"Lean enrichment [{document_id}]: updated {stats['updated']} edges "
+            f"over {total} chunks"
+        )
+    return {"edges_enriched": stats["updated"], "chunks_processed": total}
 
 
 class DocumentDeletedError(Exception):
@@ -2848,25 +3229,38 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
             )
             neo4j_client = None
 
+        # Initialize UMLS client first — needed by ConceptExtractor for
+        # n-gram clinical term lookup AND by UMLS linker for CUI annotation.
+        umls_client = None
+        try:
+            from ..components.knowledge_graph.umls_client import UMLSClient
+
+            umls_client = UMLSClient(neo4j_client=kg_service.client)
+            await umls_client.initialize()
+            if await umls_client.is_available():
+                logger.info("UMLS client ready for KG extraction n-gram lookup")
+            else:
+                logger.info("UMLS data not loaded; skipping UMLS n-gram extraction")
+                umls_client = None
+        except Exception as e:
+            logger.warning(f"UMLS client initialization failed, skipping: {e}")
+
         kg_builder = KnowledgeGraphBuilder(neo4j_client=neo4j_client)
+        if umls_client is not None:
+            kg_builder.concept_extractor.set_umls_client(umls_client)
 
         # Initialize UMLS linker for concept-to-CUI annotation.
         # Degrades gracefully: if UMLS data isn't loaded, link_concepts()
         # is a fast no-op that returns concepts unchanged.
         umls_linker = None
-        try:
-            from ..components.knowledge_graph.umls_client import UMLSClient
-            from ..components.knowledge_graph.umls_linker import UMLSLinker
+        if umls_client is not None:
+            try:
+                from ..components.knowledge_graph.umls_linker import UMLSLinker
 
-            umls_client = UMLSClient(neo4j_client=kg_service.client)
-            await umls_client.initialize()
-            if await umls_client.is_available():
                 umls_linker = UMLSLinker(umls_client=umls_client)
                 logger.info("UMLS linker initialized for KG extraction")
-            else:
-                logger.info("UMLS data not loaded; skipping UMLS linking")
-        except Exception as e:
-            logger.warning(f"UMLS linker initialization failed, skipping: {e}")
+            except Exception as e:
+                logger.warning(f"UMLS linker initialization failed, skipping: {e}")
 
         # Obtain model server client for embedding generation.
         # IMPORTANT: Always call initialize_model_client() here instead of
@@ -3036,37 +3430,6 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
                     llm_failure_count += 1
                 batch_concepts.extend(concept_extraction.extracted_concepts)
                 batch_relationships.extend(concept_extraction.extracted_relationships)
-
-            # --- Per-(concept, chunk) rationale map for EXTRACTED_FROM edges ---
-            # Capture rationale + its embedding BEFORE validate_batch_concepts
-            # dedups concepts by name (which collapses per-chunk objects and
-            # would lose per-chunk rationales).  The embedding is persisted on
-            # the EXTRACTED_FROM edge and compared to the query at inference
-            # time to boost chunk ranking.
-            rationale_by_pair: Dict[Tuple[str, str], Dict[str, Any]] = {}
-            rationale_concepts = [
-                c for c in batch_concepts
-                if getattr(c, 'rationale', None) and c.source_chunks
-            ]
-            if rationale_concepts and model_client:
-                rationale_texts = sorted({c.rationale for c in rationale_concepts})
-                try:
-                    embs = await model_client.generate_embeddings(rationale_texts)
-                except Exception as e:
-                    logger.warning(f"Rationale embeddings failed for batch {batch_num}: {e}")
-                    embs = None
-
-                if embs and len(embs) == len(rationale_texts):
-                    rat_emb = dict(zip(rationale_texts, embs))
-                    for c in rationale_concepts:
-                        r_emb = rat_emb.get(c.rationale)
-                        if r_emb is None:
-                            continue
-                        for cid in c.source_chunks:
-                            rationale_by_pair[(c.concept_id, cid)] = {
-                                'rationale': c.rationale,
-                                'embedding': r_emb,
-                            }
 
             # --- Batch-level ConceptNet validation (2 Neo4j queries per batch) ---
             validated_concepts, conceptnet_rels, _val_stats = \
@@ -3260,13 +3623,7 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
                             'concept_id': concept.concept_id,
                             'chunk_id': chunk_id,
                             'created_at': now_ts,
-                            'rationale': None,
-                            'rationale_embedding': None,
                         }
-                        rat = rationale_by_pair.get((concept.concept_id, chunk_id))
-                        if rat:
-                            row['rationale'] = rat['rationale']
-                            row['rationale_embedding'] = rat['embedding']
                         ef_rows.append(row)
 
             EF_BATCH_SIZE = _NEO4J_SUB_BATCH
@@ -3279,9 +3636,7 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
                     MATCH (c:Concept {concept_id: row.concept_id})
                     MATCH (ch:Chunk {chunk_id: row.chunk_id})
                     MERGE (c)-[r:EXTRACTED_FROM]->(ch)
-                    ON CREATE SET r.created_at = row.created_at,
-                                  r.rationale = row.rationale,
-                                  r.rationale_embedding = row.rationale_embedding
+                    ON CREATE SET r.created_at = row.created_at
                     RETURN count(r) AS cnt
                     """,
                     {'rows': sub_batch}
@@ -3401,6 +3756,42 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
                     )
             except Exception as e:
                 logger.warning(f"UMLS bridging failed for document {document_id}: {e}")
+
+        # --- Lean rationale enrichment (post-extraction density pass) ---
+        # Runs AFTER UMLS bridging so the clinical filter (which gates on
+        # SAME_AS/SIMILAR_TO→UMLSConcept) can select the maximum set of
+        # clinically-relevant concepts.  Fills rationale + rationale_embedding
+        # on existing EXTRACTED_FROM edges that the extraction prompt
+        # (now rationale-free) left empty.
+        if model_client and kg_service is not None:
+            try:
+                ollama_url = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+                ollama_model = os.environ.get("OLLAMA_MODEL", "llama3.2:3b")
+                enrich_result = await _run_lean_rationale_enrichment(
+                    document_id=document_id,
+                    kg_client=kg_service.client,
+                    model_client=model_client,
+                    ollama_url=ollama_url,
+                    ollama_model=ollama_model,
+                )
+                logger.info(
+                    f"Lean rationale enrichment complete for document {document_id}: "
+                    f"{enrich_result['edges_enriched']} edges enriched over "
+                    f"{enrich_result['chunks_processed']} chunks"
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Lean rationale enrichment failed for document {document_id}: {e}"
+                )
+        else:
+            logger.warning(
+                f"Skipping lean rationale enrichment for document {document_id}: "
+                f"model_client={'available' if model_client else 'missing'}, "
+                f"kg_service={'available' if kg_service else 'missing'}"
+            )
+
+        # Mark enrichment as complete in progress tracking
+        _set_parallel_progress(document_id, "enrich", 1.0)
 
         # Queue background enrichment task
         if all_concept_ids:
@@ -4837,7 +5228,7 @@ async def _store_bridge_chunks_in_database(document_id: str, bridges: List[Dict[
                     bridge_id = bridge.get('id', str(uuid.uuid4()))
                     content = bridge.get('content', '')
                     source_chunks = bridge.get('source_chunks', [])
-                    generation_method = bridge.get('generation_method', 'gemini_25_flash')
+                    generation_method = bridge.get('generation_method', 'deepseek_v4_flash')
                     confidence_score = bridge.get('confidence_score', 0.0)
                     
                     # source_chunks is a list like ["chunk_id_1", "chunk_id_2"]

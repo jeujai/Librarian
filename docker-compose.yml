@@ -92,10 +92,8 @@ services:
 
       # External APIs (set these in .env file)
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
 
-      # DeepSeek API (temporarily replaces Gemini for chat)
+      # DeepSeek API (primary AI provider for chat)
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
       - DEEPSEEK_MODEL=deepseek-v4-flash
 
@@ -279,7 +277,7 @@ services:
       - ETCD_SNAPSHOT_COUNT=50000
     volumes:
       - ./data/etcd:/etcd
-    command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd --force-new-cluster
     ports:
       - "2379:2379"
     restart: unless-stopped
@@ -457,10 +455,6 @@ services:
       # DeepSeek API for high-quality training data generation
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
       - DEEPSEEK_MODEL=deepseek-v4-flash
-
-      # External APIs (for Gemini fallback)
-      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
 
       # Logging
       - LOG_LEVEL=INFO

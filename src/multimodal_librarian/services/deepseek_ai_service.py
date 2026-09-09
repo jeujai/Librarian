@@ -22,7 +22,7 @@ from typing import Any, AsyncGenerator, Deque, Dict, List, Literal, Optional
 
 import httpx
 
-from .ai_service import AIResponse
+from .ai_types import AIProvider, AIResponse
 from .provider_resilience import (
     USER_FRIENDLY_ERROR_MESSAGES,
     CircuitBreaker,
@@ -231,6 +231,15 @@ class DeepSeekAIService:
         # -------------------------------------------------------------
         self._circuit_breaker = CircuitBreaker()
         self._error_rate_tracker = ErrorRateTracker()
+
+        # -------------------------------------------------------------
+        # Compatibility surface for code that treats the AI service as a
+        # multi-provider registry (CachedAIService, AIOptimizationService).
+        # DeepSeek is the sole provider, so these are single-entry stubs.
+        # -------------------------------------------------------------
+        self.providers: Dict[Any, Any] = {AIProvider.DEEPSEEK: self}
+        self.primary_provider: Any = AIProvider.DEEPSEEK
+        self.fallback_providers: List[Any] = []
 
         # -------------------------------------------------------------
         # Streaming metrics (counters + bounded sample deques)
@@ -537,6 +546,23 @@ class DeepSeekAIService:
     def get_available_providers(self) -> List[str]:
         return ["deepseek"]
 
+    async def generate_embeddings(
+        self,
+        texts: List[str],
+        preferred_provider: Optional[Any] = None,
+    ) -> List[List[float]]:
+        """DeepSeek has no embeddings endpoint.
+
+        Embeddings in this system are produced by the model server
+        (sentence-transformers), not by the chat provider. This method exists
+        only to satisfy the ``AIService`` interface for callers such as
+        ``CachedAIService``; it always raises.
+        """
+        raise NotImplementedError(
+            "DeepSeek does not provide embeddings; use the model server "
+            "client (sentence-transformers) instead."
+        )
+
     # -----------------------------------------------------------------
     # Streaming: private chunk constructors
     # -----------------------------------------------------------------
@@ -804,7 +830,7 @@ class DeepSeekAIService:
             temperature: Sampling temperature for the model.
             max_tokens: Maximum completion tokens.
             preferred_provider: Accepted for API compatibility with the
-                Gemini ``AIService.generate_response_stream``; unused
+                legacy ``AIService.generate_response_stream``; unused
                 because this service only has one provider.
 
         Yields:
@@ -1462,7 +1488,7 @@ class DeepSeekAIService:
     def get_performance_stats(self) -> Dict[str, Any]:
         """Return a performance-stats snapshot for the DeepSeek provider.
 
-        Mirrors :meth:`AIService.get_performance_stats` (the Gemini
+        Mirrors :meth:`AIService.get_performance_stats` (the legacy
         implementation at ``services/ai_service.py``) so that the
         `/api/performance`-style endpoint surfaces a consistent shape
         regardless of which provider is active (Req 9.6).

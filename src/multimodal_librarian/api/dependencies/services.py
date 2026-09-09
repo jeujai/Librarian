@@ -1023,19 +1023,19 @@ async def get_ai_service() -> "AIService":
     
     if _ai_service is None:
         # Import here to avoid import-time side effects
-        from ...services.ai_service import AIService
-        
+        from ...services.deepseek_ai_service import DeepSeekAIService
+
         try:
-            logger.info("Initializing AIService via DI (lazy)")
-            _ai_service = AIService()
-            logger.info("AIService initialized successfully via DI")
+            logger.info("Initializing DeepSeekAIService via DI (lazy)")
+            _ai_service = DeepSeekAIService()
+            logger.info("DeepSeekAIService initialized successfully via DI")
         except Exception as e:
-            logger.error(f"AIService initialization failed: {e}")
+            logger.error(f"DeepSeekAIService initialization failed: {e}")
             raise HTTPException(
                 status_code=503,
                 detail="AI service unavailable"
             )
-    
+
     return _ai_service
 
 
@@ -1468,33 +1468,33 @@ async def get_kg_retrieval_service(
 ) -> "KGRetrievalService":
     """
     FastAPI dependency for KGRetrievalService.
-    
+
     Lazily creates and caches the KG retrieval service on first use.
     The service orchestrates knowledge graph-guided retrieval using Neo4j
     for precise chunk retrieval and semantic re-ranking for relevance.
-    
+
     This dependency implements lazy initialization to avoid blocking
     application startup (Requirement 7.3).
-    
+
     Args:
         graph_client: Optional graph client for Neo4j operations (injected)
         vector_client: Optional vector client for chunk resolution (injected)
         model_client: Optional model client for embedding generation (injected)
-    
+
     Returns:
         KGRetrievalService instance
-        
+
     Raises:
         HTTPException: If KGRetrievalService initialization fails (503 Service Unavailable)
-        
+
     Validates: Requirements 7.1, 7.3, 7.5
     """
     global _kg_retrieval_service
-    
-    # Resolve relevance detector here (not in signature) to avoid
-    # forward-reference error — get_relevance_detector_optional is
-    # defined later in this file.
+
+    # Resolve dependencies defined later in this file inside the function
+    # body to avoid forward-reference errors at import time.
     relevance_detector = await get_relevance_detector_optional()
+    ner_extractor = await get_ner_extractor()
     
     if _kg_retrieval_service is None:
         # Import here to avoid import-time side effects
@@ -1508,6 +1508,7 @@ async def get_kg_retrieval_service(
                 vector_client=vector_client,
                 model_client=model_client,
                 relevance_detector=relevance_detector,
+                ner_extractor=ner_extractor,
             )
             
             logger.info("KGRetrievalService initialized successfully via DI")

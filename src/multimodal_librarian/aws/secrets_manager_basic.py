@@ -149,9 +149,8 @@ class SecretsManagerBasic:
             }
         elif secret_name == 'api-keys':
             return {
-                'gemini_api_key': os.getenv('GEMINI_API_KEY', ''),
-                'openai_api_key': os.getenv('OPENAI_API_KEY', ''),
-                'google_api_key': os.getenv('GOOGLE_API_KEY', '')
+                'deepseek_api_key': os.getenv('DEEPSEEK_API_KEY', ''),
+                'openai_api_key': os.getenv('OPENAI_API_KEY', '')
             }
         elif secret_name == 'redis':
             return {
@@ -397,7 +396,7 @@ class SecretsManagerBasic:
         # Check API keys secret
         api_keys = self.get_api_keys()
         validation_results['api_keys'] = api_keys is not None and any(
-            api_keys.get(key) for key in ['gemini_api_key', 'openai_api_key', 'google_api_key']
+            api_keys.get(key) for key in ['deepseek_api_key', 'openai_api_key']
         )
         
         # Check Redis secret
@@ -458,9 +457,8 @@ def get_api_key(service: str) -> Optional[str]:
         return None
     
     key_mapping = {
-        'gemini': 'gemini_api_key',
-        'openai': 'openai_api_key',
-        'google': 'google_api_key'
+        'deepseek': 'deepseek_api_key',
+        'openai': 'openai_api_key'
     }
     
     key_name = key_mapping.get(service.lower())

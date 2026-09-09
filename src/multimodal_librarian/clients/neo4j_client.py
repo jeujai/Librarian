@@ -309,6 +309,14 @@ class Neo4jClient:
             "'umls_embedding_index', 'UMLSConcept', 'embedding', 768, 'cosine')"
         )
         
+        # Vector index over ConceptNetConcept embeddings, used to bridge
+        # colloquial user terms (e.g. "tummy ache") to clinical UMLS concepts
+        # via the query decomposer's ConceptNet->UMLS->document pipeline.
+        conceptnet_vector_index_statement = (
+            "CALL db.index.vector.createNodeIndex("
+            "'conceptnet_embedding_index', 'ConceptNetConcept', 'embedding', 768, 'cosine')"
+        )
+
         try:
             async with self.driver.session(database=self.database) as session:
                 for statement in index_statements:
@@ -334,6 +342,13 @@ class Neo4jClient:
                 except Exception as e:
                     logger.warning(f"UMLS vector index creation warning (may already exist): {e}")
 
+
+                # Create vector index for ConceptNet concept matching
+                try:
+                    await session.run(conceptnet_vector_index_statement)
+                    logger.debug("Created vector index: conceptnet_embedding_index")
+                except Exception as e:
+                    logger.warning(f"ConceptNet vector index creation warning (may already exist): {e}")
                 logger.info("Neo4j indexes and constraints ensured")
                 
         except Exception as e:

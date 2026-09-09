@@ -59,7 +59,7 @@ class EnvironmentSwitcher:
                 "REDIS_HOST", "REDIS_PORT"
             ],
             optional_env_vars=[
-                "OPENAI_API_KEY", "GOOGLE_API_KEY", "GEMINI_API_KEY", "ANTHROPIC_API_KEY"
+                "OPENAI_API_KEY", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY"
             ],
             description="Local development environment with Docker Compose services"
         ),
@@ -78,7 +78,7 @@ class EnvironmentSwitcher:
             ],
             optional_env_vars=[
                 "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
-                "OPENAI_API_KEY", "GOOGLE_API_KEY", "GEMINI_API_KEY", "ANTHROPIC_API_KEY"
+                "OPENAI_API_KEY", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY"
             ],
             description="AWS production environment with managed services"
         )
@@ -366,8 +366,7 @@ POSTGRES_PASSWORD=your-db-password
 # =============================================================================
 # AI/LLM Service API Keys (Required for AI functionality)
 # OPENAI_API_KEY=your-openai-api-key-here
-# GOOGLE_API_KEY=your-google-api-key-here
-# GEMINI_API_KEY=your-gemini-api-key-here
+# DEEPSEEK_API_KEY=your-deepseek-api-key-here
 # ANTHROPIC_API_KEY=your-anthropic-api-key-here
 
 # =============================================================================

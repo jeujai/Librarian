@@ -178,7 +178,7 @@ class ModelFailurePopup {
             qg.worst_model === 'llm'
         ));
         body.appendChild(this._makeRow(
-            'Bridges (Ollama→Gemini)',
+            'Bridges (Ollama→DeepSeek)',
             bridgePct,
             `(${qg.bridge_failures}/${qg.bridge_total} bridges)`,
             qg.worst_model === 'bridge'

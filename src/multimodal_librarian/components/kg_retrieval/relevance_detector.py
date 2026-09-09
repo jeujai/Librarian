@@ -249,7 +249,7 @@ def compute_adaptive_threshold(
     proper_noun_count: int,
     domain: Optional[str] = None,
     base_threshold_floor: float = 0.70,
-    medical_threshold: float = 0.95,
+    medical_threshold: float = 0.75,
     legal_threshold: float = 0.90,
     small_query_noun_limit: int = 2,
 ) -> float:
@@ -306,7 +306,7 @@ def analyze_query_term_coverage(
     chunks: Optional[List[RetrievedChunk]] = None,
     domain: Optional[str] = None,
     base_threshold_floor: float = 0.70,
-    medical_threshold: float = 0.95,
+    medical_threshold: float = 0.75,
     legal_threshold: float = 0.90,
     small_query_noun_limit: int = 2,
     ner_key_terms: Optional[set] = None,
@@ -570,7 +570,7 @@ class RelevanceDetector:
         specificity_threshold: float = 0.3,
         spacy_nlp: Optional[Any] = None,
         base_threshold_floor: float = 0.70,
-        medical_threshold: float = 0.95,
+        medical_threshold: float = 0.75,
         legal_threshold: float = 0.90,
         small_query_noun_limit: int = 2,
         ner_extractor: Optional[Any] = None,
@@ -827,12 +827,22 @@ class RelevanceDetector:
         total_key_terms = len(key_terms_lower)
         before_count = len(chunks)
 
-        # Three-tier filter:
+        # Split KG-provenance chunks from non-KG chunks.
+        # KG-retrieved chunks (DIRECT_CONCEPT, RELATED_CONCEPT,
+        # REASONING_PATH) have been structurally validated through
+        # concept extraction and relationship traversal — they
+        # represent related concepts (e.g. antibiotic names for a
+        # pneumonia query) whose chunk text may not contain the
+        # original query terms.  They bypass the NER text filter.
+        kg_chunks = [c for c in chunks if c.is_from_kg()]
+        non_kg_chunks = [c for c in chunks if not c.is_from_kg()]
+
+        # Three-tier filter applied only to non-KG chunks:
         # 1. Prefer chunks containing ALL key terms
         # 2. Fall back to chunks meeting adaptive threshold fraction
         # 3. Fall back to chunks containing ANY key term
         filtered_all = [
-            c for c in chunks
+            c for c in non_kg_chunks
             if all(
                 kt in (c.content or "").lower()
                 for kt in key_terms_lower
@@ -840,12 +850,12 @@ class RelevanceDetector:
         ]
 
         if filtered_all:
-            filtered = filtered_all
+            filtered_non_kg = filtered_all
             match_mode = "all"
         else:
             # Tier 2: chunks where matched fraction >= adaptive_threshold
             filtered_threshold = [
-                c for c in chunks
+                c for c in non_kg_chunks
                 if (
                     sum(
                         1 for kt in key_terms_lower
@@ -857,12 +867,12 @@ class RelevanceDetector:
             ]
 
             if filtered_threshold:
-                filtered = filtered_threshold
+                filtered_non_kg = filtered_threshold
                 match_mode = "threshold"
             else:
                 # Tier 3: any key term present
-                filtered = [
-                    c for c in chunks
+                filtered_non_kg = [
+                    c for c in non_kg_chunks
                     if any(
                         kt in (c.content or "").lower()
                         for kt in key_terms_lower
@@ -870,17 +880,22 @@ class RelevanceDetector:
                 ]
                 match_mode = "any"
 
+        # Merge: KG chunks always pass through
+        filtered = kg_chunks + filtered_non_kg
         after_count = len(filtered)
         retained_ids = [c.chunk_id for c in filtered]
 
         logger.info(
             "Proper-noun chunk filter: %d → %d chunks "
-            "(key_terms=%s, match_mode=%s, adaptive_threshold=%.2f, "
-            "retained_ids=%s)",
+            "(kg=%d non_kg=%d→%d match_mode=%s, key_terms=%s, "
+            "adaptive_threshold=%.2f, retained_ids=%s)",
             before_count,
             after_count,
-            sorted(key_terms),
+            len(kg_chunks),
+            len(non_kg_chunks),
+            len(filtered_non_kg),
             match_mode,
+            sorted(key_terms),
             adaptive_threshold,
             retained_ids,
         )

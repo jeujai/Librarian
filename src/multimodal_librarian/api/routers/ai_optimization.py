@@ -428,7 +428,7 @@ async def get_optimization_recommendations():
                     "priority": "medium",
                     "title": f"High usage of expensive provider: {most_expensive[0]}",
                     "description": f"Provider {most_expensive[0]} accounts for {(most_expensive[1]['cost']/summary['total_cost']*100):.1f}% of total costs",
-                    "action": "Consider using cheaper alternatives like Gemini for suitable tasks"
+                    "action": "Consider using cheaper alternatives like DeepSeek for suitable tasks"
                 })
             
             # Check for high error rates

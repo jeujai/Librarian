@@ -30,14 +30,6 @@ from ...models.knowledge_graph import (
 )
 from .relation_type_mapper import RelationTypeMapper
 
-# Optional Gemini import for concept extraction failover
-try:
-    import google.generativeai as genai
-    GEMINI_AVAILABLE = True
-except ImportError:
-    GEMINI_AVAILABLE = False
-    genai = None
-
 logger = logging.getLogger(__name__)
 
 # Thread-local storage for reusing event loops in pool worker threads
@@ -70,7 +62,12 @@ DOMAIN_PROMPT_REGISTRY: Dict[ContentType, Dict[str, Any]] = {
     },
     ContentType.MEDICAL: {
         "domain_description": "medical/clinical content",
-        "concept_types": ["DISEASE", "DRUG", "PROCEDURE", "ANATOMY", "LAB_TEST", "GENE", "PATHWAY"],
+        "concept_types": [
+            "DISEASE", "DRUG", "PROCEDURE", "ANATOMY", "LAB_TEST", "GENE", "PATHWAY",
+            "GUIDELINE", "POLICY", "PROTOCOL", "PRECAUTION", "RESTRICTION",
+            "RECOMMENDATION", "EXPOSURE_RISK", "TRANSMISSION_PRECAUTION",
+            "OCCUPATIONAL_HEALTH", "SCREENING", "VACCINATION", "TREATMENT_REGIMEN",
+        ],
     },
     ContentType.LEGAL: {
         "domain_description": "legal content",
@@ -94,13 +91,15 @@ CONCEPT_EXTRACTION_PROMPT_TEMPLATE = """Extract key concepts from the following 
 Valid concept types: {concept_types}
 
 Return ONLY a JSON array. No explanation, no markdown, no extra text.
-Each element must have "name", "type", and "rationale" fields.
-The "rationale" is a brief (one clause) explanation of why the concept
-matters in this context — a paraphrase in your own words, NOT a verbatim
-quote copied from the text.
+Each element must have "name" and "type" fields.
+
+IMPORTANT: Extract multi-word compound terms as single concepts.
+Prefer specific phrases over individual words (e.g., "work restrictions" not "work" + "restrictions").
 
 Example output:
-[{{"name": "neural network", "type": "ENTITY", "rationale": "core model architecture under discussion"}}]
+[{{"name": "hepatitis B surface antigen", "type": "LAB_TEST"}},
+ {{"name": "work restrictions", "type": "RESTRICTION"}},
+ {{"name": "postexposure prophylaxis", "type": "PROTOCOL"}}]
 
 Only extract terms explicitly mentioned in the text.
 
@@ -154,6 +153,11 @@ class ConceptExtractor:
         
         # Lazy-initialized OllamaClient (no import-time connection)
         self._ollama_client = None  # Optional[OllamaClient]
+
+        # UMLS client for n-gram clinical term lookup during extraction.
+        # Set via set_umls_client() after construction (UMLS client is
+        # created after KnowledgeGraphBuilder in _update_knowledge_graph).
+        self._umls_client = None  # Optional[UMLSClient]
         
         # Corpus-level collocation frequency cache.
         # Keyed by normalized bigram string (e.g. "knowledge_graph"), storing:
@@ -161,14 +165,14 @@ class ConceptExtractor:
         #   doc_count: number of documents the bigram appeared in
         self._collocation_cache: Dict[str, Dict[str, int]] = {}
 
-        # Gemini failover for concept extraction (lazy init)
-        self._gemini_model = None
-        self._gemini_initialized = False
+        # DeepSeek fallback for concept extraction (lazy init)
+        self._deepseek_service = None
+        self._deepseek_initialized = False
 
         # Provider statistics for observability
         self._concept_provider_stats = {
             'ollama_success': 0,
-            'gemini_fallback': 0,
+            'deepseek_fallback': 0,
             'both_failed': 0,
         }
     
@@ -206,108 +210,86 @@ class ConceptExtractor:
             self._ollama_checked = True
             return None
 
-    # ------------------------------------------------------------------
-    # Gemini lazy initialization for concept extraction failover
-    # ------------------------------------------------------------------
+    def set_umls_client(self, umls_client) -> None:
+        """Set the UMLS client for n-gram clinical term lookup.
 
-    def _ensure_gemini(self):
-        """Lazily initialize Gemini for concept extraction failover.
-
-        Follows the same lazy-init pattern as
-        ``SmartBridgeGenerator._initialize_gemini``.  Sets
-        ``_gemini_initialized`` to ``True`` even on failure to avoid
-        re-attempting initialization on every call.
+        Must be called before extract_all_concepts_async() if UMLS-based
+        clinical term extraction is desired.  Degrades gracefully when
+        not set (extract_concepts_umls_ngrams returns empty).
         """
-        if self._gemini_initialized:
-            return
-        self._gemini_initialized = True
+        self._umls_client = umls_client
 
-        if not GEMINI_AVAILABLE:
-            logger.warning("google-generativeai not installed - Gemini concept extraction unavailable")
-            self._gemini_model = None
-            return
+    # ------------------------------------------------------------------
+    # DeepSeek lazy initialization for concept extraction fallback
+    # ------------------------------------------------------------------
+
+    def _ensure_deepseek(self):
+        """Lazily initialize DeepSeek for concept extraction fallback.
+
+        Sets ``_deepseek_initialized`` to ``True`` even on failure to avoid
+        re-attempting initialization on every call.  Returns the service, or
+        ``None`` when DeepSeek is unavailable (no API key, etc.).
+        """
+        if self._deepseek_initialized:
+            return self._deepseek_service
+        self._deepseek_initialized = True
 
         try:
-            settings = get_settings()
-            api_key = getattr(settings, 'GEMINI_API_KEY', None) or getattr(settings, 'gemini_api_key', None)
-            if not api_key:
-                logger.warning("GEMINI_API_KEY not found - Gemini concept extraction unavailable")
-                self._gemini_model = None
-                return
+            from ...services.deepseek_ai_service import DeepSeekAIService
 
-            genai.configure(api_key=api_key)
-            self._gemini_model = genai.GenerativeModel(
-                model_name="gemini-2.5-flash",
-                generation_config=genai.types.GenerationConfig(
-                    temperature=0.2,
-                    max_output_tokens=1000,
-                ),
-            )
-            logger.info("Initialized Gemini for KG concept extraction failover (lazy init)")
+            self._deepseek_service = DeepSeekAIService()
+            logger.info("Initialized DeepSeek for KG concept extraction fallback (lazy init)")
         except Exception as e:
-            logger.warning(f"Gemini init failed for concept extraction: {e}")
-            self._gemini_model = None
+            logger.warning(f"DeepSeek init failed for concept extraction: {e}")
+            self._deepseek_service = None
 
-    async def _extract_concepts_gemini(
+        return self._deepseek_service
+
+    async def _extract_concepts_deepseek(
         self, text: str, prompt: str
-    ) -> List[ConceptNode]:
-        """Extract concepts via Gemini (failover from Ollama).
+    ) -> List[Dict]:
+        """Extract concepts via DeepSeek (fallback from Ollama).
 
-        Uses the same prompt, JSON parsing, and rationale filtering as
-        the Ollama path.  Returns ``[]`` if Gemini is unavailable or fails.
-
-        NOTE: Runs the blocking Gemini call in a daemon thread with a hard
-        60-second timeout.  On timeout the daemon thread is abandoned (not
-        joined) so the pool worker is freed immediately.
+        Uses the same prompt and JSON parsing as the Ollama path.
+        Returns ``[]`` if DeepSeek is unavailable or fails.
         """
-        self._ensure_gemini()
-        if self._gemini_model is None:
+        service = self._ensure_deepseek()
+        if service is None:
             return []
 
         try:
-            import concurrent.futures as _cf
-
-            # Use a standalone executor and do NOT use a `with` block —
-            # the context manager calls shutdown(wait=True) which would
-            # block if the Gemini thread is hung.  Instead we fire-and-
-            # forget the executor; the daemon thread will eventually die
-            # when the process exits.
-            pool = _cf.ThreadPoolExecutor(
-                max_workers=1, thread_name_prefix="gemini_kg"
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "You extract key concepts from text and return them as a "
+                        "JSON array of objects with 'name' and 'type' fields. "
+                        "Return ONLY the JSON array, no explanation."
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ]
+            response = await service.generate_response(
+                messages=messages,
+                temperature=0.1,
+                max_tokens=1024,
             )
-            future = pool.submit(
-                self._gemini_model.generate_content,
-                prompt,
-                request_options={"timeout": 60},
-            )
-            pool.shutdown(wait=False)  # Don't block; let thread run
 
-            try:
-                response = future.result(timeout=60)
-            except (_cf.TimeoutError, TimeoutError):
-                logger.warning(
-                    "Gemini concept extraction timed out after 60s"
-                )
-                future.cancel()
+            if not response.content or response.confidence_score <= 0:
+                logger.debug("DeepSeek returned empty response for concept extraction")
                 return []
 
-            if not response.candidates or not response.candidates[0].content.parts:
-                logger.debug("Gemini returned no candidates for concept extraction")
-                return []
-
-            response_text = response.candidates[0].content.parts[0].text
-            entries = self._extract_json_array(response_text)
+            entries = self._extract_json_array(response.content)
             if entries is None:
                 logger.debug(
-                    "Gemini returned unparseable response (first 300 chars): %.300s",
-                    response_text,
+                    "DeepSeek returned unparseable response (first 300 chars): %.300s",
+                    response.content,
                 )
                 return []
 
-            grounded = self._attach_rationale(entries)
-            return grounded  # Return raw dicts; caller builds ConceptNodes
+            return entries  # Return raw dicts; caller builds ConceptNodes
         except Exception as e:
-            logger.warning("Gemini concept extraction failed: %s", e)
+            logger.warning("DeepSeek concept extraction failed: %s", e)
             return []
 
     # ------------------------------------------------------------------
@@ -319,7 +301,7 @@ class ConceptExtractor:
     ) -> str:
         """Build the domain-aware concept extraction prompt.
 
-        Shared by both Ollama and Gemini code paths so the same prompt
+        Shared by both Ollama and DeepSeek code paths so the same prompt
         template is used regardless of provider.
         """
         config = DOMAIN_PROMPT_REGISTRY[content_type]
@@ -333,36 +315,19 @@ class ConceptExtractor:
     # LLM-based concept extraction (Ollama)
     # ------------------------------------------------------------------
 
-    def _attach_rationale(self, candidates: List[Dict]) -> List[Dict]:
-        """Normalize the rationale on each LLM concept candidate.
-
-        Pure soft-weight policy: no candidate is dropped.  Each candidate's
-        ``rationale`` is coerced to a stripped string (empty when missing or
-        malformed).  The rationale is later embedded and persisted on the
-        EXTRACTED_FROM edge, where it boosts chunk ranking via similarity to
-        the query at inference time.
-        """
-        for candidate in candidates:
-            rationale = candidate.get("rationale", "")
-            if not isinstance(rationale, str):
-                rationale = ""
-            candidate["rationale"] = rationale.strip()
-        return candidates
-
     async def extract_concepts_ollama(
         self, text: str, content_type: ContentType = ContentType.GENERAL
     ) -> Tuple[List[ConceptNode], bool]:
-        """Extract concepts via the local Ollama LLM, with Gemini failover.
+        """Extract concepts via the local Ollama LLM, with DeepSeek fallback.
 
         Sends a domain-aware prompt to Ollama, parses the JSON response,
-        filters by rationale grounding, and returns ConceptNodes with
-        domain-aware confidence scores.  If Ollama fails, falls back to
-        Gemini using the same prompt.
+        and returns ConceptNodes with domain-aware confidence scores.
+        If Ollama fails, falls back to DeepSeek using the same prompt.
 
         Returns ``(concepts, llm_failed)`` where ``llm_failed=True`` when
-        both Ollama fails and Gemini is disabled or also fails.
+        both Ollama and DeepSeek fail.
         """
-        # Build shared prompt (used by both Ollama and Gemini)
+        # Build shared prompt (used by both Ollama and DeepSeek)
         prompt = self._build_concept_prompt(text, content_type)
 
         # Domain-aware confidence
@@ -378,20 +343,13 @@ class ConceptExtractor:
             self._concept_provider_stats['ollama_success'] += 1
             return (self._build_concept_nodes(grounded, base_confidence), False)
 
-        # --- Ollama failed, try Gemini ---
-        # DISABLED: Gemini failover causes pool worker hangs when running
-        # inside the shared Ollama thread pool.  The gRPC transport used by
-        # google-generativeai is incompatible with the pool's thread-local
-        # event loops, causing indefinite blocks that stall asyncio.gather.
-        # NER + regex still provide concepts when Ollama fails.
-        # Re-enable once Gemini failover uses a pool-safe transport.
-        #
-        # logger.info("Ollama concept extraction failed, falling back to Gemini")
-        # gemini_grounded = await self._extract_concepts_gemini(text, prompt)
-        #
-        # if gemini_grounded:
-        #     self._concept_provider_stats['gemini_fallback'] += 1
-        #     return (self._build_concept_nodes(gemini_grounded, base_confidence), False)
+        # --- Ollama failed, fall back to DeepSeek ---
+        logger.info("Ollama concept extraction failed, falling back to DeepSeek")
+        deepseek_grounded = await self._extract_concepts_deepseek(text, prompt)
+
+        if deepseek_grounded:
+            self._concept_provider_stats['deepseek_fallback'] += 1
+            return (self._build_concept_nodes(deepseek_grounded, base_confidence), False)
 
         # Both failed
         self._concept_provider_stats['both_failed'] += 1
@@ -404,8 +362,8 @@ class ConceptExtractor:
 
         Submits only the Ollama HTTP call through the shared pool
         (task_type="kg") for fair share scheduling with bridge
-        generation.  All other work (JSON parsing, rationale
-        filtering) stays on the caller's event loop.
+        generation.  All other work (JSON parsing) stays on the
+        caller's event loop.
 
         Returns a list of grounded candidate dicts on success,
         an empty list when Ollama responded but produced no usable
@@ -449,7 +407,7 @@ class ConceptExtractor:
                     _kg_thread_local.ollama_client = client
 
                 return loop.run_until_complete(
-                    client.generate(prompt, temperature=0.2, max_tokens=1000)
+                    client.generate(prompt, temperature=0.2, max_tokens=1500)
                 )
 
             try:
@@ -477,8 +435,7 @@ class ConceptExtractor:
                 )
                 return []
 
-            grounded = self._attach_rationale(entries)
-            return grounded
+            return entries
         except Exception as e:
             logger.warning("Unexpected error in Ollama concept extraction: %s", e)
             return None
@@ -500,7 +457,6 @@ class ConceptExtractor:
                 concept_type=ctype,
                 confidence=base_confidence,
                 source_chunks=[],
-                rationale=(entry.get("rationale") or None),
             )
             concepts.append(concept)
 
@@ -817,49 +773,114 @@ class ConceptExtractor:
             )
         return (concepts, False)
 
+    async def extract_concepts_umls_ngrams(
+        self, text: str
+    ) -> Tuple[List[ConceptNode], bool]:
+        """Extract clinical terms via UMLS n-gram lookup.
+
+        Generates all contiguous 2-to-5-grams from the text, then
+        batch-looks them up in UMLS via :meth:`UMLSClient.batch_search_by_names`.
+        Only n-grams that match a UMLS concept (by preferred name or synonym)
+        are returned as concepts.
+
+        Degrades gracefully: returns ``([], True)`` when the UMLS client is
+        not configured or the lookup fails.
+
+        Returns ``(concepts, umls_failed)``.
+        """
+        if self._umls_client is None:
+            return ([], True)
+
+        words = text.split()
+        if len(words) < 2:
+            return ([], True)
+
+        # Generate all contiguous 2-to-5-grams
+        candidates: List[str] = []
+        max_n = min(5, len(words))
+        for n in range(2, max_n + 1):
+            for i in range(len(words) - n + 1):
+                gram = " ".join(words[i:i + n])
+                gram = gram.strip("?.,!\"';:()[]{}").strip()
+                if gram and len(gram) > 2:
+                    candidates.append(gram)
+
+        if not candidates:
+            return ([], True)
+
+        try:
+            umls_map = await self._umls_client.batch_search_by_names(candidates)
+        except Exception:
+            logger.warning("UMLS n-gram lookup failed", exc_info=True)
+            return ([], True)
+
+        if not umls_map:
+            return ([], False)
+
+        concepts: List[ConceptNode] = []
+        seen: set = set()
+        for name in candidates:
+            if name not in umls_map:
+                continue
+            normalized = self._normalize_concept_name(name)
+            concept_id = f"umls_{normalized}"
+            if concept_id in seen:
+                continue
+            seen.add(concept_id)
+            concepts.append(
+                ConceptNode(
+                    concept_id=concept_id,
+                    concept_name=name,
+                    concept_type="UMLS",
+                    confidence=0.90,
+                )
+            )
+
+        logger.debug(
+            "UMLS n-gram extraction: %d candidates → %d concepts",
+            len(candidates), len(concepts),
+        )
+        return (concepts, False)
+
     async def extract_all_concepts_async(
         self, text: str, content_type: ContentType = ContentType.GENERAL
     ) -> Tuple[List[ConceptNode], bool, bool]:
-        """Combine NER + Ollama + regex extraction and deduplicate.
+        """Combine NER + Ollama + UMLS + regex extraction and deduplicate.
 
-        Runs :meth:`extract_concepts_with_ner` and
-        :meth:`extract_concepts_ollama` concurrently via ``asyncio.gather``,
-        then :meth:`extract_concepts_regex` synchronously.  Deduplicates by
-        normalized concept name, keeping the higher-confidence entry.
+        Runs :meth:`extract_concepts_with_ner`,
+        :meth:`extract_concepts_ollama`, and
+        :meth:`extract_concepts_umls_ngrams` concurrently via
+        ``asyncio.gather``, then :meth:`extract_concepts_regex`
+        synchronously.  Deduplicates by normalized concept name,
+        keeping the higher-confidence entry.
 
         Returns ``(concepts, ner_failed, llm_failed)`` so callers can track
         per-chunk failure flags for the quality gate.
 
-        If the model server or Ollama is unavailable the respective method
-        returns ``([], True)`` and the pipeline continues with the remaining
-        sources.
+        If the model server, Ollama, or UMLS is unavailable the respective
+        method returns ``([], True)`` and the pipeline continues with the
+        remaining sources.
         """
-        ner_result, ollama_result = await asyncio.gather(
+        ner_result, ollama_result, umls_result = await asyncio.gather(
             self.extract_concepts_with_ner(text),
             self.extract_concepts_ollama(text, content_type),
+            self.extract_concepts_umls_ngrams(text),
         )
         ner_concepts, ner_failed = ner_result
         ollama_concepts, llm_failed = ollama_result
+        umls_concepts, _umls_failed = umls_result
         regex_concepts = self.extract_concepts_regex(text)
 
         # Merge: index by normalized name, keep higher confidence.
-        # Only the LLM (ollama) extractor produces a rationale, and it is
-        # iterated last, so a same-named NER/regex concept with >= confidence
-        # would otherwise discard the LLM object and lose its rationale. Keep
-        # the confidence winner but carry any rationale across the merge so it
-        # survives onto whichever object proceeds downstream.
         merged: Dict[str, ConceptNode] = {}
-        for concept in ner_concepts + regex_concepts + ollama_concepts:
+        for concept in ner_concepts + regex_concepts + ollama_concepts + umls_concepts:
             key = self._normalize_concept_name(concept.concept_name)
             existing = merged.get(key)
             if existing is None:
                 merged[key] = concept
                 continue
-            winner = concept if concept.confidence > existing.confidence else existing
-            loser = existing if winner is concept else concept
-            if not getattr(winner, "rationale", None) and getattr(loser, "rationale", None):
-                winner.rationale = loser.rationale
-            merged[key] = winner
+            if concept.confidence > existing.confidence:
+                merged[key] = concept
         return (list(merged.values()), ner_failed, llm_failed)
 
     def extract_concepts_definition_patterns(self, text: str, chunk_id: str) -> List[ConceptNode]:

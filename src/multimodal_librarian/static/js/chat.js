@@ -2274,7 +2274,7 @@ class ChatApp {
                     body: JSON.stringify({ title })
                 }
             );
-            if (!response.ok) throw new Error(await response.text());
+            if (!response.ok) throw new Error(await this._readApiError(response));
 
             this.toast.update(toastId, {
                 message: `Conversation saved to knowledge: "${title}"`,
@@ -2289,6 +2289,31 @@ class ChatApp {
                 autoDismissMs: null
             });
         }
+    }
+
+    /**
+     * Normalize an error response body to a short, user-facing message.
+     * Reverse proxies (e.g. Cloudflare) return full HTML pages for
+     * 502/503/504; dumping that markup into a toast is noise, so collapse
+     * HTML bodies into a concise retry hint and surface JSON `detail`
+     * fields (FastAPI) directly.
+     * @param {Response} response
+     * @returns {Promise<string>}
+     */
+    async _readApiError(response) {
+        const text = await response.text();
+        const trimmed = (text || '').trim();
+        if (trimmed.startsWith('<!DOCTYPE') || trimmed.startsWith('<html') || trimmed.startsWith('<!--')) {
+            return `Server error (${response.status}). The backend may be busy or restarting — please try again.`;
+        }
+        try {
+            const parsed = JSON.parse(trimmed);
+            if (parsed && typeof parsed.detail === 'string') return parsed.detail;
+            if (parsed && typeof parsed.message === 'string') return parsed.message;
+        } catch (_) {
+            // Not JSON — fall through to the raw text below.
+        }
+        return trimmed || `Request failed with status ${response.status}.`;
     }
 
     /**

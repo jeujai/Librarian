@@ -185,10 +185,17 @@ class ConcurrentRequestHandler(BaseHTTPMiddleware):
         return any(path.startswith(skip_path) for skip_path in skip_paths)
     
     def _get_current_phase(self) -> StartupPhase:
-        """Get current startup phase."""
-        if self.phase_manager:
+        """Get current startup phase.
+
+        The phase manager is created during lifespan startup, which runs after
+        this middleware is constructed, so the global is set later than
+        ``self.phase_manager`` is captured. Resolve lazily so the real phase is
+        picked up once startup has progressed past MINIMAL.
+        """
+        phase_manager = self.phase_manager or get_phase_manager()
+        if phase_manager:
             try:
-                return self.phase_manager.current_phase
+                return phase_manager.current_phase
             except Exception:
                 pass
         return StartupPhase.MINIMAL  # Default to minimal if unknown

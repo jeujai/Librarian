@@ -209,9 +209,9 @@ class RelationshipTraverser:
         clinical_rela = self.CLINICALLY_MEANINGFUL_UMLS_RELA
 
         cypher = (
-            "MATCH (a:Concept {concept_id: $concept_id_a})-[:SAME_AS|SIMILAR_TO]->"
+            "MATCH (a:Concept {concept_id: $concept_id_a})-[:SAME_AS|SIMILAR_TO]-"
             "(ua:UMLSConcept) "
-            "MATCH (b:Concept {concept_id: $concept_id_b})-[:SAME_AS|SIMILAR_TO]->"
+            "MATCH (b:Concept {concept_id: $concept_id_b})-[:SAME_AS|SIMILAR_TO]-"
             "(ub:UMLSConcept) "
             "MATCH (ua)-[r:UMLS_REL]-(ub) "
             "WHERE r.rela_type IN $clinical_rela "
@@ -221,8 +221,8 @@ class RelationshipTraverser:
             # Both ua and ub may have multiple document Concepts (synonyms,
             # variants) - collect them all so treatment/diagnostic chunks
             # attached to the far side of the clinical relationship are found.
-            "OPTIONAL MATCH (cb_ua:Concept)-[:SAME_AS|SIMILAR_TO]->(ua) "
-            "OPTIONAL MATCH (cb_ub:Concept)-[:SAME_AS|SIMILAR_TO]->(ub) "
+            "OPTIONAL MATCH (cb_ua:Concept)-[:SAME_AS|SIMILAR_TO]-(ua) "
+            "OPTIONAL MATCH (cb_ub:Concept)-[:SAME_AS|SIMILAR_TO]-(ub) "
             "WITH a, b, ua, r, ub, "
             "     collect(DISTINCT a) + collect(DISTINCT b) + "
             "     collect(DISTINCT cb_ua) + collect(DISTINCT cb_ub) "
@@ -285,9 +285,9 @@ class RelationshipTraverser:
         clinical_rela = self.CLINICALLY_MEANINGFUL_UMLS_RELA
 
         cypher = (
-            "MATCH (a:Concept {concept_id: $concept_id_a})-[:SAME_AS|SIMILAR_TO]->"
+            "MATCH (a:Concept {concept_id: $concept_id_a})-[:SAME_AS|SIMILAR_TO]-"
             "(ua:UMLSConcept) "
-            "MATCH (b:Concept {concept_id: $concept_id_b})-[:SAME_AS|SIMILAR_TO]->"
+            "MATCH (b:Concept {concept_id: $concept_id_b})-[:SAME_AS|SIMILAR_TO]-"
             "(ub:UMLSConcept) "
             "MATCH (ua)-[r1:UMLS_REL]-(umid:UMLSConcept)"
             "-[r2:UMLS_REL]-(ub) "
@@ -302,9 +302,9 @@ class RelationshipTraverser:
             # isa -> Biguanide, bridging umid (UMLS:Metformin) back to a
             # document Concept:Metformin surfaces treatment chunks that
             # neither a nor b could reach.
-            "OPTIONAL MATCH (cb_ua:Concept)-[:SAME_AS|SIMILAR_TO]->(ua) "
-            "OPTIONAL MATCH (cb_umid:Concept)-[:SAME_AS|SIMILAR_TO]->(umid) "
-            "OPTIONAL MATCH (cb_ub:Concept)-[:SAME_AS|SIMILAR_TO]->(ub) "
+            "OPTIONAL MATCH (cb_ua:Concept)-[:SAME_AS|SIMILAR_TO]-(ua) "
+            "OPTIONAL MATCH (cb_umid:Concept)-[:SAME_AS|SIMILAR_TO]-(umid) "
+            "OPTIONAL MATCH (cb_ub:Concept)-[:SAME_AS|SIMILAR_TO]-(ub) "
             "WITH a, b, ua, r1, umid, r2, ub, "
             "     collect(DISTINCT a) + collect(DISTINCT b) + "
             "     collect(DISTINCT cb_ua) + collect(DISTINCT cb_umid) + "
@@ -400,7 +400,7 @@ class RelationshipTraverser:
         try:
             async with self._neo4j_client.session() as session:
                 result = await session.run(
-                    "MATCH (c:Concept)-[:SAME_AS|SIMILAR_TO]->(:UMLSConcept) "
+                    "MATCH (c:Concept)-[:SAME_AS|SIMILAR_TO]-(:UMLSConcept) "
                     "WHERE c.concept_id IN $concept_ids "
                     "RETURN count(c) > 0 AS has_bridge "
                     "LIMIT 1",

@@ -95,7 +95,7 @@ class RetrievedChunk:
         """Validate retrieved chunk data integrity."""
         if not self.chunk_id or not self.content:
             return False
-        if self.kg_relevance_score < 0.0 or self.kg_relevance_score > 1.0:
+        if self.kg_relevance_score < 0.0:
             return False
         if self.semantic_score < 0.0 or self.semantic_score > 1.0:
             return False

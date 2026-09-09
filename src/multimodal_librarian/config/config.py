@@ -83,24 +83,14 @@ class Settings(BaseSettings):
     milvus_port: int = Field(default=19530, description="Milvus port")
     milvus_collection_name: str = Field(default="knowledge_chunks", description="Milvus collection name")
     
-    # External API settings (Gemini only)
-    google_api_key: Optional[str] = Field(default=None, description="Google API key for Gemini")
-    gemini_api_key: Optional[str] = Field(default=None, description="Gemini API key for AI generation")
-    gemini_model: str = Field(default="gemini-2.0-flash-exp", description="Gemini model to use")
-    
     # Ollama Configuration (Local LLM)
     ollama_host: str = Field(default="http://localhost:11434", description="Ollama API host URL")
     ollama_model: str = Field(default="llama3.2:3b", description="Ollama model to use")
     ollama_enabled: bool = Field(default=True, description="Enable Ollama for local LLM")
     ollama_timeout: float = Field(default=120.0, description="Ollama request timeout in seconds")
-    # Bridge generation provider: "ollama" (local, fast) or "gemini" (cloud, higher quality)
+    # Bridge generation provider: "ollama" (local, fast) or "deepseek" (cloud, higher quality)
     bridge_generation_provider: str = Field(default="ollama", description="Provider for bridge generation")
-    
-    @property
-    def GEMINI_API_KEY(self) -> Optional[str]:
-        """Get Gemini API key (alias for compatibility)."""
-        return self.gemini_api_key or self.google_api_key
-    
+
     # File storage settings
     upload_dir: str = Field(default="uploads", description="Directory for uploaded files")
     media_dir: str = Field(default="media", description="Directory for generated media")
@@ -254,7 +244,7 @@ class Settings(BaseSettings):
         description="Minimum coverage ratio floor for adaptive threshold calculation",
     )
     adaptive_medical_threshold: float = Field(
-        default=0.95,
+        default=0.75,
         description="Minimum coverage threshold for medical domain queries",
     )
     adaptive_legal_threshold: float = Field(
@@ -400,11 +390,7 @@ class Settings(BaseSettings):
         features = []
         # Add basic features that are always available
         features.extend(["api", "health_checks", "configuration"])
-        
-        # Add conditional features based on API keys
-        if self.google_api_key or self.gemini_api_key:
-            features.append("gemini_integration")
-        
+
         return features
     
     def get_environment_info(self) -> dict:
@@ -471,9 +457,5 @@ def validate_environment_configuration() -> dict:
         # Check for AWS-specific requirements
         if not os.getenv("AWS_REGION"):
             validation_results["warnings"].append("AWS_REGION not set")
-    
-    # Check API keys for AI features (Gemini only)
-    if not any([settings.google_api_key, settings.gemini_api_key]):
-        validation_results["warnings"].append("No Gemini API key configured - AI features will be limited")
-    
+
     return validation_results

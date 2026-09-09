@@ -40,7 +40,7 @@ Environment variables (or .env):
     OLLAMA_URL           (default: http://localhost:11434)
     OLLAMA_MODEL         (default: llama3.2:3b)
     ENRICH_CONCURRENCY   (default: 8)     concurrent per-chunk LLM calls
-    ENRICH_MAX_CONCEPTS  (default: 30)    concept names per LLM call (chunked)
+    ENRICH_MAX_CONCEPTS  (default: 20)    concept names per LLM call (chunked)
     ENRICH_MAX_CHARS     (default: 2000)  passage chars sent to the LLM
 """
 
@@ -49,6 +49,7 @@ import asyncio
 import json
 import logging
 import os
+import random
 import time
 from typing import Any, Dict, List, Tuple
 
@@ -77,12 +78,13 @@ OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:3b")
 
 CONCURRENCY = int(os.getenv("ENRICH_CONCURRENCY", "8"))
-MAX_CONCEPTS = int(os.getenv("ENRICH_MAX_CONCEPTS", "30"))
+WRITE_CONCURRENCY = int(os.getenv("ENRICH_WRITE_CONCURRENCY", "1"))
+MAX_CONCEPTS = int(os.getenv("ENRICH_MAX_CONCEPTS", "20"))
 MAX_CHARS = int(os.getenv("ENRICH_MAX_CHARS", "2000"))
 # Per-call read timeout for the Ollama generate call.  Dense chunks (many
 # concepts -> long JSON output) can exceed the old 120s and trip an empty
 # ReadTimeout; 180s default, env-tunable for retry passes over dense leftovers.
-OLLAMA_TIMEOUT = float(os.getenv("OLLAMA_TIMEOUT", "180"))
+OLLAMA_TIMEOUT = float(os.getenv("OLLAMA_TIMEOUT", "900"))
 EMBED_BATCH = 500
 
 # Clinical filter: only enrich concepts worth a rationale.  Keep an edge iff its
@@ -170,8 +172,56 @@ def _norm(name: str) -> str:
     return (name or "").strip().lower()
 
 
+def _extract_json_objects(text: str) -> List[Dict[str, Any]]:
+    """Extract complete JSON objects via brace-balanced scanning.
+
+    Tolerant of a missing closing ']' or trailing prose: llama3.2:3b often
+    emits a valid array of {"name","rationale"} objects then stops
+    (done_reason=stop) without the closing bracket, which makes a strict
+    array parse discard the whole batch.
+    """
+    objs: List[Dict[str, Any]] = []
+    i, n = 0, len(text)
+    while i < n:
+        if text[i] != "{":
+            i += 1
+            continue
+        depth = 0
+        in_str = False
+        esc = False
+        j = i
+        while j < n:
+            ch = text[j]
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = not in_str
+            elif not in_str:
+                if ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0:
+                        try:
+                            o = json.loads(text[i : j + 1])
+                            if isinstance(o, dict):
+                                objs.append(o)
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                        break
+            j += 1
+        i = j + 1
+    return objs
+
+
 def _parse_json_array(text: str) -> List[Dict[str, Any]]:
-    """Extract a JSON array of objects from a (possibly noisy) LLM response."""
+    """Extract a JSON array of objects from a (possibly noisy) LLM response.
+
+    Fast path parses a well-formed ``[ ... ]`` array; fallback recovers the
+    objects when the model omits the closing ']' or appends trailing prose.
+    """
     if not text:
         return []
     t = text.strip()
@@ -180,41 +230,70 @@ def _parse_json_array(text: str) -> List[Dict[str, Any]]:
         t = t.split("```", 2)[-1] if t.count("```") >= 2 else t.strip("`")
     start = t.find("[")
     end = t.rfind("]")
-    if start == -1 or end == -1 or end <= start:
-        return []
-    try:
-        parsed = json.loads(t[start : end + 1])
-    except (json.JSONDecodeError, TypeError):
-        return []
-    if not isinstance(parsed, list):
-        return []
-    return [p for p in parsed if isinstance(p, dict)]
+    if start != -1 and end != -1 and end > start:
+        try:
+            parsed = json.loads(t[start : end + 1])
+            if isinstance(parsed, list):
+                dicts = [p for p in parsed if isinstance(p, dict)]
+                if dicts:
+                    return dicts
+        except (json.JSONDecodeError, TypeError):
+            pass
+    # Tolerant fallback for unclosed arrays / trailing prose.
+    return _extract_json_objects(t)
 
 
 async def _ollama_rationales(
-    client: httpx.AsyncClient, names: List[str], text: str, chunk_id: str = ""
+    client_ref: List[httpx.AsyncClient],
+    names: List[str],
+    text: str,
+    chunk_id: str = "",
 ) -> Dict[str, str]:
-    """One LLM call -> {normalized_name: rationale} for the given names."""
+    """One LLM call -> {normalized_name: rationale} for the given names.
+
+    Uses a mutable client reference so that a single transport error triggers
+    one client replacement for all concurrent tasks, rather than each task
+    having to create its own ephemeral client.
+    """
     prompt = _PROMPT.format(names="\n".join(f"- {n}" for n in names), text=text[:MAX_CHARS])
-    try:
-        resp = await client.post(
-            f"{OLLAMA_URL}/api/generate",
-            json={
-                "model": OLLAMA_MODEL,
-                "prompt": prompt,
-                "stream": False,
-                "options": {"temperature": 0.2, "num_predict": 4096, "num_ctx": 4096},
-            },
-            timeout=OLLAMA_TIMEOUT,
-        )
-        resp.raise_for_status()
-        content = resp.json().get("response", "")
-    except Exception as e:
-        logger.warning(
-            f"Ollama call failed (chunk {chunk_id or '?'}, {len(names)} concepts): "
-            f"{type(e).__name__}: {e}"
-        )
-        return {}
+    for attempt in (0, 1):
+        try:
+            resp = await client_ref[0].post(
+                f"{OLLAMA_URL}/api/generate",
+                json={
+                    "model": OLLAMA_MODEL,
+                    "prompt": prompt,
+                    "stream": False,
+                    "options": {"temperature": 0.2, "num_predict": 4096, "num_ctx": 4096},
+                },
+                timeout=OLLAMA_TIMEOUT,
+            )
+            resp.raise_for_status()
+            content = resp.json().get("response", "")
+            break
+        except Exception as e:
+            is_transport = (
+                "client has been closed" in str(e).lower()
+                or type(e).__name__ in ("ReadError", "RemoteProtocolError",
+                                         "ConnectError", "PoolTimeout",
+                                         "NetworkError")
+            )
+            if attempt == 0 and (is_transport or isinstance(e, httpx.HTTPError)):
+                logger.info(
+                    f"Replacing broken httpx client after {type(e).__name__} "
+                    f"(chunk {chunk_id or '?'}, {len(names)} concepts)"
+                )
+                try:
+                    await client_ref[0].aclose()
+                except Exception:
+                    pass
+                client_ref[0] = httpx.AsyncClient()
+                continue
+            logger.warning(
+                f"Ollama call failed (chunk {chunk_id or '?'}, {len(names)} concepts): "
+                f"{type(e).__name__}: {e}"
+            )
+            return {}
 
     out: Dict[str, str] = {}
     for entry in _parse_json_array(content):
@@ -225,19 +304,77 @@ async def _ollama_rationales(
     return out
 
 
-async def _embed(client: httpx.AsyncClient, texts: List[str]) -> List[List[float]]:
-    """Batch-embed via the model server (normalize=True for cosine parity)."""
+async def _embed(
+    client_ref: List[httpx.AsyncClient], texts: List[str]
+) -> List[List[float]]:
+    """Batch-embed via the model server (normalize=True for cosine parity).
+
+    Uses a mutable client reference so a broken client is replaced once for
+    all concurrent tasks.
+    """
     embeddings: List[List[float]] = []
     for start in range(0, len(texts), EMBED_BATCH):
         batch = texts[start : start + EMBED_BATCH]
-        resp = await client.post(
-            f"{MODEL_SERVER_URL}/embeddings",
-            json={"texts": batch, "normalize": True},
-            timeout=120.0,
-        )
-        resp.raise_for_status()
-        embeddings.extend(resp.json().get("embeddings", []))
+        for attempt in (0, 1):
+            try:
+                resp = await client_ref[0].post(
+                    f"{MODEL_SERVER_URL}/embeddings",
+                    json={"texts": batch, "normalize": True},
+                    timeout=120.0,
+                )
+                resp.raise_for_status()
+                embeddings.extend(resp.json().get("embeddings", []))
+                break
+            except Exception as e:
+                is_transport = (
+                    "client has been closed" in str(e).lower()
+                    or type(e).__name__ in ("ReadError", "RemoteProtocolError",
+                                             "ConnectError", "PoolTimeout",
+                                             "NetworkError")
+                )
+                if attempt == 0 and (is_transport or isinstance(e, httpx.HTTPError)):
+                    logger.info(
+                        f"Replacing broken httpx client after embed "
+                        f"{type(e).__name__}"
+                    )
+                    try:
+                        await client_ref[0].aclose()
+                    except Exception:
+                        pass
+                    client_ref[0] = httpx.AsyncClient()
+                    continue
+                raise
     return embeddings
+
+
+async def _write_with_retry(session, write_tx_fn, *, max_retries: int = 5, base_delay: float = 1.0):
+    """Execute a Neo4j write transaction with exponential backoff + jitter.
+
+    Retries on LockAcquisitionTimeout and other transient errors.  The retry
+    budget (5 attempts × up to ~31s delay) comfortably exceeds the 10s Neo4j
+    lock-acquisition timeout while keeping total stall well under the 900s
+    Ollama timeout.
+    """
+    for attempt in range(max_retries + 1):
+        try:
+            return await session.execute_write(write_tx_fn)
+        except Exception as e:
+            msg = str(e)
+            is_transient = (
+                "LockAcquisitionTimeout" in msg
+                or "TransientError" in msg
+                or "Unable to acquire lock" in msg
+                or "BookmarkTimeout" in msg
+                or "ForbiddenDueToTransactionNotOpen" in msg
+            )
+            if not is_transient or attempt == max_retries:
+                raise
+            delay = base_delay * (2 ** attempt) + random.uniform(0, base_delay)
+            logger.info(
+                f"Write lock contention (attempt {attempt + 1}/{max_retries}), "
+                f"retrying in {delay:.1f}s"
+            )
+            await asyncio.sleep(delay)
 
 
 async def _enrich_document(
@@ -291,6 +428,10 @@ async def _enrich_document(
     stats = {"updated": 0, "done": 0, "generated": 0}
     dry_samples: List[Tuple[str, str]] = []
     total = len(by_chunk)
+    write_sem = asyncio.Semaphore(WRITE_CONCURRENCY)
+    # Mutable reference: when any task detects a broken httpx client, it
+    # replaces the shared client once so all concurrent tasks benefit.
+    client_ref: List[httpx.AsyncClient] = [http]
 
     async def _process_chunk(chunk_id: str, concepts: List[Tuple[str, str]]):
         text = text_by_chunk.get(chunk_id)
@@ -311,7 +452,7 @@ async def _enrich_document(
             merged: Dict[str, str] = {}
             for i in range(0, len(unique_names), MAX_CONCEPTS):
                 sub = unique_names[i : i + MAX_CONCEPTS]
-                merged.update(await _ollama_rationales(http, sub, text, chunk_id))
+                merged.update(await _ollama_rationales(client_ref, sub, text, chunk_id))
 
             # (cid, rationale) for THIS chunk only
             chunk_pairs = [
@@ -333,7 +474,7 @@ async def _enrich_document(
 
             # Embed this chunk's distinct rationales, then SET its edges now.
             distinct = sorted({r for _, r in chunk_pairs})
-            embs = await _embed(http, distinct)
+            embs = await _embed(client_ref, distinct)
             if len(embs) != len(distinct):
                 logger.warning(
                     f"[{doc_id}] chunk {chunk_id}: embed mismatch "
@@ -342,21 +483,26 @@ async def _enrich_document(
                 stats["done"] += 1
                 return
             emb_by_text = dict(zip(distinct, embs))
-            write_rows = [
-                {"cid": cid, "chid": chunk_id, "rationale": r, "emb": emb_by_text[r]}
-                for cid, r in chunk_pairs
-            ]
+            # Sort rows by concept_id so all writers lock concepts in the
+            # same order, preventing deadlocks under contention.
+            write_rows = sorted(
+                (
+                    {"cid": cid, "chid": chunk_id, "rationale": r, "emb": emb_by_text[r]}
+                    for cid, r in chunk_pairs
+                ),
+                key=lambda row: row["cid"],
+            )
             async def _write_tx(tx):
                 res = await tx.run(_WRITE_QUERY, {"rows": write_rows})
                 rec = await res.single()
                 return rec["cnt"] if rec else 0
 
-            # Managed write: auto-retries transient failures with backoff --
-            # notably LockAcquisitionTimeout, which fires when two concurrent
-            # per-chunk SETs touch a hot shared Concept node.  Without this a
-            # single transient lock timeout aborts the whole multi-hour run.
-            async with driver.session() as session:
-                stats["updated"] += await session.execute_write(_write_tx)
+            # Writer semaphore limits concurrent Neo4j write transactions
+            # to reduce lock contention on hot Concept nodes, plus manual
+            # exponential-backoff retry for transient LockAcquisitionTimeout.
+            async with write_sem:
+                async with driver.session() as session:
+                    stats["updated"] += await _write_with_retry(session, _write_tx)
 
         stats["done"] += 1
         if stats["done"] % 50 == 0 or stats["done"] == total:

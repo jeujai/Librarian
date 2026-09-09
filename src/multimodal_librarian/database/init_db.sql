@@ -232,7 +232,7 @@ CREATE TABLE IF NOT EXISTS bridge_chunks (
     content TEXT NOT NULL,
     source_chunk_id UUID NOT NULL REFERENCES knowledge_chunks(id) ON DELETE CASCADE,
     target_chunk_id VARCHAR(100),
-    generation_method VARCHAR(50) DEFAULT 'gemini_25_flash',
+    generation_method VARCHAR(50) DEFAULT 'deepseek_v4_flash',
     gap_analysis JSONB,
     validation_result JSONB,
     confidence_score FLOAT DEFAULT 0.0,

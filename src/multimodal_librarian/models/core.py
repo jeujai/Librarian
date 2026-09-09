@@ -47,7 +47,7 @@ class GapType(Enum):
 
 class BridgeStrategy(Enum):
     """Strategy for bridge generation."""
-    GEMINI_FLASH = "gemini_flash"
+    DEEPSEEK = "deepseek"
     MECHANICAL_FALLBACK = "mechanical_fallback"
     SEMANTIC_OVERLAP = "semantic_overlap"
 

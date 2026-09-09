@@ -244,7 +244,7 @@ class ConfigHotReloader:
         Get API key for a specific service.
         
         Args:
-            service: Service name (gemini, openai, google)
+            service: Service name (deepseek, openai)
             default: Default value if not found
         """
         api_keys = self.get_secret("api-keys", default={})

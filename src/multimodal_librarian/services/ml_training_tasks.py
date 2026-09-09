@@ -177,7 +177,7 @@ async def _build_training_data_generator(strategies: Optional[List[str]] = None)
     # only accesses self._rag when "rag" is in config.strategies.
     #
     # For training data generation we use OllamaAIService (local
-    # llama3.1:8b) instead of AIService (Gemini) to eliminate API
+    # llama3.1:8b) instead of AIService (DeepSeek) to eliminate API
     # cost.  The model name is configurable via OLLAMA_TRAINING_MODEL.
     rag_service = None
     if strategies and "rag" in strategies:
@@ -285,7 +285,7 @@ def generate_training_data_task(
     else:
         logger.info(
             "LLM provider for RAG/eval: OllamaAIService "
-            "(OLLAMA_TRAINING_MODEL=%s). Gemini is NOT used.",
+            "(OLLAMA_TRAINING_MODEL=%s). DeepSeek is NOT used.",
             os.environ.get("OLLAMA_TRAINING_MODEL", "llama3.1:8b"),
         )
     start = time.monotonic()
@@ -544,7 +544,7 @@ def generate_training_data_task(
                 else:
                     logger.warning(
                         "No RAG service available — skipping eval set. "
-                        "Ensure an LLM provider (OpenAI, Gemini, or "
+                        "Ensure an LLM provider (OpenAI, DeepSeek, or "
                         "Ollama) is configured."
                     )
             except Exception as eval_exc:

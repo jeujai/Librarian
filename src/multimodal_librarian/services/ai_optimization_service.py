@@ -36,7 +36,7 @@ class OptimizationStrategy(str, Enum):
 
 class CostTier(str, Enum):
     """Cost tiers for different AI providers."""
-    LOW = "low"          # Gemini, Claude Haiku
+    LOW = "low"          # DeepSeek, Claude Haiku
     MEDIUM = "medium"    # GPT-4o-mini, Claude Sonnet
     HIGH = "high"        # GPT-4, Claude Opus
     PREMIUM = "premium"  # GPT-4 Turbo, latest models
@@ -101,16 +101,6 @@ class AIOptimizationService:
         
         # Cost information for providers
         self.provider_costs = {
-            AIProvider.GEMINI: ProviderCostInfo(
-                provider="gemini",
-                model="gemini-2.0-flash-exp",
-                cost_tier=CostTier.LOW,
-                input_cost_per_1k=0.000075,  # $0.075 per 1M tokens
-                output_cost_per_1k=0.0003,   # $0.30 per 1M tokens
-                embedding_cost_per_1k=0.00001,  # $0.01 per 1M tokens
-                rate_limit_rpm=15,
-                rate_limit_tpm=1000000
-            ),
             AIProvider.OPENAI: ProviderCostInfo(
                 provider="openai",
                 model="gpt-4o-mini",

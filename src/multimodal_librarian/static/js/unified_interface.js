@@ -1061,10 +1061,32 @@ class UnifiedInterface {
                     body: JSON.stringify({ title })
                 }
             );
-            if (!response.ok) throw new Error(await response.text());
+            if (!response.ok) throw new Error(await this._readApiError(response));
         } catch (err) {
             console.error('Conversation conversion failed:', err);
         }
+    }
+
+    /**
+     * Normalize an error response body to a short, user-facing message.
+     * Mirrors chat.js _readApiError().
+     * @param {Response} response
+     * @returns {Promise<string>}
+     */
+    async _readApiError(response) {
+        const text = await response.text();
+        const trimmed = (text || '').trim();
+        if (trimmed.startsWith('<!DOCTYPE') || trimmed.startsWith('<html') || trimmed.startsWith('<!--')) {
+            return `Server error (${response.status}). The backend may be busy or restarting — please try again.`;
+        }
+        try {
+            const parsed = JSON.parse(trimmed);
+            if (parsed && typeof parsed.detail === 'string') return parsed.detail;
+            if (parsed && typeof parsed.message === 'string') return parsed.message;
+        } catch (_) {
+            // Not JSON — fall through to the raw text below.
+        }
+        return trimmed || `Request failed with status ${response.status}.`;
     }
 
     /**

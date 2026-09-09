@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Physical (byte-level) backup of Librarian Docker named volumes to CORSAIR.
+# Physical (byte-level) backup of Librarian bind-mounted data dirs to CORSAIR.
 #
 # Strategy: Route B from the backup design notes.
 #   1. Stop the data services so no process is mid-write.
-#   2. Mount each named volume read-only into a throwaway alpine container.
-#   3. tar+gzip the volume contents to the target directory on CORSAIR.
+#   2. Mount each host data dir (./data/<svc>) read-only into a throwaway alpine container.
+#   3. tar+gzip the directory contents to the target directory on CORSAIR.
 #   4. Start the data services again.
 #
 # Required services are stopped together (etcd + minio + milvus must be
@@ -30,15 +30,22 @@ COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
 PROJECT="${PROJECT:-librarian}"
 RETENTION_DAYS="${RETENTION_DAYS:-0}"
 
-# Volumes to back up. Order matters only for logging.
+# Live data lives in bind mounts under <repo>/data (see docker-compose.yml),
+# NOT in the librarian_*_data named volumes (those are stale orphans left over
+# from an older compose config). Derive the repo dir from the compose file path.
+REPO_DIR="$(cd "$(dirname "$COMPOSE_FILE")" && pwd)"
+DATA_ROOT="${DATA_ROOT:-${REPO_DIR}/data}"
+
+# Data sets to back up, as "<archive-basename>:<subdir under DATA_ROOT>".
+# Archive basenames match the historical names so restores stay recognizable.
 VOLUMES=(
-  postgres_data
-  neo4j_data
-  neo4j_logs
-  milvus_data
-  etcd_data
-  minio_data
-  redis_data
+  "postgres_data:postgres"
+  "neo4j_data:neo4j"
+  "neo4j_logs:neo4j-logs"
+  "milvus_data:milvus"
+  "etcd_data:etcd"
+  "minio_data:minio"
+  "redis_data:redis"
 )
 
 # Compose services to stop before snapshot, in stop-order (reverse-dep).
@@ -117,15 +124,17 @@ if [[ ! -w "$BACKUP_ROOT" ]]; then
   exit 2
 fi
 
-# Confirm every volume exists before we start stopping things.
+# Confirm every source data dir exists before we start stopping things.
 missing=()
-for v in "${VOLUMES[@]}"; do
-  if ! docker volume inspect "${PROJECT}_${v}" >/dev/null 2>&1; then
-    missing+=("${PROJECT}_${v}")
+for entry in "${VOLUMES[@]}"; do
+  src="${DATA_ROOT}/${entry#*:}"
+  if [[ ! -d "$src" ]]; then
+    missing+=("$src")
   fi
 done
 if (( ${#missing[@]} > 0 )); then
-  err "missing docker volumes: ${missing[*]}"
+  err "missing data directories: ${missing[*]}"
+  err "expected live bind-mount dirs under ${DATA_ROOT}"
   exit 2
 fi
 
@@ -137,7 +146,8 @@ log "backup plan:"
 log "  project:       ${PROJECT}"
 log "  compose file:  ${COMPOSE_FILE}"
 log "  target dir:    ${TARGET_DIR}"
-log "  volumes:       ${VOLUMES[*]}"
+log "  data root:     ${DATA_ROOT}"
+log "  data sets:     ${VOLUMES[*]}"
 log "  stop order:    ${SERVICES_STOP_ORDER[*]}"
 log "  start order:   ${SERVICES_START_ORDER[*]}"
 log "  stop services: $([[ $DO_STOP -eq 1 ]] && echo 'yes' || echo 'no (UNSAFE)')"
@@ -156,12 +166,16 @@ STARTED_SERVICES=()
 cleanup() {
   if (( ${#STARTED_SERVICES[@]} > 0 )); then
     # Restart in dependency-correct order, only restarting services we stopped.
+    # Use `up -d` (not `start`): it re-creates the container if it was removed
+    # during the window and is a no-op-then-start if it merely stopped, so the
+    # trap can never leave a data service down. milvus is last in the order so
+    # its etcd/minio deps are ready first (avoids Milvus timestamp-lag).
     log "restarting services in dependency order"
     for svc in "${SERVICES_START_ORDER[@]}"; do
       for stopped in "${STARTED_SERVICES[@]}"; do
         if [[ "$svc" == "$stopped" ]]; then
-          docker compose -f "$COMPOSE_FILE" start "$svc" \
-            || warn "failed to restart $svc; run 'docker compose start $svc' manually"
+          docker compose -f "$COMPOSE_FILE" up -d "$svc" \
+            || warn "failed to restart $svc; run 'docker compose up -d $svc' manually"
           break
         fi
       done
@@ -211,12 +225,13 @@ fi
   printf '%-20s %-40s %s\n' "volume" "archive" "sha256"
 } > "$MANIFEST"
 
-for v in "${VOLUMES[@]}"; do
-  full="${PROJECT}_${v}"
-  archive="${v}.tar.gz"
-  log "archiving ${full} -> ${archive}"
+for entry in "${VOLUMES[@]}"; do
+  name="${entry%%:*}"
+  src="${DATA_ROOT}/${entry#*:}"
+  archive="${name}.tar.gz"
+  log "archiving ${src} -> ${archive}"
   docker run --rm \
-    -v "${full}:/data:ro" \
+    -v "${src}:/data:ro" \
     -v "${TARGET_DIR}:/backup" \
     alpine:3.19 \
     sh -c "tar -C /data -czf /backup/${archive} ."
@@ -226,7 +241,7 @@ for v in "${VOLUMES[@]}"; do
     -v "${TARGET_DIR}:/backup:ro" \
     alpine:3.19 \
     sh -c "sha256sum /backup/${archive} | awk '{print \$1}'")"
-  printf '%-20s %-40s %s\n' "$v" "$archive" "$checksum" >> "$MANIFEST"
+  printf '%-20s %-40s %s\n' "$name" "$archive" "$checksum" >> "$MANIFEST"
   success "  $(ls -lh "${TARGET_DIR}/${archive}" | awk '{print $5}')  ${checksum:0:12}..."
 done
 

@@ -24,6 +24,19 @@ KEPT_PATTERN_TYPES = frozenset({
     "CODE_TERM", "MULTI_WORD", "ACRONYM",
 })
 
+KEPT_LLM_TYPES = frozenset({
+    # Medical operational/administrative types (ingestion LLM prompt)
+    "GUIDELINE", "POLICY", "PRECAUTION", "RESTRICTION",
+    "RECOMMENDATION", "EXPOSURE_RISK", "TRANSMISSION_PRECAUTION",
+    "OCCUPATIONAL_HEALTH", "SCREENING", "VACCINATION", "TREATMENT_REGIMEN",
+    # Technical types
+    "API", "PROTOCOL", "ALGORITHM", "DATA_STRUCTURE", "FRAMEWORK", "DESIGN_PATTERN",
+    # Academic types
+    "THEORY", "METHODOLOGY", "DATASET", "METRIC",
+    # General types
+    "ENTITY", "TOPIC",
+})
+
 
 @dataclass
 class ValidationResult:
@@ -40,16 +53,18 @@ class ValidationResult:
     kept_by_conceptnet: int = 0
     kept_by_umls: int = 0
     kept_by_pattern: int = 0
+    kept_by_llm_type: int = 0
 
 
 class ConceptNetValidator:
     """Validate concepts against local ConceptNet data.
 
-    Four-tier filtering:
+    Five-tier filtering:
       Tier 1  - concept exists in ConceptNet -> keep + rels
       Tier 1b - concept exists in UMLS (when available) -> keep
       Tier 2  - spaCy NER entity type -> keep
       Tier 3  - CODE_TERM/MULTI_WORD/ACRONYM -> keep
+      Tier 4  - LLM-extracted type in KEPT_LLM_TYPES -> keep
       Otherwise - discard
     """
 
@@ -207,6 +222,9 @@ class ConceptNetValidator:
             elif concept.concept_type in KEPT_PATTERN_TYPES:
                 result.validated_concepts.append(concept)
                 result.kept_by_pattern += 1
+            elif concept.concept_type in KEPT_LLM_TYPES:
+                result.validated_concepts.append(concept)
+                result.kept_by_llm_type += 1
             else:
                 result.discarded_count += 1
 
@@ -246,4 +264,6 @@ class ConceptNetValidator:
             return True, "ner"
         if concept.concept_type in KEPT_PATTERN_TYPES:
             return True, "pattern"
+        if concept.concept_type in KEPT_LLM_TYPES:
+            return True, "llm_type"
         return False, None

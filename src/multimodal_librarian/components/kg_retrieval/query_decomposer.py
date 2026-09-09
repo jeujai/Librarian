@@ -13,11 +13,32 @@ import asyncio
 import hashlib
 import logging
 import re
+import time
 from typing import Any, Dict, List, Optional, Set
 
 from ...models.kg_retrieval import QueryDecomposition
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Medical term expansion for query-side abbreviation/synonym resolution
+# =============================================================================
+# Embedding models often map abbreviations to different vector regions than
+# their expanded forms (e.g., cos("healthcare worker", "HCP") ≈ 0.64).
+# By adding synonym variants as separate search phrases, each gets its own
+# vector query against concept_embedding_index, bypassing the similarity gap.
+#
+# Only unambiguous medical abbreviations are included — short codes that
+# collide with common English words (e.g., "ALL", "OR", "MS", "PT") are
+# intentionally excluded to avoid noise.
+
+
+# =============================================================================
+# (MEDICAL_SYNONYMS static dictionary removed — replaced by live UMLS
+#  embedding lookup + DomainAbbreviation Neo4j nodes.  See plan:
+#  .claude/plans/golden-baking-mountain.md)
+# =============================================================================
 
 
 # =============================================================================
@@ -182,15 +203,35 @@ STOPWORDS: Set[str] = {
 }
 
 
+# UMLS relationship types used to expand from matched UMLS concepts
+# to their clinically-related neighbors.  When a query matches a disease
+# concept (e.g. Pneumonia), its UMLS_REL neighbors with these rela_type
+# values (e.g. may_be_treated_by → ceftobiprole) are pulled in so their
+# embeddings can be used to find drug-content document concepts.
+_UMLS_NEIGHBOR_EXPANSION_RELA = [
+    "isa", "inverse_isa",
+    "may_treat", "may_be_treated_by",
+    "may_be_prevented_by", "may_prevent",
+    "cause_of", "due_to",
+    "has_manifestation", "manifestation_of",
+    "has_causative_agent",
+    "has_pharmacokinetics",
+    "has_physiologic_effect",
+    "has_mechanism_of_action",
+    "has_therapeutic_class",
+    "may_diagnose", "may_be_diagnosed_by",
+]
+
+
 class QueryDecomposer:
     """
     Decomposes user queries into structured components.
-    
+
     Uses Neo4j to identify named entities and extracts action words
     and subject references using pattern matching.
-    
+
     Follows FastAPI DI patterns - no connections at construction time.
-    
+
     Example:
         decomposer = QueryDecomposer(neo4j_client=client)
         result = await decomposer.decompose("What did our team observe at Chelsea?")
@@ -203,7 +244,7 @@ class QueryDecomposer:
         self,
         neo4j_client: Optional[Any] = None,
         model_server_client: Optional[Any] = None,
-        similarity_threshold: float = 0.70,
+        similarity_threshold: float = 0.65,
         semantic_max_results: int = 30,
         semantic_enabled: bool = True,
         ner_extractor: Optional[Any] = None,
@@ -232,6 +273,16 @@ class QueryDecomposer:
         self._semantic_max_results = semantic_max_results
         self._semantic_enabled = semantic_enabled
         self.ner_extractor = ner_extractor
+        # Limit concurrent Neo4j vector queries to avoid overwhelming the
+        # database when fulltext and vector searches compete for CPU.
+        self._vector_search_semaphore = asyncio.Semaphore(6)
+        # Max UMLS concept embeddings to bridge (cap the fan-out from
+        # umls_embedding_index → concept_embedding_index searches).
+        self._max_umls_bridge = 5
+        # Max ConceptNet concept embeddings to bridge (colloquial→clinical).
+        # Kept smaller than UMLS because the ConceptNet→UMLS→concept path
+        # adds an extra hop; 3 is enough to catch the main colloquial terms.
+        self._max_conceptnet_bridge = 3
         # Cache query embeddings so identical query text always produces
         # the same vector within a session, eliminating floating-point
         # non-determinism from repeated embedding calls.
@@ -291,32 +342,60 @@ class QueryDecomposer:
         )
         
         if self._neo4j_client:
-            # Run lexical matching immediately (it completes in ~0.1s).
-            # Semantic matching uses the Neo4j vector index which can hang
-            # when the index is degraded, so we wrap it in its own timeout
-            # to prevent it from taking down the entire decomposition.
+            # Run lexical and semantic matching concurrently, each with its
+            # own timeout.  Lexical (Lucene fulltext) is a best-effort
+            # optimization; semantic (vector + UMLS bridge) is the primary
+            # signal.  Both get independent time budgets so a slow fulltext
+            # query doesn't starve semantic matching.
             try:
                 lexical_task = asyncio.ensure_future(
-                    self._find_entity_matches(query)
+                    asyncio.wait_for(
+                        self._find_entity_matches(query), timeout=10.0
+                    )
                 )
                 semantic_task = asyncio.ensure_future(
-                    self._find_semantic_matches(query)
+                    asyncio.wait_for(
+                        self._find_semantic_matches(query), timeout=30.0
+                    )
                 )
 
-                # Wait for lexical first (always fast), then semantic with timeout
-                lexical_matches = await lexical_task
-                try:
-                    semantic_matches = await asyncio.wait_for(
-                        semantic_task, timeout=3.0
-                    )
-                except asyncio.TimeoutError:
-                    logger.warning(
-                        "Semantic matching timed out (3s), using lexical results only"
-                    )
-                    semantic_matches = []
-                    semantic_was_available = False
-                    if not semantic_task.done():
-                        semantic_task.cancel()
+                done, pending = await asyncio.wait(
+                    [lexical_task, semantic_task],
+                    timeout=35.0,
+                    return_when=asyncio.ALL_COMPLETED,
+                )
+
+                # Harvest results, swallowing timeouts and errors individually
+                lexical_matches = []
+                semantic_matches = []
+                for task in [lexical_task, semantic_task]:
+                    if not task.done():
+                        continue
+                    try:
+                        result = task.result()
+                    except asyncio.TimeoutError:
+                        if task is semantic_task:
+                            logger.warning(
+                                "Semantic matching timed out (30s), "
+                                "using lexical results only"
+                            )
+                            semantic_was_available = False
+                        else:
+                            logger.debug(
+                                "Lexical matching timed out (10s), relying on semantic"
+                            )
+                        continue
+                    except Exception as e:
+                        logger.warning(f"Matching task failed: {e}")
+                        continue
+                    if task is lexical_task:
+                        lexical_matches = result or []
+                    else:
+                        semantic_matches = result or []
+
+                # Cancel any still-running task
+                for task in pending:
+                    task.cancel()
             except Exception as e:
                 logger.warning(f"Error finding matches: {e}")
         else:
@@ -339,6 +418,7 @@ class QueryDecomposer:
             # --- determinism diagnostic: log every concept + score ---
             _diag = [
                 f"{m.get('name','?')[:40]}|sim={m.get('similarity_score',0):.4f}"
+                f"{'|umls' if m.get('umls_bridge') else ''}"
                 for m in semantic_matches
             ]
             logger.info(
@@ -585,6 +665,7 @@ class QueryDecomposer:
         if not self._neo4j_client:
             return []
 
+        _t0 = time.monotonic()
         try:
             # ── 1. Extract search phrases ──────────────────────────────
             search_phrases = [query]
@@ -604,8 +685,21 @@ class QueryDecomposer:
                         f"NER extraction failed in semantic search: {e}"
                     )
 
-            # Cap phrases to avoid overwhelming Neo4j with concurrent searches
-            _MAX_PHRASES = 8
+            # Expand domain abbreviations stored in Neo4j (e.g. "HCP" ↔
+            # "healthcare personnel").  UMLS semantic bridging (vocabulary
+            # gap like "healthcare worker" → "Health Personnel") is handled
+            # downstream in the vector search phase via umls_embedding_index.
+            search_phrases = await self._expand_domain_abbreviations(search_phrases)
+            logger.debug(
+                f"Search phrases after domain abbreviation expansion: "
+                f"{len(search_phrases)} phrases"
+            )
+
+            # Cap phrases — each adds ~1s to model-server embedding time
+            # (CPU inference on 768-dim model). Raised from 10 to 15
+            # to accommodate breadth-first interleaved expansions from
+            # DomainAbbreviation without dropping later triggers.
+            _MAX_PHRASES = 15
             search_phrases = search_phrases[:_MAX_PHRASES]
 
             logger.info(
@@ -646,53 +740,282 @@ class QueryDecomposer:
                        score AS similarity_score
                 """
                 try:
-                    results = await self._neo4j_client.execute_query(cypher, {
-                        'embedding': embedding,
-                        'top_k': self._semantic_max_results,
-                        'threshold': self._similarity_threshold,
-                    })
+                    async with self._vector_search_semaphore:
+                        results = await asyncio.wait_for(
+                            self._neo4j_client.execute_query(cypher, {
+                                'embedding': embedding,
+                                'top_k': self._semantic_max_results,
+                                'threshold': self._similarity_threshold,
+                            }),
+                            timeout=10.0,
+                        )
                     return [
                         {**record, 'match_type': 'semantic'}
                         for record in (results or [])
                     ]
-                except Exception as e:
-                    logger.warning(f"Vector search failed for a phrase: {e}")
+                except (asyncio.TimeoutError, Exception) as e:
+                    if isinstance(e, asyncio.TimeoutError):
+                        logger.warning("Vector search timed out (10s) for a phrase")
+                    else:
+                        logger.warning(f"Vector search failed for a phrase: {e}")
                     return []
 
-            all_match_lists = await asyncio.gather(*[
-                _search_one(emb) for emb in embeddings
-            ])
+            # NEW: search umls_embedding_index in parallel with concept search.
+            # Each UMLS hit carries its canonical embedding, which bridges
+            # the vocabulary gap — e.g. "healthcare worker" → "Health Personnel"
+            # → that UMLS embedding is used to search for document concepts.
+            async def _search_umls(embedding):
+                cypher = """
+                CALL db.index.vector.queryNodes(
+                    'umls_embedding_index', 3, $embedding
+                )
+                YIELD node, score
+                WHERE score >= $threshold
+                RETURN node.embedding AS embedding,
+                       node.preferred_name AS name,
+                       score
+                """
+                try:
+                    async with self._vector_search_semaphore:
+                        return await asyncio.wait_for(
+                            self._neo4j_client.execute_query(cypher, {
+                                'embedding': embedding,
+                                'threshold': self._similarity_threshold,
+                            }),
+                            timeout=10.0,
+                        ) or []
+                except (asyncio.TimeoutError, Exception):
+                    return []  # UMLS index may not exist; degrade gracefully
+
+            # Search conceptnet_embedding_index for colloquial-to-clinical
+            # bridging.  ConceptNet captures commonsense relationships
+            # (e.g. "tummy ache" relates to "abdominal pain") that are not
+            # in UMLS.  The returned embeddings are then used to search
+            # umls_embedding_index, bridging colloquial terms to clinical
+            # UMLS concepts, which then feed the existing UMLS->concept bridge.
+            async def _search_conceptnet(embedding):
+                cypher = """
+                CALL db.index.vector.queryNodes(
+                    'conceptnet_embedding_index', 3, $embedding
+                )
+                YIELD node, score
+                WHERE score >= $threshold
+                RETURN node.embedding AS embedding,
+                       node.name AS name,
+                       score
+                """
+                try:
+                    async with self._vector_search_semaphore:
+                        return await asyncio.wait_for(
+                            self._neo4j_client.execute_query(cypher, {
+                                'embedding': embedding,
+                                'threshold': self._similarity_threshold,
+                            }),
+                            timeout=10.0,
+                        ) or []
+                except (asyncio.TimeoutError, Exception):
+                    return []  # ConceptNet index may not exist yet; degrade gracefully
+
+            # Run concept + UMLS + ConceptNet searches in parallel
+            concept_tasks = [_search_one(emb) for emb in embeddings]
+            umls_tasks = [_search_umls(emb) for emb in embeddings]
+            conceptnet_tasks = [_search_conceptnet(emb) for emb in embeddings]
+            all_tasks = concept_tasks + umls_tasks + conceptnet_tasks
+            all_results = await asyncio.gather(*all_tasks)
+            mid = len(embeddings)
+            mid2 = mid * 2
+            all_match_lists = list(all_results[:mid])
+            umls_match_lists = list(all_results[mid:mid2])
+            conceptnet_match_lists = list(all_results[mid2:])
+
+            # Collect unique UMLS embeddings (dedup by preferred_name).
+            # Cap at _max_umls_bridge to prevent fan-out from overwhelming Neo4j
+            # with too many concurrent concept_embedding_index searches.
+            umls_embeddings: List[List[float]] = []
+            seen_umls: set = set()
+            for umls_rows in umls_match_lists:
+                for row in umls_rows:
+                    name = row.get("name", "")
+                    emb = row.get("embedding")
+                    if name and emb and name not in seen_umls:
+                        seen_umls.add(name)
+                        umls_embeddings.append(emb)
+                        if len(umls_embeddings) >= self._max_umls_bridge:
+                            break
+                if len(umls_embeddings) >= self._max_umls_bridge:
+                    break
+
+            # Expand UMLS neighbor embeddings: for each matched UMLS concept,
+            # also search for its clinically-related UMLS neighbors via
+            # UMLS_REL edges.  This bridges the gap when a query mentions a
+            # disease (e.g. "pneumonia") but the UMLS treatment relationships
+            # (may_be_treated_by) point to drugs (e.g. ceftobiprole) that
+            # aren't directly linked in the concept_embedding_index.
+            async def _search_umls_neighbors(name):
+                cypher = """
+                MATCH (u:UMLSConcept {preferred_name: $name})
+                      -[r:UMLS_REL]-
+                      (neighbor:UMLSConcept)
+                WHERE r.rela_type IN $rela_types
+                  AND neighbor.embedding IS NOT NULL
+                RETURN neighbor.embedding AS embedding,
+                       neighbor.preferred_name AS name
+                LIMIT 5
+                """
+                try:
+                    async with self._vector_search_semaphore:
+                        return await asyncio.wait_for(
+                            self._neo4j_client.execute_query(cypher, {
+                                "name": name,
+                                "rela_types": _UMLS_NEIGHBOR_EXPANSION_RELA,
+                            }),
+                            timeout=10.0,
+                        ) or []
+                except (asyncio.TimeoutError, Exception):
+                    return []
+
+            if seen_umls:
+                neighbor_tasks = [
+                    _search_umls_neighbors(name)
+                    for name in list(seen_umls)[:self._max_umls_bridge]
+                ]
+                neighbor_results = await asyncio.gather(*neighbor_tasks)
+                neighbor_count = 0
+                for neighbor_rows in neighbor_results:
+                    for row in neighbor_rows:
+                        name = row.get("name", "")
+                        emb = row.get("embedding")
+                        if name and emb and name not in seen_umls:
+                            seen_umls.add(name)
+                            umls_embeddings.append(emb)
+                            neighbor_count += 1
+                            if len(umls_embeddings) >= self._max_umls_bridge * 4:
+                                break
+                    if len(umls_embeddings) >= self._max_umls_bridge * 4:
+                        break
+                if neighbor_count:
+                    logger.debug(
+                        f"UMLS neighbor expansion: {neighbor_count} additional "
+                        f"concept embeddings from UMLS_REL neighbors"
+                    )
+
+            # Search concept_embedding_index with UMLS concept embeddings.
+            # These are the canonical medical-concept vectors — they find
+            # document concepts related to ANY UMLS synonym of the query term.
+            # Collect unique ConceptNet embeddings and bridge to UMLS.
+            # ConceptNet -> UMLS -> document concepts: colloquial terms
+            # (e.g. "tummy ache") are mapped to clinical UMLS concepts
+            # (e.g. "Abdominal Pain"), whose canonical embeddings then
+            # find the right document concepts via concept_embedding_index.
+            conceptnet_embeddings: List[List[float]] = []
+            seen_cn: set = set()
+            for cn_rows in conceptnet_match_lists:
+                for row in cn_rows:
+                    name = row.get("name", "")
+                    emb = row.get("embedding")
+                    if name and emb and name not in seen_cn:
+                        seen_cn.add(name)
+                        conceptnet_embeddings.append(emb)
+                        if len(conceptnet_embeddings) >= self._max_conceptnet_bridge:
+                            break
+                if len(conceptnet_embeddings) >= self._max_conceptnet_bridge:
+                    break
+
+            if conceptnet_embeddings:
+                # Bridge: ConceptNet embedding -> umls_embedding_index
+                cn_to_umls_tasks = [_search_umls(emb) for emb in conceptnet_embeddings]
+                cn_to_umls_results = await asyncio.gather(*cn_to_umls_tasks)
+                cn_umls_hits = 0
+                for umls_rows in cn_to_umls_results:
+                    for row in umls_rows:
+                        name = row.get("name", "")
+                        emb = row.get("embedding")
+                        if name and emb and name not in seen_umls:
+                            seen_umls.add(name)
+                            umls_embeddings.append(emb)
+                            cn_umls_hits += 1
+                            if len(umls_embeddings) >= self._max_umls_bridge:
+                                break
+                    if len(umls_embeddings) >= self._max_umls_bridge:
+                        break
+                logger.debug(
+                    f"ConceptNet bridge: {len(conceptnet_embeddings)} concepts "
+                    f"-> {cn_umls_hits} UMLS hits "
+                    f"(from {sum(len(r) for r in cn_to_umls_results)} raw CN->UMLS matches)"
+                )
+
+            if umls_embeddings:
+                umls_concept_tasks = [_search_one(emb) for emb in umls_embeddings]
+                umls_concept_results = await asyncio.gather(*umls_concept_tasks)
+                for umls_match_list in umls_concept_results:
+                    # Tag UMLS-bridged concepts so they sort above
+                    # direct embedding matches during merge.  UMLS
+                    # validation is a clinical relevance signal:
+                    # the two-step path (query → UMLS embedding →
+                    # concept_embedding_index) filters out embedding
+                    # noise like short abbreviations that match on
+                    # character-level overlap.
+                    for m in umls_match_list:
+                        m['umls_bridge'] = True
+                    all_match_lists.append(umls_match_list)
+                logger.debug(
+                    f"UMLS bridge: {len(umls_embeddings)} unique concepts "
+                    f"(from {sum(len(r) for r in umls_match_lists)} raw UMLS hits)"
+                )
 
             # ── 4. Merge, deduplicate, keep highest score ─────────────
-            # Phase 1: deduplicate by concept_id (different phrases may
-            # return the same concept node).
+            # Phase 1: deduplicate by concept_id.  Prefer UMLS-bridged
+            # matches (clinically validated) over direct embedding matches,
+            # and higher scores within the same provenance class.
             seen: Dict[str, Dict[str, Any]] = {}
             for match_list in all_match_lists:
                 for m in match_list:
                     cid = m.get('concept_id')
                     if cid is None:
                         continue
-                    current_score = m.get('similarity_score', 0)
-                    if cid not in seen or current_score > seen[cid].get('similarity_score', 0):
+                    if cid not in seen:
+                        seen[cid] = m
+                        continue
+                    existing = seen[cid]
+                    m_umls = m.get('umls_bridge', False)
+                    ex_umls = existing.get('umls_bridge', False)
+                    # Prefer UMLS-bridged over non-bridged; prefer higher score
+                    # when provenance is equal.
+                    if m_umls and not ex_umls:
+                        seen[cid] = m
+                    elif not m_umls and ex_umls:
+                        pass  # keep existing UMLS-bridged match
+                    elif m.get('similarity_score', 0) > existing.get('similarity_score', 0):
                         seen[cid] = m
 
-            # Phase 2: deduplicate by case-normalized name.  Neo4j stores
-            # "Chest X-ray", "chest x-ray", "cHest X-RAy" as separate
-            # concept nodes.  Keeping only the highest-scoring variant per
-            # normalized name prevents near-duplicates from eating slots.
+            # Phase 2: deduplicate by case-normalized name.  Same provenance
+            # preference as Phase 1: UMLS-bridged > direct, then higher score.
             name_deduped: Dict[str, Dict[str, Any]] = {}
             for m in seen.values():
                 name_key = re.sub(
                     r'[^a-z0-9\s]', '',
                     m.get('name', '').lower(),
                 ).strip()
-                if name_key not in name_deduped or m.get('similarity_score', 0) > name_deduped[name_key].get('similarity_score', 0):
+                if name_key not in name_deduped:
+                    name_deduped[name_key] = m
+                    continue
+                existing = name_deduped[name_key]
+                m_umls = m.get('umls_bridge', False)
+                ex_umls = existing.get('umls_bridge', False)
+                if m_umls and not ex_umls:
+                    name_deduped[name_key] = m
+                elif not m_umls and ex_umls:
+                    pass  # keep existing UMLS-bridged match
+                elif m.get('similarity_score', 0) > existing.get('similarity_score', 0):
                     name_deduped[name_key] = m
 
             merged = sorted(
                 name_deduped.values(),
-                key=lambda m: m.get('similarity_score', 0),
-                reverse=True
+                key=lambda m: (
+                    m.get('umls_bridge', False),
+                    m.get('similarity_score', 0),
+                ),
+                reverse=True,
             )[:self._semantic_max_results]
 
             # ── 5. Annotate with generic/specific classification ──────
@@ -701,19 +1024,114 @@ class QueryDecomposer:
 
             specific_count = sum(1 for m in merged if not m['is_generic'])
             generic_count = sum(1 for m in merged if m['is_generic'])
+            umls_bridged_count = sum(1 for m in merged if m.get('umls_bridge'))
 
+            _elapsed = (time.monotonic() - _t0) * 1000
             logger.info(
                 f"Multi-phrase semantic search: {len(search_phrases)} phrases "
                 f"→ {sum(len(ml) for ml in all_match_lists)} raw matches "
                 f"→ {len(seen)} by-id → {len(name_deduped)} by-name "
                 f"→ {len(merged)} final "
-                f"({specific_count} specific, {generic_count} generic)"
+                f"({specific_count} specific, {generic_count} generic, "
+                f"{umls_bridged_count} umls-bridged) "
+                f"in {_elapsed:.0f}ms"
             )
 
             return merged
         except Exception as e:
             logger.warning(f"Semantic matching failed, falling back to lexical only: {e}")
             return []
+
+    async def _expand_domain_abbreviations(
+        self, phrases: List[str]
+    ) -> List[str]:
+        """Expand phrases using DomainAbbreviation nodes in Neo4j.
+
+        Single-pass bidirectional lookup: each original phrase is looked up
+        once. Discovered expansions are interleaved breadth-first after
+        their trigger phrase so critical terms survive the _MAX_PHRASES cap.
+
+        Single-pass is intentional — the seed data uses canonical forms so
+        every variant maps directly to the canonical term in one hop.
+        Multi-hop chains are avoided by design: e.g. all healthcare-worker
+        variants point to "HCP", not through an intermediate like
+        "healthcare personnel". The UMLS bridge handles clinical vocabulary
+        mapping separately in _find_semantic_matches.
+        """
+        if not self._neo4j_client:
+            return phrases
+
+        phrase_lowers = [p.lower().strip() for p in phrases]
+        seen: Set[str] = set(phrase_lowers)
+
+        try:
+            rows = await self._neo4j_client.execute_query(
+                """MATCH (d:DomainAbbreviation)
+                   WHERE d.abbreviation_lower IN $lowers
+                      OR d.expanded_form_lower IN $lowers
+                   RETURN d.abbreviation AS abbr,
+                          d.expanded_form AS exp,
+                          d.abbreviation_lower AS abbr_lower,
+                          d.expanded_form_lower AS exp_lower""",
+                {"lowers": phrase_lowers},
+            )
+        except Exception:
+            return phrases
+
+        # Build map: phrase_lower → set of new expansion candidates.
+        expansion_map: Dict[str, set] = {}
+        for row in (rows or []):
+            abbr = row.get("abbr")
+            exp = row.get("exp")
+            abbr_lower = row.get("abbr_lower", "").lower().strip()
+            exp_lower = row.get("exp_lower", "").lower().strip()
+            for phrase_lower in phrase_lowers:
+                if phrase_lower == abbr_lower and exp and exp_lower not in seen:
+                    expansion_map.setdefault(phrase_lower, set()).add(exp)
+                    seen.add(exp_lower)
+                if phrase_lower == exp_lower and abbr and abbr_lower not in seen:
+                    expansion_map.setdefault(phrase_lower, set()).add(abbr)
+                    seen.add(abbr_lower)
+
+        if not expansion_map:
+            return phrases
+
+        # Breadth-first interleaving: each trigger gets ONE expansion per
+        # round so that later triggers (e.g. "work restrictions") get their
+        # expansions before earlier triggers exhaust all their variants.
+        remaining: Dict[str, set] = {
+            k: set(v) for k, v in expansion_map.items()
+        }
+        expanded: List[str] = list(phrases)
+        inserted: Set[str] = set()
+        while remaining:
+            this_round: List[str] = []
+            added = False
+            for phrase in expanded:
+                this_round.append(phrase)
+                phrase_lower = phrase.lower().strip()
+                cands = remaining.get(phrase_lower)
+                if not cands:
+                    continue
+                cand = sorted(cands)[0]
+                cands.discard(cand)
+                if not cands:
+                    del remaining[phrase_lower]
+                c_lower = cand.lower().strip()
+                if c_lower not in inserted:
+                    inserted.add(c_lower)
+                    this_round.append(cand)
+                    added = True
+            expanded = this_round
+            if not added:
+                break
+
+        if len(expanded) > len(phrases):
+            logger.debug(
+                f"Domain abbreviation expansion: "
+                f"{len(phrases)} → {len(expanded)} phrases"
+            )
+        return expanded
 
     def _process_concept_results(
         self, 

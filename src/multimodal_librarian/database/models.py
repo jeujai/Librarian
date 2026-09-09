@@ -280,7 +280,7 @@ class BridgeChunkDB(Base):
     content = Column(Text, nullable=False)
     source_chunk_id = Column(UUID(as_uuid=True), ForeignKey('knowledge_chunks.id'), nullable=False)
     target_chunk_id = Column(String(100))  # Reference to another chunk
-    generation_method = Column(String(50), default='gemini_25_flash')
+    generation_method = Column(String(50), default='deepseek_v4_flash')
     gap_analysis = Column(JSON)
     validation_result = Column(JSON)
     confidence_score = Column(Float, default=0.0)

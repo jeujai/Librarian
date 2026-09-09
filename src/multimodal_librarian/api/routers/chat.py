@@ -955,7 +955,9 @@ async def handle_chat_message(message_data: dict, connection_id: str, manager: C
                 'status report', 'system status', 'throughput report',
                 'enrichment report', 'failed uploads', 'system commands',
                 'processing status', 'document stats', 'pipeline status',
-                'queue status'
+                'queue status',
+                'instrumentation', 'show me available', 'what reports',
+                'admin tools', 'what jobs', 'upload telemetry',
             ]
             if any(kw in quick_check for kw in system_intent_keywords):
                 try:

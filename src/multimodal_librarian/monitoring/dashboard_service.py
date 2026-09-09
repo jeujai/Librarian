@@ -569,7 +569,7 @@ class DashboardService:
         elif query == "costs.by_provider":
             return {
                 "data_points": [
-                    {"label": "Gemini", "value": 8.50},
+                    {"label": "DeepSeek", "value": 8.50},
                     {"label": "OpenAI", "value": 3.20},
                     {"label": "Anthropic", "value": 0.75}
                 ],

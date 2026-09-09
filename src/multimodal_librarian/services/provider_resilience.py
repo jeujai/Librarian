@@ -2,7 +2,7 @@
 Provider Resilience - Provider-agnostic resilience primitives
 
 This module provides provider-agnostic resilience building blocks used by
-AI service implementations (Gemini, DeepSeek, and future providers) to
+AI service implementations (DeepSeek, Ollama, and future providers) to
 handle failure modes uniformly.
 
 Includes:
@@ -18,9 +18,9 @@ Includes:
   auto-disables streaming when the failure rate exceeds a threshold
 
 This module is a relocation of the equivalent primitives previously defined
-at the top of ``services/ai_service.py`` (as ``GeminiErrorType``,
-``GeminiError``, ``GeminiCircuitBreaker``, etc.). Behavior is preserved
-bit-for-bit; only the type names are generalized.
+at the top of ``services/ai_service.py`` (as provider-specific error types,
+circuit breakers, etc.). Behavior is preserved bit-for-bit; only the type
+names are generalized.
 """
 
 import asyncio
@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 class ErrorType(Enum):
-    """Types of errors that can occur with Gemini API."""
+    """Types of errors that can occur with an AI provider API."""
     TIMEOUT = "timeout"
     RATE_LIMIT = "rate_limit"
     INVALID_RESPONSE = "invalid_response"
@@ -90,7 +90,7 @@ USER_FRIENDLY_ERROR_MESSAGES: Dict[ErrorType, str] = {
 
 def classify_error(error: Exception) -> ErrorType:
     """
-    Classify an exception into a GeminiErrorType.
+    Classify an exception into an ``ErrorType``.
     
     Args:
         error: The exception to classify
@@ -203,7 +203,7 @@ def get_user_friendly_message(error: Exception) -> str:
 
 @dataclass
 class ProviderError:
-    """Structured error information for Gemini API errors."""
+    """Structured error information for AI provider errors."""
     error_type: ErrorType
     user_message: str
     technical_message: str
@@ -212,7 +212,7 @@ class ProviderError:
     
     @classmethod
     def from_exception(cls, error: Exception) -> "ProviderError":
-        """Create a GeminiError from an exception."""
+        """Create a ``ProviderError`` from an exception."""
         error_type = classify_error(error)
         user_message = USER_FRIENDLY_ERROR_MESSAGES[error_type]
         
@@ -241,11 +241,11 @@ class ProviderError:
 
 
 # =============================================================================
-# Circuit Breaker for Gemini API
+# Circuit Breaker for AI Providers
 # =============================================================================
 
 class CircuitState(Enum):
-    """Circuit breaker states for Gemini API."""
+    """Circuit breaker states for an AI provider."""
     CLOSED = "closed"      # Normal operation
     OPEN = "open"          # Blocking requests
     HALF_OPEN = "half_open"  # Testing recovery
@@ -253,7 +253,7 @@ class CircuitState(Enum):
 
 @dataclass
 class CircuitBreakerConfig:
-    """Configuration for Gemini circuit breaker."""
+    """Configuration for the provider circuit breaker."""
     failure_threshold: int = 5  # Failures before opening
     reset_timeout_seconds: float = 60.0  # Time before half-open
     half_open_max_calls: int = 3  # Calls allowed in half-open state
@@ -261,7 +261,7 @@ class CircuitBreakerConfig:
 
 class CircuitBreaker:
     """
-    Circuit breaker for Gemini API calls.
+    Circuit breaker for AI provider calls.
     
     Prevents cascade failures by temporarily blocking requests
     when the API is experiencing issues.
@@ -283,7 +283,7 @@ class CircuitBreaker:
         self._lock = asyncio.Lock()
         
         logger.info(
-            f"GeminiCircuitBreaker initialized: "
+            f"CircuitBreaker initialized: "
             f"threshold={self.config.failure_threshold}, "
             f"reset_timeout={self.config.reset_timeout_seconds}s"
         )
@@ -306,7 +306,7 @@ class CircuitBreaker:
                 self._state = CircuitState.HALF_OPEN
                 self._half_open_calls = 0
                 self._last_state_change = time.time()
-                logger.info("GeminiCircuitBreaker: OPEN -> HALF_OPEN (testing recovery)")
+                logger.info("CircuitBreaker: OPEN -> HALF_OPEN (testing recovery)")
     
     async def allow_request(self) -> bool:
         """
@@ -340,7 +340,7 @@ class CircuitBreaker:
                 self._state = CircuitState.CLOSED
                 self._failure_count = 0
                 self._last_state_change = time.time()
-                logger.info("GeminiCircuitBreaker: HALF_OPEN -> CLOSED (recovered)")
+                logger.info("CircuitBreaker: HALF_OPEN -> CLOSED (recovered)")
     
     async def record_failure(self) -> None:
         """Record a failed API call."""
@@ -352,7 +352,7 @@ class CircuitBreaker:
                 # Failure in half-open state reopens the circuit
                 self._state = CircuitState.OPEN
                 self._last_state_change = time.time()
-                logger.warning("GeminiCircuitBreaker: HALF_OPEN -> OPEN (failure during recovery)")
+                logger.warning("CircuitBreaker: HALF_OPEN -> OPEN (failure during recovery)")
                 return
             
             if self._state == CircuitState.CLOSED:
@@ -360,7 +360,7 @@ class CircuitBreaker:
                     self._state = CircuitState.OPEN
                     self._last_state_change = time.time()
                     logger.warning(
-                        f"GeminiCircuitBreaker: CLOSED -> OPEN "
+                        f"CircuitBreaker: CLOSED -> OPEN "
                         f"({self._failure_count} failures)"
                     )
     
@@ -387,7 +387,7 @@ class CircuitBreaker:
         """
         if not await self.allow_request():
             raise CircuitBreakerOpenError(
-                "Gemini API circuit breaker is open. Please try again later."
+                "AI provider circuit breaker is open. Please try again later."
             )
         
         try:
@@ -422,7 +422,7 @@ class CircuitBreaker:
             self._last_failure_time = None
             self._last_state_change = time.time()
             self._half_open_calls = 0
-            logger.info("GeminiCircuitBreaker reset to CLOSED")
+            logger.info("CircuitBreaker reset to CLOSED")
 
 
 class CircuitBreakerOpenError(Exception):

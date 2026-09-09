@@ -14,6 +14,7 @@ hard timeouts to prevent blocking the event loop.
 """
 
 import asyncio
+import os
 import time
 from abc import ABC, abstractmethod
 from datetime import datetime
@@ -442,11 +443,9 @@ class AIServiceHealthCheck(ComponentHealthCheck):
             ai_service = _ai_service
             
             # Check if API keys are configured (without making API calls)
-            # Only Gemini is supported - OpenAI has been removed
-            has_google = bool(getattr(self.settings, 'google_api_key', None) or 
-                            getattr(self.settings, 'gemini_api_key', None))
-            
-            any_provider_configured = has_google
+            has_deepseek = bool(os.environ.get("DEEPSEEK_API_KEY"))
+
+            any_provider_configured = has_deepseek
             
             response_time = (time.time() - start_time) * 1000
             
@@ -462,7 +461,7 @@ class AIServiceHealthCheck(ComponentHealthCheck):
                 "details": {
                     "ai_service": "initialized",
                     "providers_configured": {
-                        "gemini": has_google
+                        "deepseek": has_deepseek
                     },
                     "any_provider_available": any_provider_configured,
                     "note": "Health check does not make API calls to avoid blocking"
