@@ -333,9 +333,7 @@ class ConversationKnowledgeService:
                     continue
                 seen_names.add(name)
 
-                concept_id = str(
-                    uuid_module.uuid5(uuid_module.NAMESPACE_URL, f"citation:{name}")
-                )
+                concept_id = f"public:{name.lower()}"
                 citation_node = ConceptNode(
                     concept_id=concept_id,
                     concept_name=name,
@@ -348,9 +346,9 @@ class ConversationKnowledgeService:
                 # CITES edge from each response concept to the citation
                 for resp in response_concepts:
                     edge = RelationshipEdge(
-                        subject_concept=resp.concept_name,
+                        subject_concept=resp.concept_id,
                         predicate="CITES",
-                        object_concept=name,
+                        object_concept=citation_node.concept_id,
                         confidence=min(resp.confidence, 0.8),
                         relationship_type=RelationshipType.ASSOCIATIVE,
                     )
@@ -368,16 +366,16 @@ class ConversationKnowledgeService:
 
     async def _match_citation_to_existing_source(
         self, citation_name: str
-    ) -> Optional[str]:
+    ) -> Optional[Dict[str, Any]]:
         """Check if a citation matches an existing knowledge source.
 
         Performs a case-insensitive lookup against the ``title`` column
         of ``multimodal_librarian.knowledge_sources``.
 
         Returns:
-            The source ``id`` (as a string) if found, ``None`` otherwise.
-            Also returns ``None`` if the DB lookup fails (graceful
-            degradation — logged as a warning).
+            A metadata dict (``id``/``title``/``source_type``/``owner_id``)
+            if found, ``None`` otherwise. Also returns ``None`` if the DB
+            lookup fails (graceful degradation — logged as a warning).
         """
         from ..database.connection import get_async_connection
 
@@ -385,12 +383,20 @@ class ConversationKnowledgeService:
             conn = await get_async_connection()
             try:
                 row = await conn.fetchrow(
-                    "SELECT id FROM multimodal_librarian.knowledge_sources "
+                    "SELECT id, title, source_type::text AS source_type, user_id "
+                    "FROM multimodal_librarian.knowledge_sources "
                     "WHERE LOWER(title) = LOWER($1) LIMIT 1",
                     citation_name,
                 )
                 if row:
-                    return str(row["id"])
+                    return {
+                        "id": str(row["id"]),
+                        "title": row["title"],
+                        "source_type": row["source_type"],
+                        "owner_id": (
+                            str(row["user_id"]) if row["user_id"] else None
+                        ),
+                    }
                 return None
             finally:
                 await conn.close()
@@ -401,6 +407,51 @@ class ConversationKnowledgeService:
                 exc_info=True,
             )
             return None
+
+    async def _resolve_document_endpoints(
+        self, source_meta_by_id: Dict[str, Dict[str, Any]]
+    ) -> Dict[str, str]:
+        """MERGE :Document nodes for cited sources; return {document_id: elementId}.
+
+        Idempotent — creates the node on first citation for sources ingested
+        before this feature existed, and refreshes the title for existing nodes.
+        """
+        if not source_meta_by_id or not self._neo4j_client:
+            return {}
+
+        rows = [
+            {
+                "document_id": sid,
+                "title": meta["title"],
+                "source_type": meta["source_type"],
+                "owner_id": meta.get("owner_id"),
+            }
+            for sid, meta in source_meta_by_id.items()
+        ]
+
+        try:
+            result = await self._neo4j_client.execute_write_query(
+                """
+                UNWIND $rows AS row
+                MERGE (d:Document {document_id: row.document_id})
+                ON CREATE SET d.title = row.title,
+                              d.source_type = row.source_type,
+                              d.owner_id = row.owner_id,
+                              d.created_at = datetime()
+                ON MATCH SET d.title = row.title
+                RETURN d.document_id AS document_id,
+                       elementId(d) AS node_id
+                """,
+                {"rows": rows},
+            )
+        except Exception as e:
+            logger.warning(":Document resolution failed: %s", e)
+            return {}
+
+        return {
+            rec["document_id"]: rec["node_id"]
+            for rec in (result or [])
+        }
 
     async def _extract_concepts_segment_aware(
         self, chunk: KnowledgeChunk
@@ -458,9 +509,9 @@ class ConversationKnowledgeService:
             for resp_concept in response_concepts:
                 for prompt_concept in prompt_concepts:
                     edge = RelationshipEdge(
-                        subject_concept=resp_concept.concept_name,
+                        subject_concept=resp_concept.concept_id,
                         predicate="PROMPTED_BY",
-                        object_concept=prompt_concept.concept_name,
+                        object_concept=prompt_concept.concept_id,
                         confidence=min(
                             resp_concept.confidence,
                             prompt_concept.confidence,
@@ -554,6 +605,33 @@ class ConversationKnowledgeService:
                     f"Persisted knowledge_source {source_id} "
                     f"for conversation {thread_id}"
                 )
+
+                # Materialize a :Document node so conversation citations can
+                # trace back to this source (and it appears as a first-class
+                # source node in the KG Explorer).
+                if self._neo4j_client:
+                    try:
+                        await self._neo4j_client.execute_write_query(
+                            """
+                            MERGE (d:Document {document_id: $document_id})
+                            ON CREATE SET d.title = $title,
+                                          d.source_type = 'CONVERSATION',
+                                          d.owner_id = $owner_id,
+                                          d.created_at = datetime()
+                            ON MATCH SET d.title = $title
+                            RETURN elementId(d) AS node_id
+                            """,
+                            {
+                                "document_id": str(source_id),
+                                "title": title,
+                                "owner_id": str(user_uuid),
+                            },
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "Conversation :Document materialization failed: %s",
+                            e,
+                        )
             finally:
                 await conn.close()
         except Exception as e:
@@ -665,24 +743,27 @@ class ConversationKnowledgeService:
                 resp_concepts if resp_concepts else list(concepts)
             )
 
+            source_meta_by_id: Dict[str, Dict[str, Any]] = {}
+
             for seg in response_segments:
                 cite_concepts, cite_rels = self._extract_source_citations(
                     seg["content"], resp_concepts_for_cite, chunk.id,
                 )
                 # For each citation, check if it matches an existing source
                 for cite_node in cite_concepts:
-                    source_id = await self._match_citation_to_existing_source(
+                    meta = await self._match_citation_to_existing_source(
                         cite_node.concept_name
                     )
-                    if source_id:
-                        derived_edge = RelationshipEdge(
-                            subject_concept=cite_node.concept_name,
-                            predicate="DERIVED_FROM",
-                            object_concept=source_id,
+                    if meta:
+                        source_meta_by_id[meta["id"]] = meta
+                        ref_edge = RelationshipEdge(
+                            subject_concept=cite_node.concept_id,
+                            predicate="REFERENCES",
+                            object_concept=meta["id"],
                             confidence=cite_node.confidence,
                             relationship_type=RelationshipType.ASSOCIATIVE,
                         )
-                        cite_rels.append(derived_edge)
+                        cite_rels.append(ref_edge)
                     cite_node.source_document = thread_id
 
                 concepts.extend(cite_concepts)
@@ -722,6 +803,14 @@ class ConversationKnowledgeService:
                     concepts, thread_id, now_ts
                 )
                 total_concepts += len(concept_id_map)
+
+                # Resolve :Document endpoints for REFERENCES edges so the
+                # generic relationship persist can find them by elementId.
+                if source_meta_by_id:
+                    doc_map = await self._resolve_document_endpoints(
+                        source_meta_by_id
+                    )
+                    concept_id_map.update(doc_map)
 
                 # Persist relationships to Neo4j
                 if relationships:
@@ -871,7 +960,6 @@ class ConversationKnowledgeService:
         # No source_chunks/source_document properties written.
         rows = [
             {
-                "concept_id": c.concept_id,
                 "name": c.concept_name,
                 "type": c.concept_type,
                 "confidence": c.confidence,
@@ -897,12 +985,17 @@ class ConversationKnowledgeService:
         result = await self._neo4j_client.execute_write_query(
             """
             UNWIND $rows AS row
-            MERGE (c:Concept {concept_id: row.concept_id})
+            MERGE (c:Concept {name_lower: toLower(row.name), scope: 'public'})
             ON CREATE SET c.name = row.name,
                           c.type = row.type,
                           c.concept_type = row.type,
                           c.confidence = row.confidence,
                           c.name_lower = toLower(row.name),
+                          c.scope = 'public',
+                          c.bridge_status = 'emergent',
+                          c.provenance = 'corpus-mined',
+                          c.owner_id = NULL,
+                          c.concept_id = 'public:' + toLower(row.name),
                           c.created_at = row.created_at,
                           c.updated_at = row.updated_at,
                           c.embedding = row.embedding
@@ -910,12 +1003,16 @@ class ConversationKnowledgeService:
                          c.concept_type = CASE WHEN c.concept_type IS NULL
                                           THEN row.type
                                           ELSE c.concept_type END,
+                         c.name_lower = CASE WHEN c.name_lower IS NULL
+                                        THEN toLower(row.name)
+                                        ELSE c.name_lower END,
                          c.embedding = CASE
                            WHEN row.embedding IS NOT NULL
                            THEN row.embedding
                            ELSE c.embedding
                          END
             RETURN c.concept_id AS concept_id,
+                   c.name_lower AS name_lower,
                    elementId(c) AS node_id
             """,
             {"rows": rows},
@@ -926,9 +1023,14 @@ class ConversationKnowledgeService:
             len(result) if result else 0,
         )
 
+        # Key by both concept_id (pattern/embedding extractors) and name_lower
+        # (ConceptNet-validator edges reference lowercased ConceptNet names).
         concept_id_map: Dict[str, str] = {}
         for rec in result or []:
-            concept_id_map[rec["concept_id"]] = rec["node_id"]
+            nid = rec["node_id"]
+            concept_id_map[rec["concept_id"]] = nid
+            if rec.get("name_lower"):
+                concept_id_map[rec["name_lower"]] = nid
 
         # --- Step 3: MERGE EXTRACTED_FROM relationships ---
         ef_rows = []
@@ -938,7 +1040,8 @@ class ConversationKnowledgeService:
             for chunk_id in (c.source_chunks or []):
                 if chunk_id:
                     ef_rows.append({
-                        "concept_id": c.concept_id,
+                        "name": c.concept_name,
+                        "concept_type": c.concept_type,
                         "chunk_id": chunk_id,
                         "created_at": now_ts,
                     })
@@ -949,14 +1052,16 @@ class ConversationKnowledgeService:
                     """
                     UNWIND $rows AS row
                     MATCH (c:Concept {
-                        concept_id: row.concept_id
+                        name_lower: toLower(row.name),
+                        scope: 'public'
                     })
                     MATCH (ch:Chunk {
                         chunk_id: row.chunk_id
                     })
                     MERGE (c)-[r:EXTRACTED_FROM]->(ch)
                     ON CREATE SET
-                        r.created_at = row.created_at
+                        r.created_at = row.created_at,
+                        r.concept_type = row.concept_type
                     RETURN count(r) AS cnt
                     """,
                     {"rows": ef_rows},

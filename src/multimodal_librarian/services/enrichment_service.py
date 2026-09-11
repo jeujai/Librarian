@@ -1098,10 +1098,6 @@ class EnrichmentService:
                 rows_with_emb = []
                 for name in missing:
                     row = {
-                        'concept_id': (
-                            f"conceptnet_"
-                            f"{name.lower().replace(' ', '_')}"
-                        ),
                         'name': name,
                         'type': 'EXTERNAL',
                         'confidence': name_weights.get(name, 0.0),
@@ -1134,13 +1130,20 @@ class EnrichmentService:
                                     f"""
                                     UNWIND $rows AS row
                                     MERGE (c:Concept
-                                        {{concept_id: row.concept_id}})
+                                        {{name_lower: toLower(row.name),
+                                          scope: 'public'}})
                                     ON CREATE SET
                                         c.name = row.name,
                                         c.type = row.type,
                                         c.concept_type = row.type,
                                         c.confidence = row.confidence,
                                         c.name_lower = toLower(row.name),
+                                        c.scope = 'public',
+                                        c.bridge_status = 'emergent',
+                                        c.provenance = 'corpus-mined',
+                                        c.owner_id = NULL,
+                                        c.concept_id =
+                                            'public:' + toLower(row.name),
                                         c.created_at = row.created_at,
                                         c.updated_at =
                                             row.updated_at{emb_set}
@@ -1148,7 +1151,10 @@ class EnrichmentService:
                                         c.updated_at = row.updated_at,
                                         c.concept_type = CASE WHEN c.concept_type IS NULL
                                                          THEN row.type
-                                                         ELSE c.concept_type END
+                                                         ELSE c.concept_type END,
+                                        c.name_lower = CASE WHEN c.name_lower IS NULL
+                                                       THEN toLower(row.name)
+                                                       ELSE c.name_lower END
                                     RETURN row.name AS name,
                                            elementId(c) AS node_id
                                     """,
@@ -1331,7 +1337,6 @@ class EnrichmentService:
                 now_ts = datetime.utcnow().isoformat()
                 for name in missing_names:
                     row = {
-                        'concept_id': f"conceptnet_{name.lower().replace(' ', '_')}",
                         'name': name,
                         'type': 'EXTERNAL',
                         'confidence': name_weights.get(name, 0.0),
@@ -1353,17 +1358,28 @@ class EnrichmentService:
                         res = await self.kg_service.client.execute_query(
                             f"""
                             UNWIND $rows AS row
-                            MERGE (c:Concept {{concept_id: row.concept_id}})
+                            MERGE (c:Concept
+                                {{name_lower: toLower(row.name),
+                                  scope: 'public'}})
                             ON CREATE SET c.name = row.name, c.type = row.type,
                                           c.concept_type = row.type,
                                           c.confidence = row.confidence,
                                           c.name_lower = toLower(row.name),
+                                          c.scope = 'public',
+                                          c.bridge_status = 'emergent',
+                                          c.provenance = 'corpus-mined',
+                                          c.owner_id = NULL,
+                                          c.concept_id =
+                                              'public:' + toLower(row.name),
                                           c.created_at = row.created_at,
                                           c.updated_at = row.updated_at{emb_set}
                             ON MATCH SET c.updated_at = row.updated_at,
                                          c.concept_type = CASE WHEN c.concept_type IS NULL
                                                           THEN row.type
-                                                          ELSE c.concept_type END
+                                                          ELSE c.concept_type END,
+                                         c.name_lower = CASE WHEN c.name_lower IS NULL
+                                                        THEN toLower(row.name)
+                                                        ELSE c.name_lower END
                             RETURN row.name AS name, elementId(c) AS node_id
                             """,
                             {'rows': rows}

@@ -480,6 +480,4 @@ async def wait_for_model(model_name: str, timeout: float = 60.0) -> Optional[Any
             return optimizer.get_model(model_name)
         await asyncio.sleep(0.1)
     
-    return None        await asyncio.sleep(0.1)
-    
     return None

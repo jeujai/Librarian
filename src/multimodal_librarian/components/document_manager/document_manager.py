@@ -819,11 +819,17 @@ class DocumentManager:
                 deleted_chunks = res_chunks[0]["deleted_chunks"] if res_chunks else 0
 
                 # Step 3: Delete orphaned Concepts (no remaining EXTRACTED_FROM and no SAME_AS)
+                # Phase 0 safety net: only public corpus-mined emergent concepts are
+                # eligible; canonical/seed/llm-bootstrap/materialized + all private
+                # concepts are preserved (deleted only via their specific path).
                 res_concepts = await kg.client.execute_write_query(
                     """
                     MATCH (c:Concept)
                     WHERE NOT EXISTS { MATCH (c)-[:EXTRACTED_FROM]->() }
                       AND NOT EXISTS { MATCH (c)<-[:SAME_AS]-() }
+                      AND c.scope = 'public'
+                      AND c.bridge_status <> 'canonical'
+                      AND c.provenance = 'corpus-mined'
                     DETACH DELETE c
                     RETURN count(c) AS deleted_concepts
                     """,

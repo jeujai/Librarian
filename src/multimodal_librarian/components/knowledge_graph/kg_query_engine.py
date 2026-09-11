@@ -850,9 +850,10 @@ class KnowledgeGraphQueryEngine:
         WITH coalesce(local, any) AS focus
         WHERE focus IS NOT NULL
         WITH focus LIMIT 1
-        OPTIONAL MATCH (focus)-[]->(neighbor:Concept)
+        OPTIONAL MATCH (focus)-[]->(neighbor)
+        WHERE neighbor:Concept OR neighbor:Document
         WITH focus, neighbor
-        ORDER BY neighbor.name
+        ORDER BY coalesce(neighbor.name, neighbor.title)
         LIMIT $max_nodes
         WITH focus, collect(DISTINCT neighbor) AS neighbors
         WITH [focus] + neighbors AS all_nodes
@@ -862,10 +863,11 @@ class KnowledgeGraphQueryEngine:
         WITH n, size([(n)-[]->(:Concept) | 1]) AS degree
         OPTIONAL MATCH (n)-[:EXTRACTED_FROM]->(nch:Chunk)
         WITH n, degree, collect(DISTINCT nch.source_id) AS source_ids
-        RETURN n.name AS name,
+        RETURN coalesce(n.name, n.title) AS name,
                source_ids,
-               n.type AS concept_type,
-               degree
+               coalesce(n.type, 'DOCUMENT') AS concept_type,
+               degree,
+               n.document_id AS document_id
         """
         node_results = await client.execute_query(
             nodes_query,
@@ -879,7 +881,7 @@ class KnowledgeGraphQueryEngine:
         nodes = [
             {
                 "name": r["name"],
-                "source_document": r["source_ids"][0] if r.get("source_ids") else None,
+                "source_document": r["source_ids"][0] if r.get("source_ids") else r.get("document_id"),
                 "concept_type": r.get("concept_type"),
                 "degree": int(r["degree"]),
             }
@@ -888,10 +890,11 @@ class KnowledgeGraphQueryEngine:
 
         # Step 2: Get edges between the collected nodes.
         edges_query = """
-        MATCH (a:Concept)-[r]->(b:Concept)
-        WHERE a.name IN $node_names AND b.name IN $node_names
-        RETURN DISTINCT a.name AS source,
-                        b.name AS target,
+        MATCH (a)-[r]->(b)
+        WHERE coalesce(a.name, a.title) IN $node_names
+          AND coalesce(b.name, b.title) IN $node_names
+        RETURN DISTINCT coalesce(a.name, a.title) AS source,
+                        coalesce(b.name, b.title) AS target,
                         type(r) AS relationship_type
         """
         edge_results = await client.execute_query(

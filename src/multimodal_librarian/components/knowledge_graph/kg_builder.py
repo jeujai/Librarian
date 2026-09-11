@@ -452,7 +452,7 @@ class ConceptExtractor:
                 continue
             normalized = self._normalize_concept_name(name)
             concept = ConceptNode(
-                concept_id=f"{ctype.lower()}_{normalized}",
+                concept_id=f"public:{name.lower()}",
                 concept_name=name,
                 concept_type=ctype,
                 confidence=base_confidence,
@@ -634,7 +634,7 @@ class ConceptExtractor:
 
                     # Normalize concept name
                     normalized_name = self._normalize_concept_name(concept_name)
-                    concept_id = f"{concept_type.lower()}_{normalized_name}"
+                    concept_id = f"public:{concept_name.lower()}"
 
                     if concept_id not in concept_id_map:
                         # Determine base confidence by pattern type
@@ -674,7 +674,7 @@ class ConceptExtractor:
         pmi_concepts = self._extract_collocations_pmi(text)
         for pmi_concept in pmi_concepts:
             normalized_name = self._normalize_concept_name(pmi_concept.concept_name)
-            pmi_id = f"multi_word_{normalized_name}"
+            pmi_id = f"public:{pmi_concept.concept_name.lower()}"
             if pmi_id not in concept_id_map:
                 concepts.append(pmi_concept)
                 concept_id_map[pmi_id] = pmi_concept
@@ -759,7 +759,7 @@ class ConceptExtractor:
                 continue
             
             normalized = self._normalize_concept_name(name)
-            concept_id = f"{label.lower()}_{normalized}"
+            concept_id = f"public:{name.lower()}"
             if concept_id in seen:
                 continue
             seen.add(concept_id)
@@ -823,7 +823,7 @@ class ConceptExtractor:
             if name not in umls_map:
                 continue
             normalized = self._normalize_concept_name(name)
-            concept_id = f"umls_{normalized}"
+            concept_id = f"public:{name.lower()}"
             if concept_id in seen:
                 continue
             seen.add(concept_id)
@@ -871,10 +871,13 @@ class ConceptExtractor:
         umls_concepts, _umls_failed = umls_result
         regex_concepts = self.extract_concepts_regex(text)
 
-        # Merge: index by normalized name, keep higher confidence.
+        # Merge: index by raw name_lower (case-normalized surface form), keep
+        # higher confidence.  Identity is (name_lower, scope), not the stopword
+        # slug, so distinct senses ("work restrictions" vs "restrictions for
+        # work") are not over-merged.
         merged: Dict[str, ConceptNode] = {}
         for concept in ner_concepts + regex_concepts + ollama_concepts + umls_concepts:
-            key = self._normalize_concept_name(concept.concept_name)
+            key = concept.concept_name.lower()
             existing = merged.get(key)
             if existing is None:
                 merged[key] = concept
@@ -911,7 +914,7 @@ class ConceptExtractor:
                     definition = match.group(2).strip()
                     
                     if len(concept_name) > 2 and len(definition) > 5:
-                        concept_id = f"entity_{self._normalize_concept_name(concept_name)}"
+                        concept_id = f"public:{concept_name.lower()}"
                         concept = ConceptNode(
                             concept_id=concept_id,
                             concept_name=concept_name,
@@ -1144,7 +1147,7 @@ class ConceptExtractor:
                 phrase = f"{w1} {w2}"
                 confidence = base_confidence + min(0.1, (count - 2) * 0.02)
                 normalized = self._normalize_concept_name(phrase)
-                concept_id = f"multi_word_{normalized}"
+                concept_id = f"public:{phrase.lower()}"
 
                 concepts.append(ConceptNode(
                     concept_id=concept_id,
@@ -1190,15 +1193,9 @@ class ConceptExtractor:
             if acronym_text.upper() in self._acronym_stopwords:
                 continue
 
-            acronym_norm = self._normalize_concept_name(acronym_text)
-            expansion_norm = self._normalize_concept_name(expansion_text)
-
-            # Look up both forms across all concept type prefixes in the map
-            acronym_concept = concept_id_map.get(f"acronym_{acronym_norm}")
-            expansion_concept = (
-                concept_id_map.get(f"entity_{expansion_norm}")
-                or concept_id_map.get(f"multi_word_{expansion_norm}")
-            )
+            # Look up both forms by derived surrogate (public:<name_lower>)
+            acronym_concept = concept_id_map.get(f"public:{acronym_text.lower()}")
+            expansion_concept = concept_id_map.get(f"public:{expansion_text.lower()}")
 
             if acronym_concept is not None:
                 acronym_concept.add_alias(expansion_text)

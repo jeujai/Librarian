@@ -216,8 +216,8 @@ services:
 
   # Milvus vector database for embeddings
   milvus:
-    image: milvusdb/milvus:v2.3.4
-    user: "501:20"
+    image: milvusdb/milvus:v2.3.18
+    user: "501:0"
     command: [ "milvus", "run", "standalone" ]
     logging:
       driver: "json-file"
@@ -286,7 +286,7 @@ services:
 
   # MinIO for Milvus object storage
   minio:
-    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    image: minio/minio:RELEASE.2025-01-20T14-49-07Z
     user: "501:20"
     environment:
       - MINIO_ACCESS_KEY=minioadmin

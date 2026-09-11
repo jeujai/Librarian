@@ -135,6 +135,7 @@ class Neo4jClient:
         # Connection state
         self.driver: Optional[AsyncDriver] = None
         self._is_connected = False
+        self._loop = None  # Event loop the driver is bound to (reconnect on change)
         self._indexes_ensured = False  # Track if indexes have been created (skip on reconnect)
         self._last_health_check = 0
         self._health_check_interval = 30  # seconds
@@ -156,22 +157,31 @@ class Neo4jClient:
             ConnectionError: If connection cannot be established after retries
             ConfigurationError: If Neo4j configuration is invalid
         """
+        current_loop = asyncio.get_running_loop()
         if self._is_connected and self.driver:
-            logger.debug("Neo4j client already connected")
-            return
-        
+            if self._loop is current_loop:
+                logger.debug("Neo4j client already connected")
+                return
+            # The driver is bound to a stale event loop (a prior asyncio.run()
+            # that has since been destroyed). Rebuild it on the current loop.
+            logger.info(
+                "Neo4j client bound to a different event loop; reconnecting"
+            )
+            await self._close_stale_driver()
+
         self._connection_attempts = 0
-        
+
         while self._connection_attempts < self._max_connection_attempts:
             try:
                 self._connection_attempts += 1
-                
+
                 # Create and verify connection
                 self.driver = await self._create_connection_and_verify()
-                
+
                 self._is_connected = True
+                self._loop = current_loop
                 self._connection_attempts = 0
-                
+
                 logger.info(f"Successfully connected to Neo4j at {self.uri}")
                 logger.debug(f"Connection pool size: {self.max_connection_pool_size}")
                 
@@ -236,6 +246,7 @@ class Neo4jClient:
             await self.driver.close()
             self.driver = None
             self._is_connected = False
+            self._loop = None
             logger.info("Disconnected from Neo4j")
             
         except Exception as e:
@@ -280,11 +291,17 @@ class Neo4jClient:
             # Full-text index for query decomposition (KG-guided retrieval)
             "CREATE FULLTEXT INDEX concept_name_fulltext IF NOT EXISTS FOR (c:Concept) ON EACH [c.name]",
             # Standard indexes for performance
-            "CREATE INDEX concept_id_index IF NOT EXISTS FOR (c:Concept) ON (c.concept_id)",
+            # NOTE: no separate range index on c.concept_id — the unique
+            # constraint below (concept_id_unique) provides the backing index.
             "CREATE INDEX concept_source_document_index IF NOT EXISTS FOR (c:Concept) ON (c.source_document)",
             "CREATE INDEX concept_type_index IF NOT EXISTS FOR (c:Concept) ON (c.type)",
             # Case-insensitive lookup index (avoids toLower(c.name) full scans)
             "CREATE INDEX concept_name_lower IF NOT EXISTS FOR (c:Concept) ON (c.name_lower)",
+            # Emergent-concepts lifecycle/provenance/privacy range indexes
+            "CREATE INDEX concept_bridge_status IF NOT EXISTS FOR (c:Concept) ON (c.bridge_status)",
+            "CREATE INDEX concept_provenance IF NOT EXISTS FOR (c:Concept) ON (c.provenance)",
+            "CREATE INDEX concept_scope IF NOT EXISTS FOR (c:Concept) ON (c.scope)",
+            "CREATE INDEX concept_owner_id IF NOT EXISTS FOR (c:Concept) ON (c.owner_id)",
             "CREATE INDEX document_id_index IF NOT EXISTS FOR (d:Document) ON (d.document_id)",
             # Unique constraint for data integrity
             "CREATE CONSTRAINT concept_id_unique IF NOT EXISTS FOR (c:Concept) REQUIRE c.concept_id IS UNIQUE",
@@ -470,7 +487,49 @@ class Neo4jClient:
                 "Neo4j client not connected. Call connect() first.",
                 database_type="neo4j"
             )
-    
+
+    async def _close_stale_driver(self) -> None:
+        """Tear down a driver bound to a different (now-stale) event loop.
+
+        The driver and its pooled connections were created on a loop that has
+        since been destroyed (e.g. a prior ``asyncio.run()`` call). Closing
+        those connections from the current loop is best-effort; if the close
+        itself raises a cross-loop error, drop the reference and let the OS
+        reap the sockets.
+        """
+        self._stop_keepalive()
+        driver, self.driver = self.driver, None
+        self._is_connected = False
+        self._loop = None
+        if driver is not None:
+            try:
+                await driver.close()
+            except Exception as e:
+                logger.debug(f"Stale Neo4j driver close raised (ignored): {e}")
+
+    async def _ensure_bound_connection(self) -> None:
+        """Reconnect if the driver is bound to a different event loop.
+
+        The Neo4j async driver is single-loop-bound: its connection pool holds
+        futures tied to the loop that was running when ``connect()`` was
+        called. Reusing it from a fresh ``asyncio.run()`` loop raises "Future
+        attached to a different loop". Detect the loop change and rebuild the
+        driver on the current loop.
+        """
+        if not self._is_connected or not self.driver:
+            raise ConnectionError(
+                "Neo4j client not connected. Call connect() first.",
+                database_type="neo4j"
+            )
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        if self._loop is not loop:
+            logger.info("Neo4j client event loop changed; reconnecting")
+            await self._close_stale_driver()
+            await self.connect()
+
     def _start_keepalive(self) -> None:
         """Start background keepalive task to prevent TCP transport closing."""
         self._stop_keepalive()
@@ -862,17 +921,17 @@ class Neo4jClient:
             TimeoutError: If query execution times out
             ConnectionError: If database connection is lost
         """
-        self._validate_connection()
-        
+        await self._ensure_bound_connection()
+
         if not query or not isinstance(query, str):
             raise ValidationError(
                 "Query must be a non-empty string",
                 field_name="query",
                 field_value=query
             )
-        
+
         sanitized_params = self._sanitize_parameters(parameters)
-        
+
         try:
             return await self._execute_query_with_reconnect(
                 query, sanitized_params
@@ -929,17 +988,17 @@ class Neo4jClient:
             TransactionError: If transaction fails
             ConnectionError: If database connection is lost
         """
-        self._validate_connection()
-        
+        await self._ensure_bound_connection()
+
         if not query or not isinstance(query, str):
             raise ValidationError(
                 "Query must be a non-empty string",
                 field_name="query",
                 field_value=query
             )
-        
+
         sanitized_params = self._sanitize_parameters(parameters)
-        
+
         try:
             return await asyncio.wait_for(
                 self._execute_write_with_reconnect(
@@ -1069,8 +1128,8 @@ class Neo4jClient:
             # Both operations committed atomically
             ```
         """
-        self._validate_connection()
-        
+        await self._ensure_bound_connection()
+
         session = None
         transaction = None
         

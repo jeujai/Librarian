@@ -81,6 +81,10 @@ class ConceptNode:
     source_document: Optional[str] = None  # In-memory only – not persisted to Neo4j
     external_ids: Dict[str, str] = field(default_factory=dict)  # YAGO, ConceptNet IDs
     rationale: Optional[str] = None  # LLM semantic rationale; persisted on EXTRACTED_FROM edge
+    bridge_status: str = "emergent"  # "emergent" | "canonical" (lifecycle flag, NOT flipped by SAME_AS)
+    provenance: Optional[str] = None  # "seed" | "corpus-mined" | "llm-bootstrap" | "materialized-for-grounding"
+    scope: str = "private"  # "public" | "private" (write path forces "public" until Phase 6)
+    owner_id: Optional[str] = None  # owning user for private concepts; None for public/seed
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -93,9 +97,13 @@ class ConceptNode:
             'source_chunks': self.source_chunks,
             'source_document': self.source_document,
             'external_ids': self.external_ids,
-            'rationale': self.rationale
+            'rationale': self.rationale,
+            'bridge_status': self.bridge_status,
+            'provenance': self.provenance,
+            'scope': self.scope,
+            'owner_id': self.owner_id,
         }
-    
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'ConceptNode':
         """Create from dictionary for JSON deserialization."""
@@ -108,7 +116,11 @@ class ConceptNode:
             source_chunks=data.get('source_chunks', []),
             source_document=data.get('source_document'),
             external_ids=data.get('external_ids', {}),
-            rationale=data.get('rationale')
+            rationale=data.get('rationale'),
+            bridge_status=data.get('bridge_status', 'emergent'),
+            provenance=data.get('provenance'),
+            scope=data.get('scope', 'private'),
+            owner_id=data.get('owner_id'),
         )
     
     def validate(self) -> bool:

@@ -158,7 +158,7 @@ _ENRICH_CLINICAL_FILTER = """  AND (
     EXISTS { (c)-[:SAME_AS]->(:UMLSConcept) }
     OR EXISTS { (c)-[:SIMILAR_TO]->(:UMLSConcept) }
     OR (
-      c.concept_id STARTS WITH 'multi_word_'
+      c.concept_type = 'MULTI_WORD'
       AND c.name =~ '^[A-Za-z][A-Za-z ]{4,}[A-Za-z]$'
       AND c.name CONTAINS ' '
     )
@@ -293,7 +293,7 @@ async def _run_lean_rationale_enrichment(
     document_id: str,
     kg_client,
     model_client,
-    ollama_url: str = "http://localhost:11434",
+    ollama_url: str = "http://host.docker.internal:11434",
     ollama_model: str = "llama3.2:3b",
 ) -> dict:
     """Run lean rationale enrichment on a freshly-extracted document.
@@ -309,7 +309,7 @@ async def _run_lean_rationale_enrichment(
 
     # 1. Read edges needing rationale, grouped by chunk
     cid_to_name: dict = {}
-    async with kg_client.session() as session:
+    async with kg_client.driver.session(database=kg_client.database) as session:
         result = await session.run(_ENRICH_READ_QUERY, {"doc": document_id})
         by_chunk: dict = {}
         async for rec in result:
@@ -467,7 +467,7 @@ async def _run_lean_rationale_enrichment(
 
             # Writer semaphore + exponential-backoff retry for lock contention.
             async with write_sem:
-                async with kg_client.session() as session:
+                async with kg_client.driver.session(database=kg_client.database) as session:
                     stats["updated"] += await _write_with_retry(session, _write_tx)
 
         stats["done"] += 1
@@ -3193,7 +3193,7 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
 
     BUG FIX: ConceptNet relationships returned by the validator use concept
     *names* (e.g. "machine learning") as subject/object, while pattern-based
-    relationships use concept *IDs* (e.g. "multi_word_machine_learning").
+    relationships use concept *IDs* (e.g. "public:machine learning").
     We now maintain a ``concept_name_to_id`` reverse map so both kinds of
     relationship endpoints can be resolved to Neo4j node IDs.
     """
@@ -3206,6 +3206,48 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
         # Initialize knowledge graph service and connect
         kg_service = KnowledgeGraphService()
         await kg_service.client.connect()
+
+        # Materialize a :Document node for this source so conversation
+        # citations can trace back to it via a REFERENCES edge.
+        try:
+            from ..database.connection import get_async_connection
+
+            conn = await get_async_connection()
+            try:
+                doc_row = await conn.fetchrow(
+                    """
+                    SELECT title, source_type::text AS source_type,
+                           user_id::text AS user_id
+                    FROM multimodal_librarian.knowledge_sources
+                    WHERE id = $1::uuid
+                    """,
+                    document_id,
+                )
+            finally:
+                await conn.close()
+            if doc_row:
+                await kg_service.client.execute_write_query(
+                    """
+                    MERGE (d:Document {document_id: $document_id})
+                    ON CREATE SET d.title = $title,
+                                  d.source_type = $source_type,
+                                  d.owner_id = $owner_id,
+                                  d.created_at = datetime()
+                    ON MATCH SET d.title = $title
+                    RETURN elementId(d) AS node_id
+                    """,
+                    {
+                        "document_id": document_id,
+                        "title": doc_row["title"],
+                        "source_type": doc_row["source_type"],
+                        "owner_id": doc_row["user_id"],
+                    },
+                )
+                logger.info(
+                    "Materialized :Document node for source %s", document_id
+                )
+        except Exception as e:
+            logger.warning(":Document materialization failed: %s", e)
 
         # Pass the Neo4j client to KnowledgeGraphBuilder for ConceptNet
         # validation. If ConceptNet data hasn't been imported, the
@@ -3552,11 +3594,16 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
                         kg_service.client,
                         """
                         UNWIND $rows AS row
-                        MERGE (c:Concept {concept_id: row.concept_id})
+                        MERGE (c:Concept {name_lower: toLower(row.name), scope: 'public'})
                         ON CREATE SET c.name = row.name, c.type = row.type,
                                       c.concept_type = row.type,
                                       c.confidence = row.confidence,
                                       c.name_lower = toLower(row.name),
+                                      c.scope = 'public',
+                                      c.bridge_status = 'emergent',
+                                      c.provenance = 'corpus-mined',
+                                      c.owner_id = NULL,
+                                      c.concept_id = 'public:' + toLower(row.name),
                                       c.created_at = row.created_at,
                                       c.updated_at = row.updated_at
                         ON MATCH SET c.updated_at = row.updated_at,
@@ -3581,12 +3628,17 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
                         kg_service.client,
                         """
                         UNWIND $rows AS row
-                        MERGE (c:Concept {concept_id: row.concept_id})
+                        MERGE (c:Concept {name_lower: toLower(row.name), scope: 'public'})
                         ON CREATE SET c.name = row.name, c.type = row.type,
                                       c.concept_type = row.type,
                                       c.confidence = row.confidence,
                                       c.embedding = row.embedding,
                                       c.name_lower = toLower(row.name),
+                                      c.scope = 'public',
+                                      c.bridge_status = 'emergent',
+                                      c.provenance = 'corpus-mined',
+                                      c.owner_id = NULL,
+                                      c.concept_id = 'public:' + toLower(row.name),
                                       c.created_at = row.created_at,
                                       c.updated_at = row.updated_at
                         ON MATCH SET c.updated_at = row.updated_at,
@@ -3620,8 +3672,9 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
                 for chunk_id in (concept.source_chunks or []):
                     if chunk_id:
                         row = {
-                            'concept_id': concept.concept_id,
+                            'name': concept.concept_name,
                             'chunk_id': chunk_id,
+                            'concept_type': concept.concept_type,
                             'created_at': now_ts,
                         }
                         ef_rows.append(row)
@@ -3633,10 +3686,11 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
                     kg_service.client,
                     """
                     UNWIND $rows AS row
-                    MATCH (c:Concept {concept_id: row.concept_id})
+                    MATCH (c:Concept {name_lower: toLower(row.name), scope: 'public'})
                     MATCH (ch:Chunk {chunk_id: row.chunk_id})
                     MERGE (c)-[r:EXTRACTED_FROM]->(ch)
-                    ON CREATE SET r.created_at = row.created_at
+                    ON CREATE SET r.created_at = row.created_at,
+                                  r.concept_type = row.concept_type
                     RETURN count(r) AS cnt
                     """,
                     {'rows': sub_batch}
@@ -3765,7 +3819,7 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
         # (now rationale-free) left empty.
         if model_client and kg_service is not None:
             try:
-                ollama_url = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+                ollama_url = os.environ.get("OLLAMA_HOST", "http://host.docker.internal:11434")
                 ollama_model = os.environ.get("OLLAMA_MODEL", "llama3.2:3b")
                 enrich_result = await _run_lean_rationale_enrichment(
                     document_id=document_id,

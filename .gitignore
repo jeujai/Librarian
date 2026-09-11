@@ -249,3 +249,8 @@ yago-dumps/
 *.csv.gz
 *.wal
 server.log
+
+# Local development artifacts (dev-only, mirrored in .dockerignore)
+training_runs/
+.deepseek/
+.kiro/

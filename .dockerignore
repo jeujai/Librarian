@@ -175,6 +175,10 @@ yarn-error.log*
 # Kiro specs and steering (development only)
 .kiro/
 
+# Local fine-tuning/training artifacts (development only)
+training_runs/
+.deepseek/
+
 # Performance and profiling
 *.prof
 *.pstats
