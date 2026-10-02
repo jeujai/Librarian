@@ -82,6 +82,7 @@ CREATE TABLE IF NOT EXISTS multimodal_librarian.conversation_threads (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL REFERENCES multimodal_librarian.users(id) ON DELETE CASCADE,
     title VARCHAR(500),
+    scope VARCHAR(20) NOT NULL DEFAULT 'private',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     last_message_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,

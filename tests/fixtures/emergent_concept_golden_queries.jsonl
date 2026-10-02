@@ -1,0 +1,5 @@
+{"query_id": "emergent-001", "query": "I can't go back to my job yet", "expected_concepts": ["work restrictions"], "top_k": 10, "note": "doc §7 Phase 4 example: idiomatic query must surface the emergent restriction concept"}
+{"query_id": "emergent-002", "query": "my heart is racing", "expected_concepts": ["palpitations"], "top_k": 10, "note": "idiomatic symptom phrasing surfaces the clinical concept"}
+{"query_id": "emergent-003", "query": "sharp pain in my chest", "expected_concepts": ["chest pain"], "top_k": 10, "note": "plain-language symptom surfaces the clinical concept"}
+{"query_id": "emergent-004", "query": "can't lift heavy things anymore", "expected_concepts": ["lifting restrictions"], "top_k": 10, "note": "idiomatic activity limitation surfaces the restriction concept"}
+{"query_id": "vocab-bridge-001", "query": "high blood sugar", "expected_concepts": ["Hyperglycemia"], "top_k": 10, "note": "colloquial-to-clinical UMLS bridge must survive the canonical threshold raise"}

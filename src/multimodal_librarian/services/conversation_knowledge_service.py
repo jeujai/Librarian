@@ -139,7 +139,9 @@ class ConversationKnowledgeService:
 
         # Phase 0: Cleanup existing data for idempotent re-ingestion
         source_id = self._source_id_for_thread(thread_id)
-        cleanup = await self._cleanup_existing(thread_id, source_id)
+        cleanup = await self._cleanup_existing(
+            thread_id, source_id, getattr(conversation, "user_id", None)
+        )
 
         # Phase 1: Convert conversation to knowledge chunks
         chunks = self._conversation_manager.convert_to_knowledge_chunks(conversation)
@@ -163,14 +165,15 @@ class ConversationKnowledgeService:
         await self._store_vectors(chunks)
 
         # Phase 4: Extract and store KG concepts (FATAL on failure)
+        conv_scope = getattr(conversation, "scope", "private") or "private"
         concepts_count, relationships_count = await self._extract_and_store_concepts(
-            chunks, source_id
+            chunks, source_id, getattr(conversation, "user_id", None), scope=conv_scope
         )
 
         # Phase 5: Persist knowledge_sources row so document listing shows it
         conv_title = title or self._derive_title(conversation)
         await self._persist_knowledge_source(
-            thread_id, conv_title, len(chunks)
+            thread_id, conv_title, len(chunks), scope=conv_scope
         )
 
         # Phase 6: Update knowledge source title if provided
@@ -196,7 +199,9 @@ class ConversationKnowledgeService:
     # Pipeline stages
     # ------------------------------------------------------------------
 
-    async def _cleanup_existing(self, thread_id: str, source_id: str) -> CleanupResult:
+    async def _cleanup_existing(
+        self, thread_id: str, source_id: str, user_id: Optional[str] = None
+    ) -> CleanupResult:
         """Remove existing vectors (by thread_id) and KG nodes (by source_id).
 
         Also cleans up any legacy KG nodes stored under the raw thread_id.
@@ -219,10 +224,10 @@ class ConversationKnowledgeService:
             logger.error(f"Cleanup: vector deletion failed for thread {thread_id}: {e}")
             raise
 
-        concepts_deleted = await self._remove_kg_data(source_id)
+        concepts_deleted = await self._remove_kg_data(source_id, user_id)
         # Also clean up any legacy concepts stored under the raw thread_id
         if thread_id != source_id:
-            concepts_deleted += await self._remove_kg_data(thread_id)
+            concepts_deleted += await self._remove_kg_data(thread_id, user_id)
         return CleanupResult(
             vectors_deleted=vectors_deleted,
             concepts_deleted=concepts_deleted,
@@ -531,7 +536,7 @@ class ConversationKnowledgeService:
         return all_concepts, prompted_by_edges, response_concepts
 
     async def _persist_knowledge_source(
-        self, thread_id: str, title: str, chunk_count: int
+        self, thread_id: str, title: str, chunk_count: int, scope: str = "private"
     ) -> None:
         """Insert a knowledge_sources row so the document listing shows it.
 
@@ -579,18 +584,19 @@ class ConversationKnowledgeService:
                     INSERT INTO multimodal_librarian.knowledge_sources (
                         id, user_id, title, file_path, file_size,
                         processing_status, metadata, source_type,
-                        created_at, updated_at
+                        created_at, updated_at, scope
                     ) VALUES (
                         $1::uuid, $2::uuid, $3, $4, 0,
                         'COMPLETED'::multimodal_librarian.processing_status,
                         $5::jsonb,
                         'CONVERSATION'::multimodal_librarian.source_type,
-                        $6, $7
+                        $6, $7, $8
                     )
                     ON CONFLICT (id) DO UPDATE SET
                         title = EXCLUDED.title,
                         processing_status = EXCLUDED.processing_status,
                         metadata = EXCLUDED.metadata,
+                        scope = EXCLUDED.scope,
                         updated_at = EXCLUDED.updated_at
                     """,
                     source_id,
@@ -600,6 +606,7 @@ class ConversationKnowledgeService:
                     metadata,
                     now,
                     now,
+                    scope,
                 )
                 logger.info(
                     f"Persisted knowledge_source {source_id} "
@@ -641,7 +648,8 @@ class ConversationKnowledgeService:
             )
 
     async def _extract_and_store_concepts(
-        self, chunks: List[KnowledgeChunk], thread_id: str
+        self, chunks: List[KnowledgeChunk], thread_id: str, user_id: Optional[str] = None,
+        scope: str = "private"
     ) -> tuple:
         """Extract concepts from chunks and persist to Neo4j.
 
@@ -797,6 +805,24 @@ class ConversationKnowledgeService:
                 len(relationships),
             )
 
+            # Phase 6: stamp scope + owner (private by default, public via the
+            # UI checkbox).  Pattern/embedding relationships were built against
+            # the pre-stamp ('public:*') concept_ids, so rewrite their endpoints
+            # in lockstep.
+            concept_owner = user_id if scope == "private" else None
+            old_to_new: Dict[str, str] = {}
+            for concept in concepts:
+                new_id = f"{scope}:{concept.concept_name.lower()}"
+                old_to_new[concept.concept_id] = new_id
+                concept.scope = scope
+                concept.owner_id = concept_owner
+                concept.concept_id = new_id
+            for rel in relationships:
+                if rel.subject_concept in old_to_new:
+                    rel.subject_concept = old_to_new[rel.subject_concept]
+                if rel.object_concept in old_to_new:
+                    rel.object_concept = old_to_new[rel.object_concept]
+
             # Persist concepts to Neo4j
             if concepts:
                 concept_id_map = await self._persist_concepts(
@@ -825,7 +851,9 @@ class ConversationKnowledgeService:
     # Neo4j helpers
     # ------------------------------------------------------------------
 
-    async def _remove_kg_data(self, source_id: str) -> int:
+    async def _remove_kg_data(
+        self, source_id: str, user_id: Optional[str] = None
+    ) -> int:
         """Delete Chunk nodes, EXTRACTED_FROM relationships, and orphaned
         Concepts for *source_id* from Neo4j using the three-step
         Chunk-based deletion pattern.
@@ -866,10 +894,14 @@ class ConversationKnowledgeService:
                 MATCH (c:Concept)
                 WHERE NOT EXISTS { MATCH (c)-[:EXTRACTED_FROM]->() }
                   AND NOT EXISTS { MATCH (c)<-[:SAME_AS]-() }
+                  AND c.bridge_status <> 'canonical'
+                  AND c.provenance = 'corpus-mined'
+                  AND (c.scope = 'public'
+                       OR (c.scope = 'private' AND c.owner_id = $owner_id))
                 DETACH DELETE c
                 RETURN count(c) AS deleted_concepts
                 """,
-                {},
+                {"owner_id": user_id},
             )
             deleted_concepts = result_concepts[0]["deleted_concepts"] if result_concepts else 0
 
@@ -963,6 +995,9 @@ class ConversationKnowledgeService:
                 "name": c.concept_name,
                 "type": c.concept_type,
                 "confidence": c.confidence,
+                "scope": c.scope,
+                "owner_id": c.owner_id,
+                "concept_id": c.concept_id,
                 "created_at": now_ts,
                 "updated_at": now_ts,
                 "embedding": emb,
@@ -985,17 +1020,17 @@ class ConversationKnowledgeService:
         result = await self._neo4j_client.execute_write_query(
             """
             UNWIND $rows AS row
-            MERGE (c:Concept {name_lower: toLower(row.name), scope: 'public'})
+            MERGE (c:Concept {name_lower: toLower(row.name), scope: row.scope})
             ON CREATE SET c.name = row.name,
                           c.type = row.type,
                           c.concept_type = row.type,
                           c.confidence = row.confidence,
                           c.name_lower = toLower(row.name),
-                          c.scope = 'public',
+                          c.scope = row.scope,
                           c.bridge_status = 'emergent',
                           c.provenance = 'corpus-mined',
-                          c.owner_id = NULL,
-                          c.concept_id = 'public:' + toLower(row.name),
+                          c.owner_id = row.owner_id,
+                          c.concept_id = row.concept_id,
                           c.created_at = row.created_at,
                           c.updated_at = row.updated_at,
                           c.embedding = row.embedding
@@ -1041,6 +1076,7 @@ class ConversationKnowledgeService:
                 if chunk_id:
                     ef_rows.append({
                         "name": c.concept_name,
+                        "scope": c.scope,
                         "concept_type": c.concept_type,
                         "chunk_id": chunk_id,
                         "created_at": now_ts,
@@ -1053,7 +1089,7 @@ class ConversationKnowledgeService:
                     UNWIND $rows AS row
                     MATCH (c:Concept {
                         name_lower: toLower(row.name),
-                        scope: 'public'
+                        scope: row.scope
                     })
                     MATCH (ch:Chunk {
                         chunk_id: row.chunk_id

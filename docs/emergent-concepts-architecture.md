@@ -889,3 +889,46 @@ were extracted from.
   outcome — deletion is honored
   — but "never forgets" is true at the concept tier only; the evidence tier is
   forgotten with the document.
+
+---
+
+## 9. Implementation status
+
+**As of 2026-09-30.** Phases 0–5 are implemented and wired into the pipeline;
+Phase 6 is partially landed (schema + grandfathering only). Two items remain
+explicitly deferred, and the surface-form redesign postdates this document.
+
+### Done (Phases 0–5)
+
+| Phase | What landed |
+| --- | --- |
+| 0 | Orphan-cleanup predicate is provenance/scope-aware (`privacy.py:403-415`): preserves canonical/seed/llm-bootstrap/materialized + private-owned; deletes only public `corpus-mined` with no evidence. |
+| 1 | `bridge_status`/`provenance`/`scope`/`owner_id` on `ConceptNode` (`models/knowledge_graph.py:84-87`); all four range indexes; dedup + `(name_lower, scope)` re-key + composite uniqueness constraint (`scripts/migrate_emergent_concepts.py`). |
+| 2 | `HAS_HEAD`/`HAS_MODIFIER` grounding (`kg_builder.py:892,987,996`); `materialized-for-grounding` parts (`:941`); type-scoped `:Anchor {kind:"reading"}` (`enrichment_service.py:596`) and `:Anchor {kind:"composite"}` (`:654`). |
+| 3 | Seed bootstrap path (`scripts/seed_emergent_concepts.py`). |
+| 4 | Emergent query-time threshold **0.65** vs canonical **0.75** (`query_decomposer.py:250-251`); grounding backfill (`scripts/ground_emergent_concepts.py`); golden regression set (`tests/fixtures/emergent_concept_golden_queries.jsonl`). |
+| 5 | `llm-bootstrap` hook at query time (`query_decomposer.py:1115`, `emergent_bootstrap.py`); human-gate freeze (`scripts/freeze_concept.py`); `corpus-mined` tagging. |
+
+`concept_scope_unique` is created by the one-shot `migrate_emergent_concepts.py`
+(verified present in the live graph); it remains commented out in
+`init_neo4j.cypher`, so a fresh schema-init from that file alone would not
+recreate it.
+
+### Deferred / incomplete
+
+- **Phase 6 — privacy-scope isolation.** Schema and grandfathering are in
+  (`scripts/grandfather_scope_to_public.py`,
+  `database/migrations/add_content_scope.py`, `scope` index), but the write path
+  still forces `scope='public'` (`models/knowledge_graph.py:86`) and the UI
+  checkbox is deferred (`models/documents.py:37`). Missing: per-owner vector
+  index, scope-filtered traversal, private-first retrieval ordering, and the
+  grey-out checkbox.
+- **Sense-scoped readings** (`:Anchor {kind:"reading", sense_terms}` via
+  co-extraction clustering) — deferred by design (§4.5, §5.5, §8).
+
+### Out of scope of this document
+
+The corpus-derived surface-form redesign (propose+select co-occurrence
+discriminator, abstraction-vs-paraphrase split, single-word-neighbour filtering)
+is a follow-on. See `.kiro/specs/corpus-derived-surface-forms/design.md` and
+`.kiro/specs/abstraction-concept-resolution/design.md`.

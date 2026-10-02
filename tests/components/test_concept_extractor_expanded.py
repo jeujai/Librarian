@@ -151,7 +151,7 @@ class TestExtractCollocationsPMI:
         assert "learning the" not in names
 
     def test_concept_id_format(self, extractor):
-        """Concept IDs follow multi_word_{normalized} format."""
+        """Concept IDs use the public:<name_lower> scope-prefixed format."""
         filler = " ".join(f"word{i}" for i in range(30))
         text = (
             f"quantum computing {filler} "
@@ -160,7 +160,7 @@ class TestExtractCollocationsPMI:
         )
         result = extractor._extract_collocations_pmi(text)
         for concept in result:
-            assert concept.concept_id.startswith("multi_word_")
+            assert concept.concept_id == f"public:{concept.concept_name.lower()}"
 
     def test_source_chunks_is_empty_list(self, extractor):
         """Extracted concepts have empty source_chunks."""
@@ -334,9 +334,9 @@ class TestLinkAcronymExpansions:
     def test_expansion_first_pattern_links_acronym(self, extractor):
         """'Expanded Form (ACRONYM)' adds expansion as alias on acronym concept."""
         text = "Natural Language Processing (NLP) is important."
-        acr = self._make_concept("acronym_nlp", "NLP", "ACRONYM")
+        acr = self._make_concept("public:nlp", "NLP", "ACRONYM")
         concepts = [acr]
-        id_map = {"acronym_nlp": acr}
+        id_map = {"public:nlp": acr}
         extractor._link_acronym_expansions(text, concepts, id_map)
         assert "Natural Language Processing" in acr.aliases
 
@@ -344,21 +344,21 @@ class TestLinkAcronymExpansions:
         """'Expanded Form (ACRONYM)' adds acronym as alias on expansion concept."""
         text = "Natural Language Processing (NLP) is important."
         exp = self._make_concept(
-            "entity_natural_language_processing",
+            "public:natural language processing",
             "Natural Language Processing",
             "ENTITY",
         )
         concepts = [exp]
-        id_map = {"entity_natural_language_processing": exp}
+        id_map = {"public:natural language processing": exp}
         extractor._link_acronym_expansions(text, concepts, id_map)
         assert "NLP" in exp.aliases
 
     def test_acronym_first_pattern_links_acronym(self, extractor):
         """'ACRONYM (Expanded Form)' adds expansion as alias on acronym concept."""
         text = "NLP (Natural Language Processing) is widely used."
-        acr = self._make_concept("acronym_nlp", "NLP", "ACRONYM")
+        acr = self._make_concept("public:nlp", "NLP", "ACRONYM")
         concepts = [acr]
-        id_map = {"acronym_nlp": acr}
+        id_map = {"public:nlp": acr}
         extractor._link_acronym_expansions(text, concepts, id_map)
         assert "Natural Language Processing" in acr.aliases
 
@@ -366,28 +366,28 @@ class TestLinkAcronymExpansions:
         """'ACRONYM (Expanded Form)' adds acronym as alias on expansion concept."""
         text = "NLP (Natural Language Processing) is widely used."
         exp = self._make_concept(
-            "entity_natural_language_processing",
+            "public:natural language processing",
             "Natural Language Processing",
             "ENTITY",
         )
         concepts = [exp]
-        id_map = {"entity_natural_language_processing": exp}
+        id_map = {"public:natural language processing": exp}
         extractor._link_acronym_expansions(text, concepts, id_map)
         assert "NLP" in exp.aliases
 
     def test_both_concepts_linked_bidirectionally(self, extractor):
         """When both acronym and expansion exist, both get aliases."""
         text = "Natural Language Processing (NLP) is a field."
-        acr = self._make_concept("acronym_nlp", "NLP", "ACRONYM")
+        acr = self._make_concept("public:nlp", "NLP", "ACRONYM")
         exp = self._make_concept(
-            "entity_natural_language_processing",
+            "public:natural language processing",
             "Natural Language Processing",
             "ENTITY",
         )
         concepts = [acr, exp]
         id_map = {
-            "acronym_nlp": acr,
-            "entity_natural_language_processing": exp,
+            "public:nlp": acr,
+            "public:natural language processing": exp,
         }
         extractor._link_acronym_expansions(text, concepts, id_map)
         assert "Natural Language Processing" in acr.aliases
@@ -396,9 +396,9 @@ class TestLinkAcronymExpansions:
     def test_skips_stopword_acronyms(self, extractor):
         """Stopword acronyms like 'IT' are not linked."""
         text = "Information Technology (IT) is everywhere."
-        acr = self._make_concept("acronym_it", "IT", "ACRONYM")
+        acr = self._make_concept("public:it", "IT", "ACRONYM")
         concepts = [acr]
-        id_map = {"acronym_it": acr}
+        id_map = {"public:it": acr}
         extractor._link_acronym_expansions(text, concepts, id_map)
         assert acr.aliases == []
 
@@ -413,9 +413,9 @@ class TestLinkAcronymExpansions:
     def test_no_duplicate_aliases(self, extractor):
         """Calling twice with same text doesn't duplicate aliases."""
         text = "Natural Language Processing (NLP) is important."
-        acr = self._make_concept("acronym_nlp", "NLP", "ACRONYM")
+        acr = self._make_concept("public:nlp", "NLP", "ACRONYM")
         concepts = [acr]
-        id_map = {"acronym_nlp": acr}
+        id_map = {"public:nlp": acr}
         extractor._link_acronym_expansions(text, concepts, id_map)
         extractor._link_acronym_expansions(text, concepts, id_map)
         assert acr.aliases.count("Natural Language Processing") == 1
@@ -426,31 +426,105 @@ class TestLinkAcronymExpansions:
             "Natural Language Processing (NLP) and "
             "Knowledge Graph (KG) are related."
         )
-        acr_nlp = self._make_concept("acronym_nlp", "NLP", "ACRONYM")
-        acr_kg = self._make_concept("acronym_kg", "KG", "ACRONYM")
+        acr_nlp = self._make_concept("public:nlp", "NLP", "ACRONYM")
+        acr_kg = self._make_concept("public:kg", "KG", "ACRONYM")
         concepts = [acr_nlp, acr_kg]
-        id_map = {"acronym_nlp": acr_nlp, "acronym_kg": acr_kg}
+        id_map = {"public:nlp": acr_nlp, "public:kg": acr_kg}
         extractor._link_acronym_expansions(text, concepts, id_map)
         assert "Natural Language Processing" in acr_nlp.aliases
         assert "Knowledge Graph" in acr_kg.aliases
 
     def test_multi_word_expansion_concept_lookup(self, extractor):
-        """Expansion concepts stored under multi_word_ prefix are found."""
+        """Expansion concepts keyed by public:<name_lower> are found."""
         text = "Machine Learning (ML) is powerful."
         exp = self._make_concept(
-            "multi_word_machine_learning",
+            "public:machine learning",
             "Machine Learning",
             "MULTI_WORD",
         )
         concepts = [exp]
-        id_map = {"multi_word_machine_learning": exp}
+        id_map = {"public:machine learning": exp}
         extractor._link_acronym_expansions(text, concepts, id_map)
         assert "ML" in exp.aliases
 
     def test_empty_text_does_nothing(self, extractor):
         """Empty text produces no errors and no aliases."""
-        acr = self._make_concept("acronym_nlp", "NLP", "ACRONYM")
+        acr = self._make_concept("public:nlp", "NLP", "ACRONYM")
         concepts = [acr]
-        id_map = {"acronym_nlp": acr}
+        id_map = {"public:nlp": acr}
         extractor._link_acronym_expansions("", concepts, id_map)
         assert acr.aliases == []
+
+
+class TestMedicalMultiWordSeed:
+    """Tests for the curated medical MULTI_WORD seed in extract_concepts_regex.
+
+    The regex concept source's seed vocabulary was previously software/ML only,
+    leaving the synchronous boundary-contiguity path dependent on spaCy for
+    medical compounds.  These tests lock in the medical coverage.
+    """
+
+    @pytest.fixture
+    def extractor(self):
+        """Create a ConceptExtractor instance."""
+        return ConceptExtractor()
+
+    def _multi_word_names(self, extractor, text):
+        return {
+            c.concept_name.lower()
+            for c in extractor.extract_concepts_regex(text)
+            if c.concept_type == "MULTI_WORD"
+        }
+
+    def test_extracts_hepatitis_surface_antigen(self, extractor):
+        text = (
+            "Healthcare worker tests positive for hepatitis B surface "
+            "antigen."
+        )
+        names = self._multi_word_names(extractor, text)
+        assert "hepatitis b surface antigen" in names
+
+    def test_extracts_management_guidelines_and_work_restrictions(
+        self, extractor
+    ):
+        text = (
+            "What are the management guidelines and work restrictions "
+            "for this worker?"
+        )
+        names = self._multi_word_names(extractor, text)
+        assert "management guidelines" in names
+        assert "work restrictions" in names
+
+    def test_plural_forms_match(self, extractor):
+        text = (
+            "Bloodborne pathogens require standard precautions and "
+            "exposure-prone procedures."
+        )
+        names = self._multi_word_names(extractor, text)
+        assert "bloodborne pathogens" in names
+        assert "standard precautions" in names
+        assert "exposure-prone procedures" in names
+
+    def test_singular_form_matches(self, extractor):
+        text = "A bloodborne pathogen was detected in the source patient."
+        names = self._multi_word_names(extractor, text)
+        assert "bloodborne pathogen" in names
+        assert "source patient" in names
+
+    def test_healthcare_personnel_variants(self, extractor):
+        text = (
+            "Healthcare personnel and health care workers must follow "
+            "the post-exposure prophylaxis protocol."
+        )
+        names = self._multi_word_names(extractor, text)
+        assert "healthcare personnel" in names
+        assert "health care workers" in names
+        assert "post-exposure prophylaxis" in names
+
+    def test_medical_seed_confidence_is_seed_level(self, extractor):
+        text = "hepatitis B surface antigen"
+        concepts = extractor.extract_concepts_regex(text)
+        medical = [c for c in concepts if c.concept_name.lower() ==
+                   "hepatitis b surface antigen"]
+        assert medical
+        assert medical[0].confidence == 0.85

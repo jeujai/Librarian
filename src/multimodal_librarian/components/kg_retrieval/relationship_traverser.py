@@ -133,6 +133,7 @@ class RelationshipTraverser:
         self,
         concept_id_a: str,
         concept_id_b: str,
+        user_id: Optional[str] = None,
     ) -> Tuple[str, Dict[str, Any]]:
         """Build a Cypher query finding paths between two concepts.
 
@@ -160,6 +161,8 @@ class RelationshipTraverser:
             f"WITH path, nodes(path) AS path_nodes "
             f"LIMIT $max_paths "
             f"UNWIND path_nodes AS n "
+            f"WITH n WHERE n.scope = 'public' "
+            f"  OR ($user_id IS NOT NULL AND n.owner_id = $user_id) "
             f"OPTIONAL MATCH (n)-[:EXTRACTED_FROM]->(ch:Chunk) "
             f"RETURN DISTINCT ch.chunk_id AS chunk_id, "
             f"n.concept_id AS via_concept_id, "
@@ -171,6 +174,7 @@ class RelationshipTraverser:
             "concept_id_a": concept_id_a,
             "concept_id_b": concept_id_b,
             "max_paths": self._max_paths_per_pair,
+            "user_id": user_id,
         }
 
         return cypher, parameters
@@ -179,6 +183,7 @@ class RelationshipTraverser:
         self,
         concept_id_a: str,
         concept_id_b: str,
+        user_id: Optional[str] = None,
     ) -> Tuple[str, Dict[str, Any]]:
         """Build a Cypher query that walks through the UMLS relationship graph.
 
@@ -230,6 +235,8 @@ class RelationshipTraverser:
             "UNWIND concept_nodes AS n "
             "WITH n, a, b, ua, r, ub "
             "WHERE n IS NOT NULL "
+            "  AND (n.scope = 'public' "
+            "       OR ($user_id IS NOT NULL AND n.owner_id = $user_id)) "
             "OPTIONAL MATCH (n)-[:EXTRACTED_FROM]->(ch:Chunk) "
             "RETURN DISTINCT ch.chunk_id AS chunk_id, "
             "n.concept_id AS via_concept_id, "
@@ -246,6 +253,7 @@ class RelationshipTraverser:
             "concept_id_b": concept_id_b,
             "max_paths": self._max_paths_per_pair,
             "clinical_rela": clinical_rela,
+            "user_id": user_id,
         }
 
         return cypher, parameters
@@ -254,6 +262,7 @@ class RelationshipTraverser:
         self,
         concept_id_a: str,
         concept_id_b: str,
+        user_id: Optional[str] = None,
     ) -> Tuple[str, Dict[str, Any]]:
         """Build a 2-hop UMLS path walker Cypher query.
 
@@ -313,6 +322,8 @@ class RelationshipTraverser:
             "UNWIND concept_nodes AS n "
             "WITH n, a, b, ua, r1, umid, r2, ub "
             "WHERE n IS NOT NULL "
+            "  AND (n.scope = 'public' "
+            "       OR ($user_id IS NOT NULL AND n.owner_id = $user_id)) "
             "OPTIONAL MATCH (n)-[:EXTRACTED_FROM]->(ch:Chunk) "
             "RETURN DISTINCT ch.chunk_id AS chunk_id, "
             "n.concept_id AS via_concept_id, "
@@ -330,6 +341,7 @@ class RelationshipTraverser:
             "concept_id_b": concept_id_b,
             "max_paths": self._max_paths_per_pair,
             "clinical_rela": clinical_rela,
+            "user_id": user_id,
         }
 
         return cypher, parameters
@@ -338,6 +350,7 @@ class RelationshipTraverser:
         self,
         concept_id_a: str,
         concept_id_b: str,
+        user_id: Optional[str] = None,
     ) -> Tuple[str, Dict[str, Any]]:
         """Build a Cypher query finding chunks shared by two concepts.
 
@@ -421,6 +434,7 @@ class RelationshipTraverser:
     async def traverse(
         self,
         concept_matches: List[Dict[str, Any]],
+        user_id: Optional[str] = None,
     ) -> TraversalResult:
         """Find paths between all pairs of matched concepts.
 
@@ -582,7 +596,7 @@ class RelationshipTraverser:
                     remaining = self._timeout_seconds - elapsed
                     query_timeout = max(_PER_QUERY_FLOOR, remaining * 0.5)
 
-                    cypher, params = cypher_builder(cid_a, cid_b)
+                    cypher, params = cypher_builder(cid_a, cid_b, user_id)
 
                     try:
                         records = await asyncio.wait_for(

@@ -11,7 +11,7 @@ import logging
 import os
 import time
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from uuid import UUID
 
 import redis
@@ -1947,6 +1947,73 @@ async def _extract_pdf_content_async(document_id: str) -> Dict[str, Any]:
     return serialized_content
 
 
+async def _prefetch_known_concept_names() -> Set[str]:
+    """Prefetch the vetted multi-word concept vocabulary for the sync chunker.
+
+    The chunking framework's boundary-contiguity check runs synchronously and
+    cannot call the async Neo4j/UMLS client per-boundary, so this gathers the
+    authoritative vocabulary once per document and hands it down as a plain set.
+    Filtered to vetted concepts only:
+      - ``UMLSConcept`` names (authoritative biomedical vocabulary), and
+      - ``:Concept`` nodes with ``provenance IN ['seed', 'llm-bootstrap']`` or
+        ``bridge_status='canonical'`` (human-curated/frozen), excluding the
+        noisy ``provenance='corpus-mined'`` catch-all.
+
+    The ``surface_forms`` of those ``:Concept`` nodes are also included: a
+    seed's curated sense rarely appears verbatim in source text ("work
+    restrictions" is written "category III" / "prohibited from"), so matching
+    the literal surface forms at chunk boundaries keeps the real paraphrase
+    whole even when the canonical name never appears.
+
+    Degrades to an empty set on any failure — the chunker falls back to its
+    regex + spaCy concept sources.
+    """
+    from ..clients.neo4j_client import Neo4jClient
+    from ..config import get_settings
+
+    settings = get_settings()
+    uri = settings.neo4j_uri or os.environ.get("NEO4J_URI", "bolt://neo4j:7687")
+    user = settings.neo4j_user or os.environ.get("NEO4J_USER", "neo4j")
+    password = settings.neo4j_password or os.environ.get("NEO4J_PASSWORD", "password")
+
+    client = Neo4jClient(uri=uri, user=user, password=password)
+    try:
+        await client.connect()
+        rows = await client.execute_query(
+            "MATCH (u:UMLSConcept) WHERE u.lower_name CONTAINS ' ' "
+            "RETURN toLower(u.lower_name) AS term "
+            "UNION "
+            "MATCH (c:Concept) "
+            "WHERE c.name CONTAINS ' ' "
+            "  AND (c.provenance IN ['seed', 'llm-bootstrap'] "
+            "       OR c.bridge_status = 'canonical') "
+            "RETURN toLower(c.name) AS term "
+            "UNION "
+            "MATCH (c:Concept) "
+            "WHERE (c.provenance IN ['seed', 'llm-bootstrap'] "
+            "       OR c.bridge_status = 'canonical') "
+            "UNWIND COALESCE(c.surface_forms, []) AS sf "
+            "WITH sf WHERE sf CONTAINS ' ' "
+            "RETURN toLower(sf) AS term"
+        )
+        names: Set[str] = set()
+        for row in (rows or []):
+            term = (row.get("term") or "").strip().lower()
+            if " " in term:
+                names.add(term)
+        return names
+    except Exception as e:
+        logger.warning(
+            "Known-concept prefetch failed (chunker will use fallback sources): %s", e
+        )
+        return set()
+    finally:
+        try:
+            await client.close()
+        except Exception:
+            pass
+
+
 @celery_app.task(name='generate_chunks_task', time_limit=TASK_HARD_TIME_LIMIT, soft_time_limit=TASK_SOFT_TIME_LIMIT)
 @redis_task_lock("chunks_lock:{document_id}")
 def generate_chunks_task(pdf_content: Dict[str, Any], document_id: str):
@@ -2020,7 +2087,12 @@ def generate_chunks_task(pdf_content: Dict[str, Any], document_id: str):
         
         # Process through chunking framework (chunks only, no bridges)
         # Bridges are generated in parallel by generate_bridges_task
+        # Prefetch the vetted concept vocabulary first so the synchronous
+        # chunker can protect known multi-word concepts at boundaries without a
+        # per-boundary Neo4j round-trip.  Failure yields an empty set (fallback).
+        known_concepts = asyncio.run(_prefetch_known_concept_names())
         chunking_framework = GenericMultiLevelChunkingFramework()
+        chunking_framework.known_concept_names = known_concepts
         processed_document = chunking_framework.process_document_chunks_only(doc_content, document_id)
         
         # Serialize processed document
@@ -3208,7 +3280,10 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
         await kg_service.client.connect()
 
         # Materialize a :Document node for this source so conversation
-        # citations can trace back to it via a REFERENCES edge.
+        # citations can trace back to it via a REFERENCES edge.  The owner
+        # (user_id) is also the private-concept owner_id stamped below.
+        owner_id = None
+        doc_scope = "private"
         try:
             from ..database.connection import get_async_connection
 
@@ -3217,7 +3292,8 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
                 doc_row = await conn.fetchrow(
                     """
                     SELECT title, source_type::text AS source_type,
-                           user_id::text AS user_id
+                           user_id::text AS user_id,
+                           scope::text AS scope
                     FROM multimodal_librarian.knowledge_sources
                     WHERE id = $1::uuid
                     """,
@@ -3226,6 +3302,8 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
             finally:
                 await conn.close()
             if doc_row:
+                owner_id = doc_row["user_id"]
+                doc_scope = doc_row["scope"] or "private"
                 await kg_service.client.execute_write_query(
                     """
                     MERGE (d:Document {document_id: $document_id})
@@ -3486,6 +3564,28 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
                 except Exception as e:
                     logger.warning(f"UMLS linking failed for batch {batch_num}: {e}")
 
+            # --- Phase 6: stamp scope + owner (private by default, public via
+            # the UI checkbox).  The concept_id is scope-prefixed and must match
+            # the MERGE key + edge lookups below.  Pattern/LLM relationships
+            # were built against the pre-stamp ('public:*') concept_ids, so
+            # rewrite their endpoints in lockstep; ConceptNet relationships
+            # reference concept *names* and resolve via concept_name_to_id,
+            # which is rebuilt after stamping. ---
+            scope = doc_scope
+            concept_owner = owner_id if scope == "private" else None
+            old_to_new = {}
+            for concept in batch_concepts:
+                new_id = f"{scope}:{concept.concept_name.lower()}"
+                old_to_new[concept.concept_id] = new_id
+                concept.scope = scope
+                concept.owner_id = concept_owner
+                concept.concept_id = new_id
+            for relationship in batch_relationships:
+                if relationship.subject_concept in old_to_new:
+                    relationship.subject_concept = old_to_new[relationship.subject_concept]
+                if relationship.object_concept in old_to_new:
+                    relationship.object_concept = old_to_new[relationship.object_concept]
+
             # --- Generate embeddings for this batch's concepts ---
             # The model server accepts max 1000 texts per request, but KG
             # batches can produce 2000+ concepts.  Sub-batch into groups of
@@ -3573,6 +3673,9 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
                     'name': concept.concept_name,
                     'type': concept.concept_type,
                     'confidence': concept.confidence,
+                    'provenance': concept.provenance or 'corpus-mined',
+                    'scope': concept.scope,
+                    'owner_id': concept.owner_id,
                     'created_at': now_ts,
                     'updated_at': now_ts,
                 }
@@ -3594,16 +3697,16 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
                         kg_service.client,
                         """
                         UNWIND $rows AS row
-                        MERGE (c:Concept {name_lower: toLower(row.name), scope: 'public'})
+                        MERGE (c:Concept {name_lower: toLower(row.name), scope: row.scope})
                         ON CREATE SET c.name = row.name, c.type = row.type,
                                       c.concept_type = row.type,
                                       c.confidence = row.confidence,
                                       c.name_lower = toLower(row.name),
-                                      c.scope = 'public',
+                                      c.scope = row.scope,
                                       c.bridge_status = 'emergent',
-                                      c.provenance = 'corpus-mined',
-                                      c.owner_id = NULL,
-                                      c.concept_id = 'public:' + toLower(row.name),
+                                      c.provenance = row.provenance,
+                                      c.owner_id = row.owner_id,
+                                      c.concept_id = row.concept_id,
                                       c.created_at = row.created_at,
                                       c.updated_at = row.updated_at
                         ON MATCH SET c.updated_at = row.updated_at,
@@ -3628,17 +3731,17 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
                         kg_service.client,
                         """
                         UNWIND $rows AS row
-                        MERGE (c:Concept {name_lower: toLower(row.name), scope: 'public'})
+                        MERGE (c:Concept {name_lower: toLower(row.name), scope: row.scope})
                         ON CREATE SET c.name = row.name, c.type = row.type,
                                       c.concept_type = row.type,
                                       c.confidence = row.confidence,
                                       c.embedding = row.embedding,
                                       c.name_lower = toLower(row.name),
-                                      c.scope = 'public',
+                                      c.scope = row.scope,
                                       c.bridge_status = 'emergent',
-                                      c.provenance = 'corpus-mined',
-                                      c.owner_id = NULL,
-                                      c.concept_id = 'public:' + toLower(row.name),
+                                      c.provenance = row.provenance,
+                                      c.owner_id = row.owner_id,
+                                      c.concept_id = row.concept_id,
                                       c.created_at = row.created_at,
                                       c.updated_at = row.updated_at
                         ON MATCH SET c.updated_at = row.updated_at,
@@ -3673,6 +3776,7 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
                     if chunk_id:
                         row = {
                             'name': concept.concept_name,
+                            'scope': concept.scope,
                             'chunk_id': chunk_id,
                             'concept_type': concept.concept_type,
                             'created_at': now_ts,
@@ -3686,7 +3790,7 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
                     kg_service.client,
                     """
                     UNWIND $rows AS row
-                    MATCH (c:Concept {name_lower: toLower(row.name), scope: 'public'})
+                    MATCH (c:Concept {name_lower: toLower(row.name), scope: row.scope})
                     MATCH (ch:Chunk {chunk_id: row.chunk_id})
                     MERGE (c)-[r:EXTRACTED_FROM]->(ch)
                     ON CREATE SET r.created_at = row.created_at,

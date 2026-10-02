@@ -102,10 +102,11 @@ class UploadService:
             logger.warning(f"Error checking for duplicate: {e}")
             return None
         
-    async def upload_document(self, file_data: bytes, filename: str, 
+    async def upload_document(self, file_data: bytes, filename: str,
                             upload_request: DocumentUploadRequest,
                             user_id: str = "default_user",
-                            force_upload: bool = False) -> DocumentUploadResponse:
+                            force_upload: bool = False,
+                            scope: str = "private") -> DocumentUploadResponse:
         """
         Upload and process a document.
         
@@ -162,6 +163,7 @@ class UploadService:
             document = Document(
                 id=str(document_id),
                 user_id=user_id,
+                scope=scope,
                 title=upload_request.title or self._extract_title_from_filename(filename),
                 description=upload_request.description,
                 filename=filename,
@@ -668,14 +670,14 @@ class UploadService:
                 await conn.execute("""
                     INSERT INTO multimodal_librarian.knowledge_sources (
                         id, user_id, title, file_path, file_size,
-                        processing_status, metadata, source_type, 
-                        created_at, updated_at
+                        processing_status, metadata, source_type,
+                        created_at, updated_at, scope
                     ) VALUES (
                         $1::uuid, $2::uuid, $3, $4, $5,
-                        $6::multimodal_librarian.processing_status, $7::jsonb, 
-                        'UPLOAD'::multimodal_librarian.source_type, $8, $9
+                        $6::multimodal_librarian.processing_status, $7::jsonb,
+                        'UPLOAD'::multimodal_librarian.source_type, $8, $9, $10
                     )
-                """, 
+                """,
                     document.id,
                     user_uuid,
                     document.title,
@@ -684,7 +686,8 @@ class UploadService:
                     processing_status,
                     metadata_json,
                     document.upload_timestamp,
-                    document.upload_timestamp
+                    document.upload_timestamp,
+                    document.scope
                 )
             finally:
                 await conn.close()

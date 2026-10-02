@@ -631,6 +631,27 @@ body {
     color: #ef4444;
 }
 
+.private-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    cursor: pointer;
+    font-weight: 500;
+    color: #475569;
+    white-space: nowrap;
+    user-select: none;
+}
+
+.private-toggle input[type="checkbox"] {
+    cursor: pointer;
+    accent-color: #6366f1;
+}
+
+.private-toggle input[type="checkbox"]:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+}
+
 /* Drag and Drop Overlay */
 .drag-overlay {
     position: fixed;

@@ -65,7 +65,8 @@ async def start_conversation(
         
         # Create new conversation thread
         thread = conversation_manager.start_conversation(
-            user_id=effective_user_id
+            user_id=effective_user_id,
+            scope=request.scope
         )
         
         # Add initial message if provided

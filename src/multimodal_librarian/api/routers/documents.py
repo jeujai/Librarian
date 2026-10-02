@@ -76,6 +76,7 @@ async def upload_document(
     title: Optional[str] = Form(None, description="Document title"),
     description: Optional[str] = Form(None, description="Document description"),
     user_id: str = Form("default_user", description="User identifier"),
+    scope: str = Form("private", description="Privacy scope: public | private"),
     force_upload: bool = Form(False, description="Force upload even if duplicate exists"),
     upload_service: UploadService = Depends(get_upload_service)
 ):
@@ -125,16 +126,18 @@ async def upload_document(
         # Create upload request
         upload_request = DocumentUploadRequest(
             title=title,
-            description=description
+            description=description,
+            scope=scope
         )
-        
+
         # Upload document
         try:
             result = await upload_service.upload_document(
                 file_data=file_data,
                 filename=file.filename or "document.pdf",
                 upload_request=upload_request,
-                force_upload=force_upload
+                force_upload=force_upload,
+                scope=scope
             )
             
             # Invalidate retrieval caches so any stale entries from before

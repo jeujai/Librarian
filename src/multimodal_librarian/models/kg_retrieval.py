@@ -136,7 +136,8 @@ class QueryDecomposition:
     subjects: List[str] = field(default_factory=list)           # Subject references (our team, etc.)
     concept_matches: List[Dict[str, Any]] = field(default_factory=list)  # Full concept match details
     has_kg_matches: bool = False
-    
+    unresolved_phrases: List['UnresolvedPhrase'] = field(default_factory=list)  # Idioms with no concept match
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
@@ -145,9 +146,10 @@ class QueryDecomposition:
             'actions': self.actions,
             'subjects': self.subjects,
             'concept_matches': self.concept_matches,
-            'has_kg_matches': self.has_kg_matches
+            'has_kg_matches': self.has_kg_matches,
+            'unresolved_phrases': [p.to_dict() for p in self.unresolved_phrases],
         }
-    
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'QueryDecomposition':
         """Create from dictionary for JSON deserialization."""
@@ -157,7 +159,11 @@ class QueryDecomposition:
             actions=data.get('actions', []),
             subjects=data.get('subjects', []),
             concept_matches=data.get('concept_matches', []),
-            has_kg_matches=data.get('has_kg_matches', False)
+            has_kg_matches=data.get('has_kg_matches', False),
+            unresolved_phrases=[
+                UnresolvedPhrase.from_dict(p)
+                for p in data.get('unresolved_phrases', [])
+            ],
         )
     
     def validate(self) -> bool:
@@ -182,10 +188,115 @@ class QueryDecomposition:
     def get_concept_ids(self) -> List[str]:
         """Get list of concept IDs from matches."""
         return [
-            match.get('concept_id', '') 
-            for match in self.concept_matches 
+            match.get('concept_id', '')
+            for match in self.concept_matches
             if match.get('concept_id')
         ]
+
+
+@dataclass
+class ConceptCandidate:
+    """An existing Librarian concept offered as a candidate for an unresolved idiom."""
+    concept_id: str
+    name: str
+    similarity_score: float = 0.0
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'concept_id': self.concept_id,
+            'name': self.name,
+            'similarity_score': self.similarity_score,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'ConceptCandidate':
+        return cls(
+            concept_id=data['concept_id'],
+            name=data.get('name', ''),
+            similarity_score=data.get('similarity_score', 0.0),
+        )
+
+
+@dataclass
+class CompositeCandidate:
+    """An LM-decomposed head+modifier candidate, viable only via a faithful ConceptNet edge."""
+    head: str
+    modifier: str
+    relationship_type: str
+    display: str
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'head': self.head,
+            'modifier': self.modifier,
+            'relationship_type': self.relationship_type,
+            'display': self.display,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'CompositeCandidate':
+        return cls(
+            head=data['head'],
+            modifier=data['modifier'],
+            relationship_type=data.get('relationship_type', ''),
+            display=data.get('display', ''),
+        )
+
+
+@dataclass
+class UnresolvedPhrase:
+    """A search phrase with no concept match at the emergent floor, plus its candidates."""
+    phrase: str
+    best_score: float = 0.0
+    nearest_concepts: List[ConceptCandidate] = field(default_factory=list)
+    composite_candidates: List[CompositeCandidate] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'phrase': self.phrase,
+            'best_score': self.best_score,
+            'nearest_concepts': [c.to_dict() for c in self.nearest_concepts],
+            'composite_candidates': [c.to_dict() for c in self.composite_candidates],
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'UnresolvedPhrase':
+        return cls(
+            phrase=data['phrase'],
+            best_score=data.get('best_score', 0.0),
+            nearest_concepts=[
+                ConceptCandidate.from_dict(c) for c in data.get('nearest_concepts', [])
+            ],
+            composite_candidates=[
+                CompositeCandidate.from_dict(c) for c in data.get('composite_candidates', [])
+            ],
+        )
+
+
+@dataclass
+class ClarificationRequest:
+    """A pending interaction asking the user to resolve one or more unresolved idioms."""
+    request_id: str
+    original_query: str
+    unresolved_phrases: List[UnresolvedPhrase] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'request_id': self.request_id,
+            'original_query': self.original_query,
+            'unresolved_phrases': [p.to_dict() for p in self.unresolved_phrases],
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'ClarificationRequest':
+        return cls(
+            request_id=data['request_id'],
+            original_query=data.get('original_query', ''),
+            unresolved_phrases=[
+                UnresolvedPhrase.from_dict(p)
+                for p in data.get('unresolved_phrases', [])
+            ],
+        )
 
 
 @dataclass

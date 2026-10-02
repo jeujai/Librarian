@@ -34,6 +34,7 @@ class Document(BaseModel):
     
     id: str = Field(..., description="Unique document identifier")
     user_id: str = Field(..., description="Owner user ID")
+    scope: str = Field("private", description="Privacy scope: public | private (private default; UI checkbox deferred)")
     title: str = Field(..., description="Document title", max_length=255)
     description: Optional[str] = Field(None, description="Document description")
     filename: str = Field(..., description="Original filename", max_length=255)
@@ -97,9 +98,10 @@ class DocumentChunk(BaseModel):
 
 class DocumentUploadRequest(BaseModel):
     """Request model for document upload."""
-    
+
     title: Optional[str] = Field(None, description="Document title", max_length=255)
     description: Optional[str] = Field(None, description="Document description")
+    scope: str = Field("private", description="Privacy scope: public | private")
 
     @validator('title')
     def validate_title(cls, v):
@@ -236,6 +238,7 @@ def create_document_from_upload(
     return Document(
         id=document_id,
         user_id=user_id,
+        scope=upload_request.scope,
         title=title,
         description=upload_request.description,
         filename=filename,

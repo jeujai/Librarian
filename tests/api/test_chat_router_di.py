@@ -230,7 +230,7 @@ class TestChatRouterFunctionality:
                 mock_legacy.return_value = (None, None, None)
                 
                 # Call the function
-                await handle_start_conversation(connection_id, manager)
+                await handle_start_conversation({}, connection_id, manager)
             
             # Verify thread ID was set
             manager.set_thread_id.assert_called_once()

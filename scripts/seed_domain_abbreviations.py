@@ -29,39 +29,174 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 from multimodal_librarian.clients.neo4j_client import Neo4jClient
 
 
-# Each entry maps a surface form to its canonical expansion.
-# The lookup is bidirectional: abbr→exp AND exp→abbr.
-# ONLY true abbreviations/acronyms — no vocabulary bridges.
+# Each entry maps an acronym to its canonical expansion (stored ONCE per pair).
+# The query-side lookup is bidirectional (abbr→exp AND exp→abbr), so a single
+# node covers both directions — no reverse-direction entries needed.
+# ONLY true abbreviations/acronyms — no vocabulary bridges, and no acronyms
+# that collide with common English words (e.g. MS, PT, ALL, OR, ED, CC).
 DOMAIN_ABBREVIATIONS: Dict[str, str] = {
-    # ── Healthcare personnel acronym (UMLS lacks "HCP" synonym) ──
+    # ── Healthcare personnel (acronym "HCP" is not a UMLS synonym) ──
     "HCP": "healthcare personnel",
     "HCPs": "healthcare personnel",
-    "healthcare personnel": "HCP",
     "healthcare worker": "HCP",
     "healthcare workers": "HCP",
     "healthcare provider": "HCP",
     "health care worker": "HCP",
 
-    # ── Hepatitis / HBV ──────────────────────────────────────────
-    "hepatitis b": "HBV",
-    "hepatitis b virus": "HBV",
+    # ── Hepatology ────────────────────────────────────────────────
     "HBV": "hepatitis B",
-    "hepatitis B surface antigen": "HBsAg",
+    "hepatitis b virus": "HBV",
     "HBsAg": "hepatitis B surface antigen",
-    "hepatitis B e antigen": "HBeAg",
     "HBeAg": "hepatitis B e antigen",
-    "hepatitis B core antigen": "anti-HBc",
     "anti-HBc": "hepatitis B core antigen",
-    "hepatitis c": "HCV",
-    "hepatitis C virus": "HCV",
     "HCV": "hepatitis C",
-    "human immunodeficiency virus": "HIV",
-
-    # ── General medical abbreviations ────────────────────────────
-    "alanine aminotransferase": "ALT",
-    "ALT": "alanine aminotransferase",
-    "hepatocellular carcinoma": "HCC",
+    "hepatitis C virus": "HCV",
     "HCC": "hepatocellular carcinoma",
+    "ALT": "alanine aminotransferase",
+    "AST": "aspartate aminotransferase",
+    "NASH": "nonalcoholic steatohepatitis",
+    "NAFLD": "nonalcoholic fatty liver disease",
+
+    # ── Infectious disease ───────────────────────────────────────
+    "HIV": "human immunodeficiency virus",
+    "MRSA": "methicillin-resistant Staphylococcus aureus",
+    "VRE": "vancomycin-resistant enterococcus",
+    "TB": "tuberculosis",
+    "STI": "sexually transmitted infection",
+    "STD": "sexually transmitted disease",
+
+    # ── Cardiology ───────────────────────────────────────────────
+    "ACS": "acute coronary syndrome",
+    "AF": "atrial fibrillation",
+    "AFib": "atrial fibrillation",
+    "AMI": "acute myocardial infarction",
+    "BP": "blood pressure",
+    "CABG": "coronary artery bypass graft",
+    "CAD": "coronary artery disease",
+    "CHF": "congestive heart failure",
+    "ECG": "electrocardiogram",
+    "EKG": "electrocardiogram",
+    "HTN": "hypertension",
+    "MI": "myocardial infarction",
+    "PCI": "percutaneous coronary intervention",
+    "VF": "ventricular fibrillation",
+    "VT": "ventricular tachycardia",
+
+    # ── Pulmonology ──────────────────────────────────────────────
+    "ARDS": "acute respiratory distress syndrome",
+    "COPD": "chronic obstructive pulmonary disease",
+    "CXR": "chest x-ray",
+    "OSA": "obstructive sleep apnea",
+    "PE": "pulmonary embolism",
+    "PFT": "pulmonary function test",
+    "SOB": "shortness of breath",
+    "URI": "upper respiratory infection",
+
+    # ── Gastroenterology ─────────────────────────────────────────
+    "GERD": "gastroesophageal reflux disease",
+    "GI": "gastrointestinal",
+    "IBD": "inflammatory bowel disease",
+    "IBS": "irritable bowel syndrome",
+    "LFT": "liver function test",
+    "PUD": "peptic ulcer disease",
+    "TPN": "total parenteral nutrition",
+
+    # ── Endocrinology ────────────────────────────────────────────
+    "DM": "diabetes mellitus",
+    "DKA": "diabetic ketoacidosis",
+    "HbA1c": "hemoglobin A1c",
+    "PCOS": "polycystic ovary syndrome",
+    "SIADH": "syndrome of inappropriate antidiuretic hormone secretion",
+    "T1DM": "type 1 diabetes mellitus",
+    "T2DM": "type 2 diabetes mellitus",
+    "TSH": "thyroid stimulating hormone",
+
+    # ── Hematology / Oncology ────────────────────────────────────
+    "ANC": "absolute neutrophil count",
+    "CLL": "chronic lymphocytic leukemia",
+    "CML": "chronic myeloid leukemia",
+    "DVT": "deep vein thrombosis",
+    "Hb": "hemoglobin",
+    "Hct": "hematocrit",
+    "INR": "international normalized ratio",
+    "NHL": "non-Hodgkin lymphoma",
+    "PTT": "partial thromboplastin time",
+    "RBC": "red blood cell",
+    "WBC": "white blood cell",
+
+    # ── Nephrology / Urology ─────────────────────────────────────
+    "AKI": "acute kidney injury",
+    "BUN": "blood urea nitrogen",
+    "CKD": "chronic kidney disease",
+    "CRF": "chronic renal failure",
+    "ESRD": "end-stage renal disease",
+    "GFR": "glomerular filtration rate",
+    "UTI": "urinary tract infection",
+
+    # ── Neurology ────────────────────────────────────────────────
+    "ALS": "amyotrophic lateral sclerosis",
+    "CVA": "cerebrovascular accident",
+    "EEG": "electroencephalogram",
+    "TBI": "traumatic brain injury",
+    "TIA": "transient ischemic attack",
+
+    # ── Rheumatology / Immunology ────────────────────────────────
+    "CRP": "C-reactive protein",
+    "ESR": "erythrocyte sedimentation rate",
+    "OA": "osteoarthritis",
+    "RA": "rheumatoid arthritis",
+    "SLE": "systemic lupus erythematosus",
+
+    # ── OB / GYN ─────────────────────────────────────────────────
+    "EDD": "estimated date of delivery",
+    "GYN": "gynecology",
+    "IVF": "in vitro fertilization",
+    "LMP": "last menstrual period",
+    "OB": "obstetrics",
+    "PID": "pelvic inflammatory disease",
+
+    # ── Labs / Diagnostics ───────────────────────────────────────
+    "ABG": "arterial blood gas",
+    "BMP": "basic metabolic panel",
+    "BNP": "brain natriuretic peptide",
+    "CBC": "complete blood count",
+    "CMP": "comprehensive metabolic panel",
+    "CSF": "cerebrospinal fluid",
+    "FBS": "fasting blood sugar",
+    "LDH": "lactate dehydrogenase",
+    "MCV": "mean corpuscular volume",
+    "RBS": "random blood sugar",
+
+    # ── Imaging ──────────────────────────────────────────────────
+    "CT": "computed tomography",
+    "MRI": "magnetic resonance imaging",
+    "PET": "positron emission tomography",
+
+    # ── Medications / Routes ─────────────────────────────────────
+    "ACEI": "angiotensin-converting enzyme inhibitor",
+    "ARB": "angiotensin receptor blocker",
+    "ASA": "aspirin",
+    "BID": "twice daily",
+    "IM": "intramuscular",
+    "IV": "intravenous",
+    "NSAID": "nonsteroidal anti-inflammatory drug",
+    "PRN": "as needed",
+    "QID": "four times daily",
+    "SC": "subcutaneous",
+    "SQ": "subcutaneous",
+    "SSRI": "selective serotonin reuptake inhibitor",
+    "TID": "three times daily",
+
+    # ── General / Vitals ─────────────────────────────────────────
+    "BMI": "body mass index",
+    "DOB": "date of birth",
+    "HR": "heart rate",
+    "HPI": "history of present illness",
+    "ICU": "intensive care unit",
+    "NPO": "nothing by mouth",
+    "RR": "respiratory rate",
+    "ROS": "review of systems",
+    "VS": "vital signs",
 }
 
 

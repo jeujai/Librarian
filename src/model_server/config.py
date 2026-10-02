@@ -46,7 +46,7 @@ class ModelServerSettings(BaseSettings):
 
     # NLP model configuration
     nlp_model: str = Field(
-        default="en_core_web_sm",
+        default="en_core_web_md",
         env="NLP_MODEL",
         description="Spacy model for NLP tasks"
     )

@@ -56,7 +56,8 @@ class DocumentManager:
     
     async def upload_and_process_document(self, file_data: bytes, filename: str,
                                         title: Optional[str] = None,
-                                        description: Optional[str] = None) -> Dict[str, Any]:
+                                        description: Optional[str] = None,
+                                        scope: str = "private") -> Dict[str, Any]:
         """
         Upload document and start processing workflow.
         
@@ -75,10 +76,10 @@ class DocumentManager:
         try:
             # Upload document
             from ...models.documents import DocumentUploadRequest
-            upload_request = DocumentUploadRequest(title=title, description=description)
-            
+            upload_request = DocumentUploadRequest(title=title, description=description, scope=scope)
+
             upload_response = await self.upload_service.upload_document(
-                file_data, filename, upload_request
+                file_data, filename, upload_request, scope=scope
             )
             
             # NOTE: upload_service.upload_document() already queues
@@ -501,6 +502,7 @@ class DocumentManager:
             # raw thread_id as source_id, not the UUID5.  Resolve
             # the correct ID for Milvus/Neo4j cleanup.
             vector_id = doc_id
+            owner_id = None
             try:
                 from sqlalchemy import text as sa_text
 
@@ -508,12 +510,15 @@ class DocumentManager:
                 async with db_manager.get_async_session() as sess:
                     row = (await sess.execute(
                         sa_text(
-                            "SELECT source_type, file_path, metadata "
+                            "SELECT source_type, file_path, metadata, "
+                            "user_id::text AS user_id "
                             "FROM multimodal_librarian.knowledge_sources "
                             "WHERE id = :did"
                         ),
                         {"did": doc_id},
                     )).fetchone()
+                if row:
+                    owner_id = row.user_id
                 if row and row.source_type == "CONVERSATION":
                     tid = None
                     if row.metadata and isinstance(
@@ -594,11 +599,11 @@ class DocumentManager:
             #    use the doc UUID.  Delete with BOTH IDs to be safe.
             neo4j_total = 0
             neo4j_total += await self._delete_from_neo4j(
-                doc_id, results
+                doc_id, results, owner_id
             )
             if vector_id != doc_id:
                 neo4j_total += await self._delete_from_neo4j(
-                    vector_id, results
+                    vector_id, results, owner_id
                 )
             results['neo4j_deleted'] = neo4j_total
 
@@ -753,14 +758,14 @@ class DocumentManager:
             )
 
     async def _delete_from_neo4j(
-        self, document_id: str, results: Dict[str, Any]
+        self, document_id: str, results: Dict[str, Any], owner_id: Optional[str] = None
     ) -> int:
         """Delete Chunk nodes, EXTRACTED_FROM relationships, and orphaned Concepts from Neo4j."""
         try:
             import asyncio
 
             return await asyncio.wait_for(
-                self._delete_from_neo4j_inner(document_id, results),
+                self._delete_from_neo4j_inner(document_id, results, owner_id),
                 timeout=300,
             )
         except asyncio.TimeoutError:
@@ -775,7 +780,7 @@ class DocumentManager:
             return 0
 
     async def _delete_from_neo4j_inner(
-        self, document_id: str, results: Dict[str, Any]
+        self, document_id: str, results: Dict[str, Any], owner_id: Optional[str] = None
     ) -> int:
         """Inner Neo4j delete logic (called with timeout wrapper)."""
         try:
@@ -819,21 +824,22 @@ class DocumentManager:
                 deleted_chunks = res_chunks[0]["deleted_chunks"] if res_chunks else 0
 
                 # Step 3: Delete orphaned Concepts (no remaining EXTRACTED_FROM and no SAME_AS)
-                # Phase 0 safety net: only public corpus-mined emergent concepts are
-                # eligible; canonical/seed/llm-bootstrap/materialized + all private
-                # concepts are preserved (deleted only via their specific path).
+                # Phase 0 safety net: public corpus-mined emergent concepts plus the
+                # owner's own private concepts are eligible; canonical/seed/llm-bootstrap/
+                # materialized + other users' private concepts are preserved.
                 res_concepts = await kg.client.execute_write_query(
                     """
                     MATCH (c:Concept)
                     WHERE NOT EXISTS { MATCH (c)-[:EXTRACTED_FROM]->() }
                       AND NOT EXISTS { MATCH (c)<-[:SAME_AS]-() }
-                      AND c.scope = 'public'
                       AND c.bridge_status <> 'canonical'
                       AND c.provenance = 'corpus-mined'
+                      AND (c.scope = 'public'
+                           OR (c.scope = 'private' AND c.owner_id = $owner_id))
                     DETACH DELETE c
                     RETURN count(c) AS deleted_concepts
                     """,
-                    {},
+                    {"owner_id": owner_id},
                 )
                 deleted_concepts = res_concepts[0]["deleted_concepts"] if res_concepts else 0
 

@@ -118,7 +118,13 @@
 
                 <!-- Input Help Text -->
                 <div class="input-help" id="inputHelp">
-                    You can paste images, drag & drop files, or type your message. Use Ctrl+Enter to send.
+                    <label class="private-toggle" id="privateToggle"
+                        title="Only you can see private content. Uncheck to publish publicly (irreversible).">
+                        <input type="checkbox" id="privateScope" checked
+                            onchange="if (!this.checked) this.disabled = true;">
+                        Private
+                    </label>
+                    <span class="input-help-text">You can paste images, drag & drop files, or type your message. Use Ctrl+Enter to send.</span>
                     <span class="character-count" id="characterCount" aria-live="polite">0/4000</span>
                 </div>
             </form>

@@ -8,6 +8,7 @@ REFACTORED: Now uses FastAPI dependency injection pattern instead of module-leve
 singleton instantiation. This prevents blocking during application startup.
 """
 
+import asyncio
 import base64
 import json
 import logging
@@ -69,6 +70,10 @@ from ..dependencies import (
     get_vector_store,
 )
 from ..dependencies.services import ConnectionManager
+
+# Phase 5 §5.5 — emergent-bootstrap clarification handling
+from ...components.kg_retrieval.emergent_bootstrap import EmergentBootstrap
+from ...models.kg_retrieval import CompositeCandidate, ConceptCandidate
 
 # Import chat document handlers for WebSocket document operations
 from .chat_document_handlers import (
@@ -262,14 +267,17 @@ async def handle_websocket_message(message_data: dict, connection_id: str, manag
     
     try:
         if message_type == 'start_conversation':
-            await handle_start_conversation(connection_id, manager)
+            await handle_start_conversation(message_data, connection_id, manager)
             
         elif message_type == 'resume_conversation':
             await handle_resume_conversation(message_data, connection_id, manager)
             
         elif message_type == 'chat_message':
             await handle_chat_message(message_data, connection_id, manager)
-            
+
+        elif message_type == 'concept_selection':
+            await handle_concept_selection(message_data, connection_id, manager)
+
         elif message_type == 'files_uploaded':
             await handle_files_uploaded(message_data, connection_id, manager)
             
@@ -477,15 +485,16 @@ async def handle_websocket_message(message_data: dict, connection_id: str, manag
         }, connection_id)
 
 
-async def handle_start_conversation(connection_id: str, manager: ConnectionManager):
+async def handle_start_conversation(message_data: dict, connection_id: str, manager: ConnectionManager):
     """Start a new conversation thread with RAG capabilities."""
     try:
         # Lazy load components
         conv_manager, _, _ = await _get_legacy_components()
-        
+
         # Create new conversation thread
         if conv_manager:
-            thread = conv_manager.start_conversation(user_id=connection_id)
+            scope = message_data.get("scope", "private") if message_data else "private"
+            thread = conv_manager.start_conversation(user_id=connection_id, scope=scope)
             manager.set_thread_id(connection_id, thread.thread_id)
             thread_id = thread.thread_id
         else:
@@ -530,7 +539,7 @@ async def handle_resume_conversation(message_data: dict, connection_id: str, man
     thread_id = message_data.get('thread_id')
     if not thread_id:
         # No thread to resume — fall back to starting a new one
-        await handle_start_conversation(connection_id, manager)
+        await handle_start_conversation(message_data, connection_id, manager)
         return
 
     try:
@@ -543,7 +552,7 @@ async def handle_resume_conversation(message_data: dict, connection_id: str, man
             conversation = conv_manager.get_conversation(thread_id)
             if conversation is None:
                 logger.warning(f"Thread {thread_id} not found during resume, starting new conversation")
-                await handle_start_conversation(connection_id, manager)
+                await handle_start_conversation(message_data, connection_id, manager)
                 return
 
         logger.info(f"Resumed conversation {thread_id} for connection {connection_id}")
@@ -564,7 +573,7 @@ async def handle_resume_conversation(message_data: dict, connection_id: str, man
     except Exception as e:
         logger.error(f"Error resuming conversation {thread_id}: {e}")
         # Fall back to starting a new conversation
-        await handle_start_conversation(connection_id, manager)
+        await handle_start_conversation(message_data, connection_id, manager)
 
 
 async def _handle_status_report(connection_id: str, manager: ConnectionManager):
@@ -1031,6 +1040,87 @@ async def handle_chat_message(message_data: dict, connection_id: str, manager: C
         }, connection_id)
 
 
+async def handle_concept_selection(message_data: dict, connection_id: str, manager: ConnectionManager):
+    """Handle the user's choice from a concept_clarification (Phase 5 §5.5).
+
+    Reconstructs the chosen candidate, mints the bootstrap Concept in the
+    background, substitutes the unresolved phrase in the original query, and
+    re-enters the normal streaming RAG path with the substituted query.
+    """
+    clarification = manager.get_clarification(connection_id)
+    if clarification is None:
+        await manager.send_personal_message({
+            'type': 'error',
+            'message': 'No pending clarification. Please re-ask your question.'
+        }, connection_id)
+        return
+
+    phrase = message_data.get('phrase', '').strip()
+    concept_id = message_data.get('concept_id')
+
+    if concept_id:
+        choice = ConceptCandidate(
+            concept_id=concept_id,
+            name=message_data.get('name', ''),
+            similarity_score=message_data.get('similarity_score', 0.0),
+        )
+        replacement = choice.name or concept_id
+    else:
+        head = message_data.get('head', '').strip()
+        modifier = message_data.get('modifier', '').strip()
+        choice = CompositeCandidate(
+            head=head,
+            modifier=modifier,
+            relationship_type=message_data.get('relationship_type', ''),
+            display=message_data.get('display', '') or f"{modifier} {head}",
+        )
+        replacement = choice.display
+
+    # Fall back to the first unresolved phrase when the client omits it.
+    if not phrase and clarification.unresolved_phrases:
+        phrase = clarification.unresolved_phrases[0].phrase
+
+    if not phrase or not replacement:
+        await manager.send_personal_message({
+            'type': 'error',
+            'message': 'Invalid concept selection.'
+        }, connection_id)
+        return
+
+    # Mint the bootstrap Concept in the background (fire-and-forget).
+    rag_service = manager.rag_service
+    bootstrap = (
+        rag_service._get_emergent_bootstrap()
+        if rag_service and hasattr(rag_service, '_get_emergent_bootstrap')
+        else None
+    )
+    if bootstrap is not None:
+        asyncio.create_task(bootstrap.mint(phrase, choice))
+
+    # Substitute and re-run the RAG pipeline on the resolved query.
+    substituted_query = EmergentBootstrap.substitute(
+        clarification.original_query, phrase, replacement
+    )
+    manager.clear_clarification(connection_id)
+    logger.info(
+        f"Concept selection for {connection_id}: resolved {phrase!r} -> {replacement!r} "
+        f"(substituted query: {substituted_query!r})"
+    )
+
+    conversation_context = manager.get_conversation_context(connection_id)
+    request_id = str(uuid4())
+    await handle_streaming_rag_response(
+        user_message=substituted_query,
+        connection_id=connection_id,
+        manager=manager,
+        conversation_context=conversation_context,
+        request_id=request_id
+    )
+    await manager.send_personal_message({
+        'type': 'processing_complete'
+    }, connection_id)
+
+
 async def handle_streaming_rag_response(
     user_message: str,
     connection_id: str,
@@ -1055,7 +1145,15 @@ async def handle_streaming_rag_response(
             if not manager.is_connected(connection_id):
                 logger.info(f"Connection {connection_id} disconnected, cancelling stream")
                 return
-            
+
+            # Phase 5 §5.5 — an unresolved idiom short-circuits retrieval into a
+            # clarification. Surface it and stop (no answer yet).
+            if chunk.clarification_request:
+                clarification = chunk.clarification_request
+                manager.store_clarification(connection_id, clarification)
+                await manager.send_concept_clarification(connection_id, clarification)
+                return
+
             # Handle first chunk — always send streaming_start so the
             # frontend creates the message element (even with 0 citations).
             if chunk_count == 0:
@@ -1176,7 +1274,14 @@ async def handle_non_streaming_rag_response(
         user_id=connection_id,
         conversation_context=conversation_context
     )
-    
+
+    # Phase 5 §5.5 — surface a clarification instead of an answer.
+    if rag_response.clarification_request:
+        clarification = rag_response.clarification_request
+        manager.store_clarification(connection_id, clarification)
+        await manager.send_concept_clarification(connection_id, clarification)
+        return
+
     # Format citations for display
     citations = []
     for source in rag_response.sources:

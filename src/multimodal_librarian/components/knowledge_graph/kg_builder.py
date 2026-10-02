@@ -109,6 +109,53 @@ Text:
 JSON:"""
 
 
+# Curated medical multi-word seed for the MULTI_WORD regex pattern.
+#
+# The regex concept source otherwise has zero medical coverage (its seed is
+# software/ML vocabulary), so the synchronous chunking path's boundary
+# contiguity check would rely entirely on spaCy to keep a clinical compound
+# like "hepatitis B surface antigen" whole.  scispacy can split such phrases
+# (or spaCy may be unavailable), so this narrow, unambiguous seed guarantees
+# the high-value compounds are protected regardless.  Kept as an alternation
+# with inline pluralisation (``s?`` / ``(?:y|ies)``) so both "pathogen" and
+# "pathogens" match.
+_MEDICAL_MULTI_WORD_SEED = (
+    # Viral hepatitis / lab markers
+    r"hepatitis B surface antigens?",
+    r"hepatitis B surface antibod(?:y|ies)",
+    r"hepatitis B core antibod(?:y|ies)",
+    r"hepatitis B e antigens?",
+    r"hepatitis B e antibod(?:y|ies)",
+    r"hepatitis B virus",
+    r"hepatitis C virus",
+    r"hepatitis B vaccination",
+    r"hepatitis B vaccines?",
+    r"liver function tests?",
+    # Bloodborne pathogens / exposure
+    r"bloodborne pathogens?",
+    r"occupational exposures?",
+    r"needlestick injur(?:y|ies)",
+    r"percutaneous exposures?",
+    r"mucous membrane exposures?",
+    r"source patients?",
+    r"post-exposure prophylaxis",
+    r"postexposure prophylaxis",
+    # Infection control / precautions
+    r"standard precautions?",
+    r"infection control",
+    r"hand hygiene",
+    r"personal protective equipment",
+    r"exposure-prone procedures?",
+    # Personnel / restrictions / guidelines
+    r"healthcare personnel",
+    r"health care personnel",
+    r"healthcare workers?",
+    r"health care workers?",
+    r"work restrictions?",
+    r"management guidelines?",
+)
+
+
 class ConceptExtractor:
     """Extracts concepts from text using multiple methods."""
     
@@ -138,6 +185,7 @@ class ConceptExtractor:
                 r'chunk(?:ing)?\s+(?:strategy|framework|pipeline|size)|'
                 r'retrieval\s+(?:quality|pipeline|service|augmented)|'
                 r'embedding\s+(?:model|dimension|space|vector))\b',
+                r'\b(?:' + '|'.join(_MEDICAL_MULTI_WORD_SEED) + r')\b',
             ],
             'ACRONYM': [
                 r'\b[A-Z]{2,6}\b',
@@ -773,6 +821,250 @@ class ConceptExtractor:
             )
         return (concepts, False)
 
+    async def extract_gerund_compounds(self, text: str) -> List[ConceptNode]:
+        """Form gerund-as-modifier compound candidates ("lifting restrictions").
+
+        spaCy's NER and Ollama often read a leading gerund as a verb and never
+        emit the compound ("lifting restrictions" -> "lifting" + "restrictions"
+        as separate concepts).  Here we parse the text *in context* and, for any
+        token attached to an immediately-following noun as a modifier — a VBG
+        via ``compound``/``amod``, or an NN via ``compound`` whose surface form
+        is an ``-ing`` gerund (subject position, where spaCy tags the gerund as
+        a plain noun) — emit the adjacent two-token span as a candidate concept
+        so grounding can decompose it.  The ``-ing`` guard keeps ordinary
+        noun-noun compounds (already extracted elsewhere) out of scope.
+
+        Best-effort: returns ``[]`` when the model server is unavailable or the
+        parse fails.
+        """
+        client = await self._get_model_server_client()
+        if client is None:
+            return []
+
+        try:
+            results = await client.process_nlp([text], tasks=["pos"])
+        except Exception as e:
+            logger.debug(f"Gerund-compound extraction failed: {e}")
+            return []
+
+        pos_tags = (results[0].get("pos_tags") or []) if results else []
+
+        concepts: List[ConceptNode] = []
+        seen: set = set()
+        for i, t in enumerate(pos_tags):
+            tag = (t.get("tag") or "").upper()
+            dep = (t.get("dep") or "").lower()
+            mod_text = (t.get("token") or "").strip()
+            is_compound_modifier = (
+                (tag == "VBG" and dep in ("compound", "amod"))
+                or (tag == "NN" and dep == "compound" and mod_text.lower().endswith("ing"))
+            )
+            if not is_compound_modifier:
+                continue
+            head_i = t.get("head_i")
+            if head_i is None or head_i != i + 1:
+                continue
+            head = pos_tags[head_i]
+            if (head.get("pos") or "").upper() not in ("NOUN", "PROPN"):
+                continue
+            head_text = (head.get("token") or "").strip()
+            name = f"{mod_text} {head_text}"
+            key = name.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            concepts.append(
+                ConceptNode(
+                    concept_id=f"public:{key}",
+                    concept_name=name,
+                    concept_type="ENTITY",
+                    confidence=0.6,
+                )
+            )
+        return concepts
+
+    async def _synthesize_compositional_grounding(
+        self,
+        concepts: List[ConceptNode],
+    ) -> Tuple[List[ConceptNode], List[RelationshipEdge]]:
+        """Link multi-word compounds to their dependency head + modifiers.
+
+        Emits ``HAS_HEAD``/``HAS_MODIFIER`` grounding edges to lower-granularity
+        part concepts, minting missing parts with
+        ``provenance="materialized-for-grounding"`` (the write path's MERGE then
+        performs the public-scope-first reuse, stamping provenance only on create).
+
+        Each compound is parsed *in isolation* (its own surface form), not from
+        the surrounding sentence: spaCy mis-parses verb/noun-ambiguous compounds
+        in context ("work restrictions" -> "work" as a ROOT verb), which drops the
+        head/modifier split.  When the isolated parse yields no full-span noun
+        chunk, the head is resolved from the dependency arcs via
+        :meth:`_resolve_head_from_deps`: a bare VBG whose noun is a ``dobj`` is
+        flipped to gerund-as-modifier (head = the noun), and phrases with no noun
+        head ("due to") are skipped.
+
+        Best-effort: on model-server failure or a non-noun phrase, returns empty
+        lists and never blocks extraction.
+        """
+        multi_word = [c for c in concepts if len(c.concept_name.split()) >= 2]
+        if not multi_word:
+            return ([], [])
+
+        client = await self._get_model_server_client()
+        if client is None:
+            return ([], [])
+
+        try:
+            results = await client.process_nlp(
+                [c.concept_name for c in multi_word],
+                tasks=["noun_chunks", "pos"],
+            )
+        except Exception as e:
+            logger.debug(f"Noun-chunk extraction failed (skipping grounding): {e}")
+            return ([], [])
+
+        by_name: Dict[str, ConceptNode] = {
+            c.concept_name.lower(): c for c in concepts
+        }
+        extra_concepts: List[ConceptNode] = []
+        extra_relationships: List[RelationshipEdge] = []
+
+        def _resolve_part(part_text: str) -> ConceptNode:
+            part_key = part_text.lower()
+            part = by_name.get(part_key)
+            if part is None:
+                part = ConceptNode(
+                    concept_id=f"public:{part_key}",
+                    concept_name=part_text,
+                    concept_type="ENTITY",
+                    confidence=0.5,
+                    provenance="materialized-for-grounding",
+                    scope="public",
+                )
+                by_name[part_key] = part
+                extra_concepts.append(part)
+            return part
+
+        for concept, result in zip(multi_word, results):
+            name = concept.concept_name
+            chunk_list = result.get("noun_chunks") or []
+            pos_tags = result.get("pos_tags") or []
+            root_text = None
+            modifiers: List[str] = []
+
+            for chunk in chunk_list:
+                if (chunk.get("text") or "").strip().lower() == name.lower():
+                    root_text = (chunk.get("root_text") or "").strip()
+                    modifiers = [
+                        m.strip()
+                        for m in (chunk.get("modifier_texts") or [])
+                        if m.strip()
+                    ]
+                    break
+
+            if not (root_text and modifiers):
+                # No full-span noun chunk.  Resolve the head from the
+                # dependency parse rather than a positional "final token"
+                # heuristic: this recognizes gerund-as-modifier (a bare VBG
+                # whose noun is a dobj) and skips non-noun phrases ("due to").
+                root_text, modifiers = self._resolve_head_from_deps(pos_tags)
+                if not (root_text and modifiers):
+                    continue
+
+            if not root_text or not modifiers:
+                continue
+
+            head = _resolve_part(root_text)
+            seen_parts = {root_text.lower()}
+            for m in modifiers:
+                if m.lower() in seen_parts:
+                    continue
+                seen_parts.add(m.lower())
+                part = _resolve_part(m)
+                extra_relationships.append(
+                    RelationshipEdge(
+                        subject_concept=concept.concept_id,
+                        predicate="HAS_MODIFIER",
+                        object_concept=part.concept_id,
+                        confidence=0.6,
+                        relationship_type=RelationshipType.ASSOCIATIVE,
+                    )
+                )
+            extra_relationships.append(
+                RelationshipEdge(
+                    subject_concept=concept.concept_id,
+                    predicate="HAS_HEAD",
+                    object_concept=head.concept_id,
+                    confidence=0.6,
+                    relationship_type=RelationshipType.ASSOCIATIVE,
+                )
+            )
+
+        return (extra_concepts, extra_relationships)
+
+    @staticmethod
+    def _resolve_head_from_deps(
+        pos_tags: List[Dict[str, Any]],
+    ) -> Tuple[Optional[str], List[str]]:
+        """Resolve a compound's head + modifiers from dependency arcs.
+
+        spaCy parses a bare multi-word phrase in isolation and, for a
+        "gerund + noun" compound ("lifting restrictions"), defaults to the
+        *verb* reading: the gerund is the ROOT and the noun its ``dobj``.
+        That is gerund-as-modifier, not a clause, so we flip the arc and
+        promote the nominal object to head.
+
+        Returns ``(head_text, [modifier, ...])`` or ``(None, [])`` when the
+        phrase has no noun head ("due to").
+        """
+        if not pos_tags:
+            return (None, [])
+
+        root_idx = None
+        for i, t in enumerate(pos_tags):
+            if (t.get("dep") or "").upper() == "ROOT":
+                root_idx = i
+                break
+        if root_idx is None:
+            return (None, [])
+
+        root = pos_tags[root_idx]
+        root_pos = (root.get("pos") or "").upper()
+        root_tag = (root.get("tag") or "").upper()
+
+        head_idx = None
+        if root_pos in ("NOUN", "PROPN"):
+            head_idx = root_idx
+        elif root_tag == "VBG":
+            # Gerund-as-modifier: the gerund heads the (isolated) phrase and
+            # takes a nominal object; promote that noun to compound head.
+            for i, t in enumerate(pos_tags):
+                if (t.get("pos") or "").upper() not in ("NOUN", "PROPN"):
+                    continue
+                if (t.get("dep") or "").lower() not in ("dobj", "obj", "iobj"):
+                    continue
+                if t.get("head_i") == root_idx:
+                    head_idx = i
+                    break
+        # else: non-noun root (ADP, ADV, ...) — nothing to ground on.
+
+        if head_idx is None:
+            return (None, [])
+
+        head_text = (pos_tags[head_idx].get("token") or "").strip()
+        if not head_text:
+            return (None, [])
+
+        content_pos = {"NOUN", "PROPN", "ADJ", "VERB", "NUM"}
+        modifiers = [
+            (t.get("token") or "").strip()
+            for i, t in enumerate(pos_tags)
+            if i != head_idx and (t.get("pos") or "").upper() in content_pos
+        ]
+        modifiers = [m for m in modifiers if m]
+
+        return (head_text, modifiers)
+
     async def extract_concepts_umls_ngrams(
         self, text: str
     ) -> Tuple[List[ConceptNode], bool]:
@@ -845,11 +1137,11 @@ class ConceptExtractor:
     async def extract_all_concepts_async(
         self, text: str, content_type: ContentType = ContentType.GENERAL
     ) -> Tuple[List[ConceptNode], bool, bool]:
-        """Combine NER + Ollama + UMLS + regex extraction and deduplicate.
+        """Combine NER + Ollama + UMLS + regex + gerund extraction and deduplicate.
 
         Runs :meth:`extract_concepts_with_ner`,
-        :meth:`extract_concepts_ollama`, and
-        :meth:`extract_concepts_umls_ngrams` concurrently via
+        :meth:`extract_concepts_ollama`, :meth:`extract_concepts_umls_ngrams`,
+        and :meth:`extract_gerund_compounds` concurrently via
         ``asyncio.gather``, then :meth:`extract_concepts_regex`
         synchronously.  Deduplicates by normalized concept name,
         keeping the higher-confidence entry.
@@ -861,10 +1153,11 @@ class ConceptExtractor:
         method returns ``([], True)`` and the pipeline continues with the
         remaining sources.
         """
-        ner_result, ollama_result, umls_result = await asyncio.gather(
+        ner_result, ollama_result, umls_result, gerund_concepts = await asyncio.gather(
             self.extract_concepts_with_ner(text),
             self.extract_concepts_ollama(text, content_type),
             self.extract_concepts_umls_ngrams(text),
+            self.extract_gerund_compounds(text),
         )
         ner_concepts, ner_failed = ner_result
         ollama_concepts, llm_failed = ollama_result
@@ -876,7 +1169,7 @@ class ConceptExtractor:
         # slug, so distinct senses ("work restrictions" vs "restrictions for
         # work") are not over-merged.
         merged: Dict[str, ConceptNode] = {}
-        for concept in ner_concepts + regex_concepts + ollama_concepts + umls_concepts:
+        for concept in ner_concepts + regex_concepts + ollama_concepts + umls_concepts + gerund_concepts:
             key = concept.concept_name.lower()
             existing = merged.get(key)
             if existing is None:
@@ -1876,6 +2169,16 @@ class KnowledgeGraphBuilder:
             for concept in concepts:
                 concept.add_source_chunk(chunk.id)
 
+            # Step 1b: Synthesize compositional grounding (HAS_HEAD/HAS_MODIFIER).
+            # Mints missing head/modifier parts with provenance
+            # "materialized-for-grounding"; best-effort (never blocks extraction).
+            extra_concepts, grounding_relationships = \
+                await self.concept_extractor._synthesize_compositional_grounding(
+                    concepts
+                )
+            if extra_concepts:
+                concepts.extend(extra_concepts)
+
             # Step 2: SKIPPED — no per-chunk ConceptNet validation
 
             # Step 3: Extract pattern-based relationships
@@ -1889,7 +2192,9 @@ class KnowledgeGraphBuilder:
                 concepts, model_server_client
             )
 
-            all_relationships = pattern_relationships + embedding_relationships
+            all_relationships = (
+                pattern_relationships + embedding_relationships + grounding_relationships
+            )
             for relationship in all_relationships:
                 relationship.add_evidence_chunk(chunk.id)
 

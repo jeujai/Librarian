@@ -465,28 +465,31 @@ class ConversationThread:
     """Represents a conversation thread."""
     thread_id: str
     user_id: str
+    scope: str = "private"  # "public" | "private" (private default; UI checkbox deferred)
     messages: List[Message] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.now)
     last_updated: datetime = field(default_factory=datetime.now)
     knowledge_summary: str = ""
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
             'thread_id': self.thread_id,
             'user_id': self.user_id,
+            'scope': self.scope,
             'messages': [msg.to_dict() for msg in self.messages],
             'created_at': self.created_at.isoformat(),
             'last_updated': self.last_updated.isoformat(),
             'knowledge_summary': self.knowledge_summary
         }
-    
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'ConversationThread':
         """Create from dictionary for JSON deserialization."""
         return cls(
             thread_id=data['thread_id'],
             user_id=data['user_id'],
+            scope=data.get('scope', 'private'),
             messages=[Message.from_dict(msg) for msg in data.get('messages', [])],
             created_at=datetime.fromisoformat(data.get('created_at', datetime.now().isoformat())),
             last_updated=datetime.fromisoformat(data.get('last_updated', datetime.now().isoformat())),

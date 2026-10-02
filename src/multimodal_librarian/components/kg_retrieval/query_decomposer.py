@@ -16,7 +16,11 @@ import re
 import time
 from typing import Any, Dict, List, Optional, Set
 
-from ...models.kg_retrieval import QueryDecomposition
+from ...models.kg_retrieval import (
+    ConceptCandidate,
+    QueryDecomposition,
+    UnresolvedPhrase,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -245,6 +249,7 @@ class QueryDecomposer:
         neo4j_client: Optional[Any] = None,
         model_server_client: Optional[Any] = None,
         similarity_threshold: float = 0.65,
+        canonical_similarity_threshold: float = 0.75,
         semantic_max_results: int = 30,
         semantic_enabled: bool = True,
         ner_extractor: Optional[Any] = None,
@@ -258,10 +263,14 @@ class QueryDecomposer:
             model_server_client: Model server client for embedding generation
                                 (injected via DI). If None, semantic matching
                                 is silently skipped.
-            similarity_threshold: Minimum cosine similarity for semantic matches
-                                 (default 0.75).
+            similarity_threshold: Minimum cosine similarity for emergent
+                                 (Librarian Concept) semantic matches
+                                 (default 0.65).
+            canonical_similarity_threshold: Minimum cosine for canonical
+                                            ontology matches (UMLS/ConceptNet),
+                                            default 0.75.
             semantic_max_results: Max concepts returned from vector search
-                                (default 15).
+                                (default 30).
             semantic_enabled: Toggle semantic matching on/off (default True).
             ner_extractor: Optional NER_Extractor for entity-aware query
                           tokenization (injected via DI). If None, only
@@ -270,6 +279,7 @@ class QueryDecomposer:
         self._neo4j_client = neo4j_client
         self._model_server_client = model_server_client
         self._similarity_threshold = similarity_threshold
+        self._canonical_similarity_threshold = canonical_similarity_threshold
         self._semantic_max_results = semantic_max_results
         self._semantic_enabled = semantic_enabled
         self.ner_extractor = ner_extractor
@@ -291,7 +301,9 @@ class QueryDecomposer:
         self._max_embedding_cache_size = 128
         logger.debug("QueryDecomposer initialized")
     
-    async def decompose(self, query: str) -> QueryDecomposition:
+    async def decompose(
+        self, query: str, user_id: Optional[str] = None
+    ) -> QueryDecomposition:
         """
         Decompose query into entities, actions, and subjects.
         
@@ -335,6 +347,7 @@ class QueryDecomposer:
         # to Lucene which would reintroduce false positives.
         lexical_matches: List[Dict[str, Any]] = []
         semantic_matches: List[Dict[str, Any]] = []
+        unresolved_phrases: List[UnresolvedPhrase] = []
         semantic_was_available = (
             self._model_server_client is not None
             and self._semantic_enabled
@@ -350,12 +363,12 @@ class QueryDecomposer:
             try:
                 lexical_task = asyncio.ensure_future(
                     asyncio.wait_for(
-                        self._find_entity_matches(query), timeout=10.0
+                        self._find_entity_matches(query, user_id), timeout=10.0
                     )
                 )
                 semantic_task = asyncio.ensure_future(
                     asyncio.wait_for(
-                        self._find_semantic_matches(query), timeout=30.0
+                        self._find_semantic_matches(query, user_id), timeout=30.0
                     )
                 )
 
@@ -391,7 +404,7 @@ class QueryDecomposer:
                     if task is lexical_task:
                         lexical_matches = result or []
                     else:
-                        semantic_matches = result or []
+                        semantic_matches, unresolved_phrases = result
 
                 # Cancel any still-running task
                 for task in pending:
@@ -459,7 +472,8 @@ class QueryDecomposer:
             actions=actions,
             subjects=subjects,
             concept_matches=concept_matches,
-            has_kg_matches=has_kg_matches
+            has_kg_matches=has_kg_matches,
+            unresolved_phrases=unresolved_phrases
         )
         
         logger.info(
@@ -470,7 +484,9 @@ class QueryDecomposer:
         
         return result
 
-    async def _find_entity_matches(self, query: str) -> List[Dict[str, Any]]:
+    async def _find_entity_matches(
+        self, query: str, user_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """
         Find concept matches in Neo4j for query words.
         
@@ -582,9 +598,11 @@ class QueryDecomposer:
             YIELD node as c, score
             WITH c, score
             WHERE size(c.name) < 150
+              AND (c.scope = 'public'
+                   OR ($user_id IS NOT NULL AND c.owner_id = $user_id))
             RETURN DISTINCT
-                c.concept_id as concept_id, 
-                c.name as name, 
+                c.concept_id as concept_id,
+                c.name as name,
                 c.type as type,
                 c.confidence as confidence,
                 c.source_document as source_document,
@@ -593,10 +611,10 @@ class QueryDecomposer:
             ORDER BY score DESC
             LIMIT 30
             """
-            
+
             results = await self._neo4j_client.execute_query(
                 cypher_query,
-                {"search_terms": search_terms}
+                {"search_terms": search_terms, "user_id": user_id}
             )
             
             if results:
@@ -611,11 +629,13 @@ class QueryDecomposer:
             UNWIND $words as word
             MATCH (c:Concept)
             WHERE c.name_lower CONTAINS word
+              AND (c.scope = 'public'
+                   OR ($user_id IS NOT NULL AND c.owner_id = $user_id))
             WITH c, word, size(c.name) as name_length
             WHERE name_length < 150
             RETURN DISTINCT
-                c.concept_id as concept_id, 
-                c.name as name, 
+                c.concept_id as concept_id,
+                c.name as name,
                 c.type as type,
                 c.confidence as confidence,
                 c.source_document as source_document,
@@ -625,10 +645,10 @@ class QueryDecomposer:
             ORDER BY name_length ASC
             LIMIT 30
             """
-            
+
             results = await self._neo4j_client.execute_query(
                 cypher_query,
-                {"words": all_words}
+                {"words": all_words, "user_id": user_id}
             )
             
             return self._process_concept_results(results, proper_nouns, all_words)
@@ -637,7 +657,124 @@ class QueryDecomposer:
             logger.warning(f"Error in Neo4j query: {e}", exc_info=True)
             return []
 
-    async def _find_semantic_matches(self, query: str) -> List[Dict[str, Any]]:
+    async def _build_search_phrases(self, query: str) -> List[str]:
+        """Assemble semantic search phrases: full query + NER key terms + abbreviations."""
+        search_phrases = [query]
+
+        if self.ner_extractor is not None:
+            try:
+                ner_result = await self.ner_extractor.extract_key_terms(query)
+                for term in ner_result.key_terms:
+                    term_lower = term.lower().strip()
+                    # Only add multi-word terms (single words are noisy
+                    # in semantic search), skip duplicates of the full query,
+                    # and skip generic phrases (all stopword/verb words) so
+                    # noun-chunk extraction doesn't emit "our team"-style
+                    # filler as a semantic search phrase.
+                    if (
+                        " " in term_lower
+                        and term_lower != query.lower()
+                        and not is_generic_concept(term_lower)
+                    ):
+                        search_phrases.append(term)
+            except Exception as e:
+                logger.warning(f"NER extraction failed in semantic search: {e}")
+
+        # Expand domain abbreviations stored in Neo4j (e.g. "HCP" ↔
+        # "healthcare personnel").  UMLS semantic bridging (vocabulary
+        # gap like "healthcare worker" → "Health Personnel") is handled
+        # downstream in the vector search phase via umls_embedding_index.
+        search_phrases = await self._expand_domain_abbreviations(search_phrases)
+        logger.debug(
+            f"Search phrases after domain abbreviation expansion: "
+            f"{len(search_phrases)} phrases"
+        )
+
+        # Cap phrases.  Embedding is a single batched model-server call
+        # (~150ms for 15 phrases on CPU), so the binding constraint is the
+        # downstream fan-out: each phrase drives 3 vector-index searches
+        # (concept + UMLS + ConceptNet).  Raised from 10 to 15 to accommodate
+        # breadth-first interleaved DomainAbbreviation expansions without
+        # dropping later triggers.
+        _MAX_PHRASES = 15
+        return search_phrases[:_MAX_PHRASES]
+
+    async def _embed_phrases(
+        self, phrases: List[str]
+    ) -> tuple[List[List[float]], List[str]]:
+        """Batch-embed phrases, returning ``(embeddings, phrases)`` aligned and truncated."""
+        embeddings = await self._model_server_client.generate_embeddings(phrases)
+        if not embeddings:
+            return [], phrases
+        if len(embeddings) != len(phrases):
+            logger.warning(
+                f"Embedding mismatch: got {len(embeddings)} vectors "
+                f"for {len(phrases)} phrases"
+            )
+            min_len = min(len(embeddings), len(phrases))
+            phrases = phrases[:min_len]
+            embeddings = embeddings[:min_len]
+        return embeddings, phrases
+
+    async def _search_concept_index(
+        self,
+        embedding: List[float],
+        threshold: float,
+        top_k: int,
+        user_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Vector-search concept_embedding_index for a single embedding.
+
+        ``threshold=0.0`` returns the nearest neighbours regardless of the
+        emergent floor (used to surface closest concepts for an unresolved idiom).
+
+        Phase 6 privacy: results are scope-filtered to public concepts plus the
+        caller's own private concepts.  When ``user_id`` is ``None`` only public
+        concepts are returned (private concepts are never leaked).
+        """
+        cypher = """
+        CALL db.index.vector.queryNodes(
+            'concept_embedding_index', $top_k, $embedding
+        )
+        YIELD node, score
+        WHERE score >= $threshold
+          AND (node.scope = 'public'
+               OR ($user_id IS NOT NULL AND node.owner_id = $user_id))
+        RETURN node.concept_id AS concept_id,
+               node.name AS name,
+               node.type AS type,
+               node.confidence AS confidence,
+               node.source_document AS source_document,
+               node.source_chunks AS source_chunks,
+               node.scope AS scope,
+               node.owner_id AS owner_id,
+               score AS similarity_score
+        """
+        try:
+            async with self._vector_search_semaphore:
+                results = await asyncio.wait_for(
+                    self._neo4j_client.execute_query(cypher, {
+                        'embedding': embedding,
+                        'top_k': top_k,
+                        'threshold': threshold,
+                        'user_id': user_id,
+                    }),
+                    timeout=10.0,
+                )
+            return [
+                {**record, 'match_type': 'semantic'}
+                for record in (results or [])
+            ]
+        except (asyncio.TimeoutError, Exception) as e:
+            if isinstance(e, asyncio.TimeoutError):
+                logger.warning("Vector search timed out (10s) for a phrase")
+            else:
+                logger.warning(f"Vector search failed for a phrase: {e}")
+            return []
+
+    async def _find_semantic_matches(
+        self, query: str, user_id: Optional[str] = None
+    ) -> tuple[List[Dict[str, Any]], List[UnresolvedPhrase]]:
         """
         Find concepts via multi-phrase vector similarity search.
 
@@ -655,110 +792,30 @@ class QueryDecomposer:
             query: User query text
 
         Returns:
-            List of concept match dicts annotated with match_type="semantic".
-            Returns empty list if model server is unavailable or semantic
-            matching is disabled.
+            A tuple ``(matches, unresolved_phrases)``.  ``matches`` is a list
+            of concept match dicts annotated with match_type="semantic";
+            ``unresolved_phrases`` lists any search phrase whose embedding
+            matched no concept (directly or via the UMLS/ConceptNet bridge).
         """
         if not self._model_server_client or not self._semantic_enabled:
-            return []
+            return [], []
 
         if not self._neo4j_client:
-            return []
+            return [], []
 
         _t0 = time.monotonic()
         try:
             # ── 1. Extract search phrases ──────────────────────────────
-            search_phrases = [query]
-
-            if self.ner_extractor is not None:
-                try:
-                    ner_result = await self.ner_extractor.extract_key_terms(query)
-                    for term in ner_result.key_terms:
-                        term_lower = term.lower().strip()
-                        # Only add multi-word terms (single words are noisy
-                        # in semantic search) and skip duplicates of the
-                        # full query.
-                        if " " in term_lower and term_lower != query.lower():
-                            search_phrases.append(term)
-                except Exception as e:
-                    logger.warning(
-                        f"NER extraction failed in semantic search: {e}"
-                    )
-
-            # Expand domain abbreviations stored in Neo4j (e.g. "HCP" ↔
-            # "healthcare personnel").  UMLS semantic bridging (vocabulary
-            # gap like "healthcare worker" → "Health Personnel") is handled
-            # downstream in the vector search phase via umls_embedding_index.
-            search_phrases = await self._expand_domain_abbreviations(search_phrases)
-            logger.debug(
-                f"Search phrases after domain abbreviation expansion: "
-                f"{len(search_phrases)} phrases"
-            )
-
-            # Cap phrases — each adds ~1s to model-server embedding time
-            # (CPU inference on 768-dim model). Raised from 10 to 15
-            # to accommodate breadth-first interleaved expansions from
-            # DomainAbbreviation without dropping later triggers.
-            _MAX_PHRASES = 15
-            search_phrases = search_phrases[:_MAX_PHRASES]
-
+            search_phrases = await self._build_search_phrases(query)
             logger.info(
                 f"Multi-phrase semantic search: {len(search_phrases)} phrases "
                 f"(query + {len(search_phrases) - 1} NER key terms)"
             )
 
             # ── 2. Batch embed all phrases ────────────────────────────
-            embeddings = await self._model_server_client.generate_embeddings(
-                search_phrases
-            )
-            if not embeddings or len(embeddings) != len(search_phrases):
-                logger.warning(
-                    f"Embedding mismatch: got {len(embeddings)} vectors "
-                    f"for {len(search_phrases)} phrases"
-                )
-                if not embeddings:
-                    return []
-                # Truncate to minimum length if mismatch
-                min_len = min(len(embeddings), len(search_phrases))
-                search_phrases = search_phrases[:min_len]
-                embeddings = embeddings[:min_len]
-
-            # ── 3. Run concurrent vector searches ──────────────────────
-            async def _search_one(embedding):
-                cypher = """
-                CALL db.index.vector.queryNodes(
-                    'concept_embedding_index', $top_k, $embedding
-                )
-                YIELD node, score
-                WHERE score >= $threshold
-                RETURN node.concept_id AS concept_id,
-                       node.name AS name,
-                       node.type AS type,
-                       node.confidence AS confidence,
-                       node.source_document AS source_document,
-                       node.source_chunks AS source_chunks,
-                       score AS similarity_score
-                """
-                try:
-                    async with self._vector_search_semaphore:
-                        results = await asyncio.wait_for(
-                            self._neo4j_client.execute_query(cypher, {
-                                'embedding': embedding,
-                                'top_k': self._semantic_max_results,
-                                'threshold': self._similarity_threshold,
-                            }),
-                            timeout=10.0,
-                        )
-                    return [
-                        {**record, 'match_type': 'semantic'}
-                        for record in (results or [])
-                    ]
-                except (asyncio.TimeoutError, Exception) as e:
-                    if isinstance(e, asyncio.TimeoutError):
-                        logger.warning("Vector search timed out (10s) for a phrase")
-                    else:
-                        logger.warning(f"Vector search failed for a phrase: {e}")
-                    return []
+            embeddings, search_phrases = await self._embed_phrases(search_phrases)
+            if not embeddings:
+                return [], []
 
             # NEW: search umls_embedding_index in parallel with concept search.
             # Each UMLS hit carries its canonical embedding, which bridges
@@ -780,7 +837,7 @@ class QueryDecomposer:
                         return await asyncio.wait_for(
                             self._neo4j_client.execute_query(cypher, {
                                 'embedding': embedding,
-                                'threshold': self._similarity_threshold,
+                                'threshold': self._canonical_similarity_threshold,
                             }),
                             timeout=10.0,
                         ) or []
@@ -809,7 +866,7 @@ class QueryDecomposer:
                         return await asyncio.wait_for(
                             self._neo4j_client.execute_query(cypher, {
                                 'embedding': embedding,
-                                'threshold': self._similarity_threshold,
+                                'threshold': self._canonical_similarity_threshold,
                             }),
                             timeout=10.0,
                         ) or []
@@ -817,7 +874,13 @@ class QueryDecomposer:
                     return []  # ConceptNet index may not exist yet; degrade gracefully
 
             # Run concept + UMLS + ConceptNet searches in parallel
-            concept_tasks = [_search_one(emb) for emb in embeddings]
+            concept_tasks = [
+                self._search_concept_index(
+                    emb, self._similarity_threshold, self._semantic_max_results,
+                    user_id,
+                )
+                for emb in embeddings
+            ]
             umls_tasks = [_search_umls(emb) for emb in embeddings]
             conceptnet_tasks = [_search_conceptnet(emb) for emb in embeddings]
             all_tasks = concept_tasks + umls_tasks + conceptnet_tasks
@@ -945,7 +1008,13 @@ class QueryDecomposer:
                 )
 
             if umls_embeddings:
-                umls_concept_tasks = [_search_one(emb) for emb in umls_embeddings]
+                umls_concept_tasks = [
+                    self._search_concept_index(
+                        emb, self._similarity_threshold, self._semantic_max_results,
+                        user_id,
+                    )
+                    for emb in umls_embeddings
+                ]
                 umls_concept_results = await asyncio.gather(*umls_concept_tasks)
                 for umls_match_list in umls_concept_results:
                     # Tag UMLS-bridged concepts so they sort above
@@ -964,9 +1033,34 @@ class QueryDecomposer:
                 )
 
             # ── 4. Merge, deduplicate, keep highest score ─────────────
-            # Phase 1: deduplicate by concept_id.  Prefer UMLS-bridged
-            # matches (clinically validated) over direct embedding matches,
-            # and higher scores within the same provenance class.
+            # Coverage-aware ordering: direct matches (umls_bridge=False) sort
+            # ABOVE UMLS-bridged matches, then higher similarity, then the
+            # caller's own private concepts (so user content surfaces above
+            # the public corpus at a tie).  Putting direct matches first keeps
+            # the query's own named concepts (e.g. seeded "management
+            # guidelines" / "work restrictions") from being crowded out of the
+            # top-N by a UMLS bridge fan-out (e.g. dozens of vaccination
+            # concepts reached via UMLS_REL).
+            def _is_private_owned(m: Dict[str, Any]) -> bool:
+                return (
+                    user_id is not None
+                    and m.get('scope') == 'private'
+                    and m.get('owner_id') == user_id
+                )
+
+            def _rank(m: Dict[str, Any]) -> tuple:
+                # not umls_bridge → True for direct matches, so direct sorts
+                # first under reverse=True.  A direct hit (query embedding →
+                # concept_embedding_index) is stronger evidence than the
+                # indirect query → UMLS → concept_embedding_index path.
+                return (
+                    not m.get('umls_bridge', False),
+                    m.get('similarity_score', 0),
+                    _is_private_owned(m),
+                )
+
+            # Phase 1: deduplicate by concept_id.  Prefer direct matches over
+            # UMLS-bridged, higher scores, and private-owned at a tie.
             seen: Dict[str, Dict[str, Any]] = {}
             for match_list in all_match_lists:
                 for m in match_list:
@@ -976,20 +1070,11 @@ class QueryDecomposer:
                     if cid not in seen:
                         seen[cid] = m
                         continue
-                    existing = seen[cid]
-                    m_umls = m.get('umls_bridge', False)
-                    ex_umls = existing.get('umls_bridge', False)
-                    # Prefer UMLS-bridged over non-bridged; prefer higher score
-                    # when provenance is equal.
-                    if m_umls and not ex_umls:
-                        seen[cid] = m
-                    elif not m_umls and ex_umls:
-                        pass  # keep existing UMLS-bridged match
-                    elif m.get('similarity_score', 0) > existing.get('similarity_score', 0):
+                    if _rank(m) > _rank(seen[cid]):
                         seen[cid] = m
 
             # Phase 2: deduplicate by case-normalized name.  Same provenance
-            # preference as Phase 1: UMLS-bridged > direct, then higher score.
+            # preference as Phase 1: direct > UMLS-bridged, score, private.
             name_deduped: Dict[str, Dict[str, Any]] = {}
             for m in seen.values():
                 name_key = re.sub(
@@ -999,22 +1084,12 @@ class QueryDecomposer:
                 if name_key not in name_deduped:
                     name_deduped[name_key] = m
                     continue
-                existing = name_deduped[name_key]
-                m_umls = m.get('umls_bridge', False)
-                ex_umls = existing.get('umls_bridge', False)
-                if m_umls and not ex_umls:
-                    name_deduped[name_key] = m
-                elif not m_umls and ex_umls:
-                    pass  # keep existing UMLS-bridged match
-                elif m.get('similarity_score', 0) > existing.get('similarity_score', 0):
+                if _rank(m) > _rank(name_deduped[name_key]):
                     name_deduped[name_key] = m
 
             merged = sorted(
                 name_deduped.values(),
-                key=lambda m: (
-                    m.get('umls_bridge', False),
-                    m.get('similarity_score', 0),
-                ),
+                key=_rank,
                 reverse=True,
             )[:self._semantic_max_results]
 
@@ -1037,10 +1112,52 @@ class QueryDecomposer:
                 f"in {_elapsed:.0f}ms"
             )
 
-            return merged
+            # ── 6. Detect unresolved phrases (llm-bootstrap hook) ──────
+            # A phrase is unresolved when its embedding matched no concept
+            # directly AND produced no UMLS/ConceptNet bridge hit — i.e. no
+            # document and no ontology supplies it.  For those, collect the
+            # nearest existing concepts below the emergent floor so the
+            # caller can offer them as candidates.
+            unresolved_phrases: List[UnresolvedPhrase] = []
+            for i in range(mid):
+                direct = all_match_lists[i] if i < len(all_match_lists) else []
+                umls_hit = umls_match_lists[i] if i < len(umls_match_lists) else []
+                cn_hit = conceptnet_match_lists[i] if i < len(conceptnet_match_lists) else []
+                if direct or umls_hit or cn_hit:
+                    continue
+                phrase = search_phrases[i] if i < len(search_phrases) else ""
+                if not phrase:
+                    continue
+                nearest = await self._search_concept_index(
+                    embeddings[i], 0.0, 5, user_id
+                )
+                nearest_concepts = [
+                    ConceptCandidate(
+                        concept_id=m.get('concept_id', ''),
+                        name=m.get('name', ''),
+                        similarity_score=m.get('similarity_score', 0.0),
+                    )
+                    for m in nearest
+                ]
+                best_score = (
+                    nearest_concepts[0].similarity_score if nearest_concepts else 0.0
+                )
+                unresolved_phrases.append(
+                    UnresolvedPhrase(
+                        phrase=phrase,
+                        best_score=best_score,
+                        nearest_concepts=nearest_concepts,
+                    )
+                )
+            if unresolved_phrases:
+                logger.info(
+                    f"Unresolved phrases: {[p.phrase for p in unresolved_phrases]}"
+                )
+
+            return merged, unresolved_phrases
         except Exception as e:
             logger.warning(f"Semantic matching failed, falling back to lexical only: {e}")
-            return []
+            return [], []
 
     async def _expand_domain_abbreviations(
         self, phrases: List[str]

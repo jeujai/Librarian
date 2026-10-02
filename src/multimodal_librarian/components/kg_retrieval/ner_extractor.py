@@ -79,6 +79,16 @@ class NER_Extractor:
     _AGE_PATTERN = re.compile(r"^\d+-year-old$", re.IGNORECASE)
     _NUMERIC_PATTERN = re.compile(r"^\d+[\d\s.,%/:-]*$")
 
+    # Leading words stripped from noun-chunk phrases so "the management
+    # guidelines" becomes "management guidelines" (matching the seeded
+    # emergent concept name exactly, rather than the determiner-prefixed
+    # surface form spaCy yields).
+    _NOUN_CHUNK_LEADING_DETERMINERS: frozenset = frozenset({
+        "the", "a", "an", "this", "that", "these", "those",
+        "my", "your", "our", "their", "his", "her", "its",
+        "some", "any", "no", "each", "every", "both", "all",
+    })
+
     def __init__(
         self,
         spacy_web_nlp: Optional[Any] = None,
@@ -183,7 +193,9 @@ class NER_Extractor:
            FILTERED_LABELS, age descriptors, and numeric-only entities.
         2. Extract PROPN tokens (length > 2) and capitalized NOUN tokens
            (length > 2) from noun chunks.
-        3. Return sorted list of unique terms.
+        3. Emit full multi-word noun-chunk phrases (e.g. "management
+           guidelines") as compositional terms.
+        4. Return sorted list of unique terms.
         """
         doc = nlp(query)
         terms: set = set()
@@ -210,7 +222,30 @@ class NER_Extractor:
                 ):
                     terms.add(tok.text)
 
+        # Full multi-word noun-chunk phrases (e.g. "management guidelines",
+        # "work restrictions").  spaCy's noun_chunks yield the whole noun
+        # phrase, which we emit as a single compositional term so downstream
+        # semantic search can match it against seeded/emergent concepts that
+        # ConceptNet (atomic) and UMLS (biomedical) do not cover.
+        for nc in doc.noun_chunks:
+            text = nc.text
+            if not isinstance(text, str):
+                continue
+            phrase = self._clean_noun_chunk(text)
+            words = phrase.split()
+            if 2 <= len(words) <= 6:
+                terms.add(phrase)
+
         return sorted(terms)
+
+    def _clean_noun_chunk(self, text: str) -> str:
+        """Strip leading determiners and trailing punctuation from a chunk."""
+        words = text.strip().split()
+        while words and words[0].lower() in self._NOUN_CHUNK_LEADING_DETERMINERS:
+            words = words[1:]
+        if not words:
+            return ""
+        return " ".join(words).strip("?.,!\"';:()[]{}").strip()
 
     # -----------------------------------------------------------------
     # Layer 3 — Medical Precision (UMLS n-gram lookup)

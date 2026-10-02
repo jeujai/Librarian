@@ -61,6 +61,7 @@ class StartConversationRequest(BaseModel):
     user_id: Optional[str] = None
     initial_message: Optional[str] = None
     previous_thread_id: Optional[str] = None
+    scope: str = "private"
 
 
 class StartConversationResponse(APIResponse):

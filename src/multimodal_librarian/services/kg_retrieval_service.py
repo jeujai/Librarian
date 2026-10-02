@@ -394,6 +394,7 @@ class KGRetrievalService:
         top_k: int = 15,
         include_explanation: bool = True,
         precomputed_decomposition: Optional["QueryDecomposition"] = None,
+        user_id: Optional[str] = None,
     ) -> KGRetrievalResult:
         """
         Perform knowledge graph-guided retrieval.
@@ -440,7 +441,7 @@ class KGRetrievalService:
                 decomposition = precomputed_decomposition
                 logger.info("Using precomputed query decomposition (skipping redundant decompose)")
             else:
-                decomposition = await self._decompose_query_safe(query)
+                decomposition = await self._decompose_query_safe(query, user_id)
 
             # Check if we have KG matches
             if not decomposition.has_kg_matches:
@@ -452,7 +453,7 @@ class KGRetrievalService:
             # Step 2: Stage 1 - KG-based retrieval (with timeout)
             try:
                 stage1_chunks, source_mappings, traversal_result = await with_timeout(
-                    self._stage1_kg_retrieval(decomposition),
+                    self._stage1_kg_retrieval(decomposition, user_id),
                     self._query_timeout * 3  # 3x single-query timeout for large graphs
                 )
             except asyncio.TimeoutError:
@@ -609,12 +610,15 @@ class KGRetrievalService:
                 query, None, "unexpected_error", start_time
             )
 
-    async def _decompose_query_safe(self, query: str) -> QueryDecomposition:
+    async def _decompose_query_safe(
+        self, query: str, user_id: Optional[str] = None
+    ) -> QueryDecomposition:
         """
         Decompose query with timeout protection.
 
         Args:
             query: User query text
+            user_id: Optional caller identity for private-concept scope filtering
 
         Returns:
             QueryDecomposition with extracted components
@@ -625,7 +629,7 @@ class KGRetrievalService:
         """
         try:
             return await with_timeout(
-                self._query_decomposer.decompose(query),
+                self._query_decomposer.decompose(query, user_id),
                 self._query_timeout
             )
         except asyncio.TimeoutError:
@@ -639,7 +643,7 @@ class KGRetrievalService:
             raise
 
     async def _stage1_kg_retrieval(
-        self, decomposition: QueryDecomposition
+        self, decomposition: QueryDecomposition, user_id: Optional[str] = None
     ) -> Tuple[List[RetrievedChunk], Dict[str, ChunkSourceMapping], Optional[TraversalResult]]:
         """
         Stage 1: KG-based candidate retrieval.
@@ -830,6 +834,10 @@ class KGRetrievalService:
         # survives the cap even when direct matches are abundant.
         _MAX_RESOLVE = 400
         if len(all_chunk_ids) > _MAX_RESOLVE:
+            def _mapping_score(cid: str) -> float:
+                m = source_mappings.get(cid)
+                return m.match_score if m else 0.0
+
             promoted_ids = [
                 cid for cid in direct_chunk_ids
                 if source_mappings.get(cid)
@@ -838,6 +846,13 @@ class KGRetrievalService:
             direct_only_ids = [
                 cid for cid in direct_chunk_ids if cid not in promoted_ids
             ]
+            # Sort by the source concept's match score so the cap keeps the
+            # highest-scoring concepts' chunks first.  Previously this used
+            # arbitrary set iteration order, making the resolution cap
+            # non-deterministic and capable of dropping top-concept chunks
+            # (e.g. "work restrictions" SHEA evidence) before scoring.
+            promoted_ids.sort(key=_mapping_score, reverse=True)
+            direct_only_ids.sort(key=_mapping_score, reverse=True)
             half = _MAX_RESOLVE // 2
             resolve_ids = direct_only_ids[:half] + promoted_ids[:half]
             # Fill remaining budget from whichever list has more
@@ -851,7 +866,10 @@ class KGRetrievalService:
             # Fill any leftover with related chunks
             remaining = _MAX_RESOLVE - len(resolve_ids)
             if remaining > 0:
-                related_only = [cid for cid in all_chunk_ids if cid not in direct_chunk_ids]
+                related_only = [
+                    cid for cid in all_chunk_ids if cid not in direct_chunk_ids
+                ]
+                related_only.sort(key=_mapping_score, reverse=True)
                 resolve_ids.extend(related_only[:remaining])
             logger.info(
                 f"Capped chunk resolution: {len(all_chunk_ids)} → "
@@ -916,7 +934,7 @@ class KGRetrievalService:
         traversal_result: Optional[TraversalResult] = None
         if len(decomposition.concept_matches) >= 2:
             traversal_result = await self._relationship_traverser.traverse(
-                decomposition.concept_matches
+                decomposition.concept_matches, user_id
             )
             _t_traverse = time.monotonic()
             logger.info(
@@ -1636,14 +1654,40 @@ class KGRetrievalService:
                     promoted = False
                     if hop_distance == 1:
                         rel_type = relationship_path[0] if relationship_path else ""
-                        if (rel_type in _PROMOTION_ELIGIBLE_RELATIONSHIPS
-                                or rel_type in _UMLS_PROMOTION_ELIGIBLE_RELA):
+                        # A 1-hop UMLS `isa`/`inverse_isa` edge is pure
+                        # taxonomy, not a clinical link — the far side is a
+                        # broad ancestor/descendant (e.g. every drug under
+                        # "Pharmaceutical Preparations"), so promoting it
+                        # fans out to dozens of unrelated drug chunks.  The
+                        # ConceptNet `IsA` (PascalCase) symptom→diagnosis
+                        # promotion is unaffected: that arrives via
+                        # path_type="umls_1hop", not "umls_bridge".
+                        is_umls_hierarchy = (
+                            path_type == "umls_bridge"
+                            and rel_type in ("isa", "inverse_isa")
+                        )
+                        if not is_umls_hierarchy and (
+                            rel_type in _PROMOTION_ELIGIBLE_RELATIONSHIPS
+                            or rel_type in _UMLS_PROMOTION_ELIGIBLE_RELA
+                        ):
                             promoted = True
                     elif hop_distance == 2 and path_type in ("umls_bridge_2hop",):
                         rela1 = relationship_path[0] if len(relationship_path) > 0 else ""
                         rela2 = relationship_path[1] if len(relationship_path) > 1 else ""
+                        # A pure `isa -> inverse_isa` path is class
+                        # co-membership (both concepts share a common
+                        # ancestor, e.g. every drug under "Pharmaceutical
+                        # Preparations"), not a clinical link.  Promoting it
+                        # to full direct scoring fans out to dozens of
+                        # unrelated drugs and drowns out genuinely relevant
+                        # chunks.
+                        both_hierarchical = (
+                            rela1 in ("isa", "inverse_isa")
+                            and rela2 in ("isa", "inverse_isa")
+                        )
                         if (rela1 in _UMLS_PROMOTION_ELIGIBLE_RELA
-                                and rela2 in _UMLS_PROMOTION_ELIGIBLE_RELA):
+                                and rela2 in _UMLS_PROMOTION_ELIGIBLE_RELA
+                                and not both_hierarchical):
                             promoted = True
                     if promoted:
                         capped_chunk_ids = list(related_chunk_ids)[:_MAX_PROMOTED_CHUNKS_PER_CONCEPT]
@@ -2324,6 +2368,7 @@ class KGRetrievalService:
         _QUERY_TITLE_BOOST_WEIGHT = 0.15
         _CONCEPT_TITLE_BOOST_WEIGHT = 0.50
         _RATIONALE_WEIGHT = 0.25
+        _QUERY_VERBATIM_BOOST = 1.5
         _rationale_sims = rationale_sim_by_pair or {}
         _QUERY_STOPWORDS = {
             'what', 'is', 'the', 'a', 'an', 'and', 'or', 'of', 'in', 'to',
@@ -2450,6 +2495,24 @@ class KGRetrievalService:
             for doc_id in doc_id_to_title:
                 concept_title_boost[doc_id] = 1.0
 
+        # Query-focus signal: the set of matched concept names that appear
+        # verbatim (case-insensitive, punctuation-stripped) in the user's query.
+        # These are the concepts the user literally asked about ("work
+        # restrictions", "management guidelines") versus incidental
+        # co-mentioned variants ("hbsag status", "hcp.html").  Chunks reached
+        # through a verbatim concept are the direct answer and must not be
+        # outranked by chunks that merely match many incidental concepts.
+        def _norm_name(s: str) -> str:
+            return re.sub(r'[^a-z0-9\s]', '', (s or '').lower()).strip()
+
+        _query_verbatim_names: Set[str] = set()
+        if query and matched_concept_names:
+            _query_norm = _norm_name(query)
+            for _name in matched_concept_names:
+                _nn = _norm_name(_name)
+                if _nn and len(_nn) >= 4 and _nn in _query_norm:
+                    _query_verbatim_names.add(_nn)
+
         # Direct chunks: concept-coverage-aware scoring
         for chunk in direct_chunks:
             if chunk.chunk_id not in seen_ids:
@@ -2541,6 +2604,17 @@ class KGRetrievalService:
                             chunk.kg_relevance_score *= _TREATMENT_DRUG_BOOST
                             if _DOSAGE_METRIC_PATTERN.search(chunk.content or ""):
                                 chunk.kg_relevance_score *= _TREATMENT_DOSAGE_BOOST
+                    # Query-focus boost: if ANY concept hitting this chunk is a
+                    # verbatim query phrase, the chunk directly answers the
+                    # user's literal question.  Lift it above chunks that only
+                    # matched incidental co-mentioned concepts (coverage bonus
+                    # can otherwise let many weak HBsAg variants outrank the
+                    # single strong "work restrictions" hit).
+                    if _query_verbatim_names:
+                        for h in hits:
+                            if _norm_name(h.get("concept_name", "")) in _query_verbatim_names:
+                                chunk.kg_relevance_score *= _QUERY_VERBATIM_BOOST
+                                break
                     chunk.final_score = chunk.kg_relevance_score
                     # Store matched concepts on the chunk for downstream use
                     chunk.matched_concepts = hits
@@ -2655,8 +2729,13 @@ class KGRetrievalService:
         Apply relationship boost to intersection chunks.
 
         For each chunk reachable from >= 2 query concepts via relationship
-        paths, multiply its kg_relevance_score by a scaled boost factor
-        and cap at 1.0.
+        paths, multiply its kg_relevance_score by a scaled boost factor.
+
+        The kg_relevance_score is unnormalized (direct-chunk scoring can
+        exceed 1.0), so a pure multiplier is applied — never a cap.  A
+        ``min(1.0, ...)`` ceiling would *downgrade* the most relevant
+        multi-concept chunks (which legitimately score > 1.0) below
+        single-concept chunks, inverting the boost.
 
         Scaling formula:
             scaled_boost = boost_factor * (1 + 0.1 * (num_concepts - 2))
@@ -2686,7 +2765,7 @@ class KGRetrievalService:
             if chunk.chunk_id in intersection_ids:
                 num_concepts = traversal_result.concept_count_for_chunk(chunk.chunk_id)
                 scaled_boost = boost_factor * (1 + 0.1 * (num_concepts - 2))
-                chunk.kg_relevance_score = min(1.0, chunk.kg_relevance_score * scaled_boost)
+                chunk.kg_relevance_score = chunk.kg_relevance_score * scaled_boost
                 chunk.metadata["relationship_boost_applied"] = scaled_boost
                 chunk.metadata["connecting_concept_count"] = num_concepts
                 boosted_count += 1

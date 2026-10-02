@@ -298,11 +298,12 @@ class ConnectionManager:
         self.user_threads: Dict[str, str] = {}  # connection_id -> thread_id
         self.conversation_history: Dict[str, List[Dict[str, str]]] = {}
         self._active_jobs_subscribers: Set[str] = set()  # connection IDs subscribed to active jobs updates
-        
+        self._pending_clarifications: Dict[str, Any] = {}  # connection_id -> ClarificationRequest
+
         # Services are injected separately, not in __init__
         self._rag_service: Optional["RAGService"] = None
         self._ai_service: Optional["AIService"] = None
-        
+
         logger.info("ConnectionManager initialized (lazy, no service connections)")
     
     def set_services(
@@ -351,6 +352,7 @@ class ConnectionManager:
         if connection_id in self.conversation_history:
             del self.conversation_history[connection_id]
         self._active_jobs_subscribers.discard(connection_id)
+        self._pending_clarifications.pop(connection_id, None)
         logger.info(f"WebSocket connection closed: {connection_id}")
     
     def subscribe_active_jobs(self, connection_id: str) -> None:
@@ -377,6 +379,31 @@ class ConnectionManager:
             except Exception as e:
                 logger.error(f"Error sending message to {connection_id}: {e}")
                 self.disconnect(connection_id)
+
+    def store_clarification(self, connection_id: str, request: Any) -> None:
+        """Store a pending ClarificationRequest keyed by connection_id."""
+        self._pending_clarifications[connection_id] = request
+
+    def get_clarification(self, connection_id: str) -> Optional[Any]:
+        """Return the pending ClarificationRequest for a connection, if any."""
+        return self._pending_clarifications.get(connection_id)
+
+    def clear_clarification(self, connection_id: str) -> Optional[Any]:
+        """Pop and return the pending ClarificationRequest for a connection."""
+        return self._pending_clarifications.pop(connection_id, None)
+
+    async def send_concept_clarification(self, connection_id: str, request: Any) -> None:
+        """Emit a concept_clarification message for an unresolved idiom (Phase 5 §5.5)."""
+        from datetime import datetime
+        await self.send_personal_message({
+            'type': 'concept_clarification',
+            'request_id': request.request_id,
+            'original_query': request.original_query,
+            'unresolved_phrases': [
+                phrase.to_dict() for phrase in request.unresolved_phrases
+            ],
+            'timestamp': datetime.now().isoformat(),
+        }, connection_id)
     
     def get_thread_id(self, connection_id: str) -> Optional[str]:
         """Get the thread ID for a connection."""

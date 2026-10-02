@@ -31,6 +31,7 @@ class ChatUploadMessage(BaseModel):
     file_data: str = Field(..., description="Base64 encoded file content")
     title: Optional[str] = Field(None, description="Optional document title")
     description: Optional[str] = Field(None, description="Optional document description")
+    scope: Optional[str] = Field("private", description="Privacy scope: public | private")
 
 
 class DocumentListRequest(BaseModel):

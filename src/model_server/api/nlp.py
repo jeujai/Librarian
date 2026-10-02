@@ -24,7 +24,7 @@ class NLPRequest(BaseModel):
     )
     tasks: Optional[List[str]] = Field(
         default=["tokenize", "ner", "pos"],
-        description="NLP tasks to perform: tokenize, ner, pos, lemma, sentences"
+        description="NLP tasks to perform: tokenize, ner, pos, lemma, sentences, noun_chunks"
     )
 
 
@@ -34,9 +34,10 @@ class NLPResult(BaseModel):
     text: str
     tokens: Optional[List[str]] = None
     entities: Optional[List[Dict[str, Any]]] = None
-    pos_tags: Optional[List[Dict[str, str]]] = None
+    pos_tags: Optional[List[Dict[str, Any]]] = None
     lemmas: Optional[List[str]] = None
     sentences: Optional[List[str]] = None
+    noun_chunks: Optional[List[Dict[str, Any]]] = None
 
 
 class NLPResponse(BaseModel):
@@ -72,9 +73,10 @@ async def process_texts(request: NLPRequest) -> NLPResponse:
     Available tasks:
     - tokenize: Split text into tokens
     - ner: Named entity recognition
-    - pos: Part-of-speech tagging
+    - pos: Part-of-speech tagging with dependency arcs (dep/head/head_i)
     - lemma: Lemmatization
     - sentences: Sentence segmentation
+    - noun_chunks: Noun chunks with syntactic head + modifiers
     """
     start_time = time.time()
     
@@ -86,7 +88,7 @@ async def process_texts(request: NLPRequest) -> NLPResponse:
         )
     
     # Validate tasks
-    valid_tasks = {"tokenize", "ner", "pos", "lemma", "sentences"}
+    valid_tasks = {"tokenize", "ner", "pos", "lemma", "sentences", "noun_chunks"}
     tasks = request.tasks or ["tokenize", "ner", "pos"]
     invalid_tasks = set(tasks) - valid_tasks
     if invalid_tasks:

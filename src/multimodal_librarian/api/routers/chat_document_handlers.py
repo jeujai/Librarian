@@ -145,7 +145,8 @@ async def handle_chat_document_upload(
                 file_data=file_data,
                 filename=upload_msg.filename,
                 title=upload_msg.title,
-                description=upload_msg.description
+                description=upload_msg.description,
+                scope=upload_msg.scope or "private"
             )
             
             # Use the actual document_id from the database (not the

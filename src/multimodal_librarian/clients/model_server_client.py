@@ -354,7 +354,7 @@ class ModelServerClient:
         """Extract named entities (convenience method)."""
         results = await self.process_nlp(texts, tasks=["ner"])
         return [r.get("entities", []) for r in results]
-    
+
     def get_status(self) -> Dict[str, Any]:
         """Get client status information."""
         return {

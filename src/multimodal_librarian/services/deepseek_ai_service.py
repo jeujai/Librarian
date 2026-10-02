@@ -225,6 +225,13 @@ class DeepSeekAIService:
             .lower()
             == "true"
         )
+        # Retry count for clean-but-empty completions.  DeepSeek occasionally
+        # returns an immediate ``[DONE]`` with zero delta frames on the first
+        # request after idle (server-side model warm-up), which the client
+        # would otherwise surface as a sources-only response with no answer.
+        self._max_empty_stream_retries: int = int(
+            os.environ.get("DEEPSEEK_MAX_EMPTY_RETRIES", "1")
+        )
 
         # -------------------------------------------------------------
         # Shared resilience primitives (circuit breaker + error-rate tracker)
@@ -790,6 +797,60 @@ class DeepSeekAIService:
     # -----------------------------------------------------------------
 
     async def generate_response_stream(
+        self,
+        messages: List[Dict[str, str]],
+        context: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        preferred_provider: Optional[Any] = None,
+    ) -> AsyncGenerator[AIResponse, None]:
+        """Stream a response, retrying clean-but-empty completions.
+
+        Delegates each attempt to :meth:`_generate_response_stream_once`.
+        DeepSeek occasionally returns an immediate ``[DONE]`` with zero
+        delta frames on the first request after idle (server-side model
+        warm-up); without a retry this surfaces as a sources-only answer
+        with no text.  When an attempt terminates cleanly
+        (``finish_reason="stop"``) without yielding any content, the empty
+        terminal chunk is suppressed and the request is re-issued up to
+        ``self._max_empty_stream_retries`` times.  Error terminal chunks
+        (timeout, HTTP error, circuit breaker, content filter) are never
+        retried and pass through unchanged.
+        """
+        for attempt in range(self._max_empty_stream_retries + 1):
+            produced_content = False
+            async for chunk in self._generate_response_stream_once(
+                messages,
+                context=context,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                preferred_provider=preferred_provider,
+            ):
+                if chunk.content:
+                    produced_content = True
+                meta = chunk.metadata or {}
+                if (
+                    meta.get("is_final")
+                    and not produced_content
+                    and not meta.get("error_type")
+                    and attempt < self._max_empty_stream_retries
+                ):
+                    logger.warning(
+                        "deepseek_stream_empty_retry",
+                        extra={
+                            "event": "deepseek_stream_empty_retry",
+                            "attempt": attempt + 1,
+                            "max_retries": self._max_empty_stream_retries,
+                        },
+                    )
+                    break
+                yield chunk
+            else:
+                # Completed without a retry break: content was produced, an
+                # error terminal chunk was yielded, or retries are exhausted.
+                return
+
+    async def _generate_response_stream_once(
         self,
         messages: List[Dict[str, str]],
         context: Optional[str] = None,

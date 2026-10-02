@@ -13,7 +13,7 @@ _nlp_model: Optional["NLPModel"] = None
 class NLPModel:
     """Wrapper for spacy NLP model."""
     
-    def __init__(self, model_name: str = "en_core_web_sm"):
+    def __init__(self, model_name: str = "en_core_web_md"):
         self.model_name = model_name
         self._nlp = None
         self._loaded = False
@@ -80,7 +80,8 @@ class NLPModel:
         
         Args:
             texts: List of texts to process
-            tasks: List of tasks to perform (tokenize, ner, pos, lemma, sentences)
+            tasks: List of tasks to perform (tokenize, ner, pos, lemma, sentences,
+                   noun_chunks)
                    If None, performs all tasks
             
         Returns:
@@ -123,7 +124,10 @@ class NLPModel:
                         {
                             "token": token.text,
                             "pos": token.pos_,
-                            "tag": token.tag_
+                            "tag": token.tag_,
+                            "dep": token.dep_,
+                            "head": token.head.text,
+                            "head_i": token.head.i,
                         }
                         for token in doc
                     ]
@@ -133,7 +137,17 @@ class NLPModel:
                 
                 if "sentences" in tasks:
                     result["sentences"] = [sent.text for sent in doc.sents]
-                
+
+                if "noun_chunks" in tasks:
+                    result["noun_chunks"] = [
+                        {
+                            "text": nc.text,
+                            "root_text": nc.root.text,
+                            "modifier_texts": [t.text for t in nc if t.i != nc.root.i],
+                        }
+                        for nc in doc.noun_chunks
+                    ]
+
                 results.append(result)
             
             return results
@@ -167,7 +181,7 @@ def get_nlp_model() -> Optional[NLPModel]:
     return _nlp_model
 
 
-def initialize_nlp_model(model_name: str = "en_core_web_sm") -> NLPModel:
+def initialize_nlp_model(model_name: str = "en_core_web_md") -> NLPModel:
     """Initialize the global NLP model."""
     global _nlp_model
     

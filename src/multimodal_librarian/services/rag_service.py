@@ -31,11 +31,14 @@ from typing import (
 )
 from uuid import uuid4
 
+from ..components.kg_retrieval.emergent_bootstrap import EmergentBootstrap
 from ..components.kg_retrieval.query_decomposer import QueryDecomposer
 from ..components.kg_retrieval.relevance_detector import compute_chunk_noun_score
+from ..components.knowledge_graph.conceptnet_validator import ConceptNetValidator
 from ..components.knowledge_graph.kg_builder import KnowledgeGraphBuilder
 from ..components.knowledge_graph.kg_query_engine import KnowledgeGraphQueryEngine
 from ..config import get_settings
+from ..models.kg_retrieval import ClarificationRequest
 from ..utils.text_utils import truncate_content
 from .ai_service import AIResponse, AIService
 
@@ -129,7 +132,8 @@ class RAGResponse:
     search_results_count: int
     fallback_used: bool = False
     metadata: Dict[str, Any] = None
-    
+    clarification_request: Optional["ClarificationRequest"] = None
+
     def __post_init__(self):
         if self.metadata is None:
             self.metadata = {}
@@ -150,6 +154,7 @@ class RAGStreamingChunk:
     search_results_count: int = 0
     fallback_used: bool = False
     metadata: Optional[Dict[str, Any]] = None
+    clarification_request: Optional["ClarificationRequest"] = None
 
 class QueryProcessor:
     """Process and enhance user queries for better retrieval using knowledge graph."""
@@ -316,17 +321,19 @@ Reply with only one line, nothing else."""
         return False
     
     async def process_query(
-        self, 
-        query: str, 
-        conversation_context: Optional[List[Dict[str, str]]] = None
+        self,
+        query: str,
+        conversation_context: Optional[List[Dict[str, str]]] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[str, List[str], Dict[str, Any]]:
         """
         Process and enhance user query using knowledge graph reasoning.
-        
+
         Args:
             query: Original user query
             conversation_context: Recent conversation messages
-            
+            user_id: Optional caller identity for private-concept scope filtering
+
         Returns:
             Tuple of (enhanced_query, related_concepts, kg_metadata)
             kg_metadata includes '_decomposition' key with the raw
@@ -359,7 +366,7 @@ Reply with only one line, nothing else."""
             # Step 2: Extract concepts via QueryDecomposer
             if self.query_decomposer:
                 try:
-                    decomposition = await self.query_decomposer.decompose(query)
+                    decomposition = await self.query_decomposer.decompose(query, user_id)
                     
                     # Map concept_matches to name strings (top 5)
                     related_concepts = [
@@ -457,10 +464,13 @@ class ContextPreparer:
                 # Chunks without a page number are always kept (keyed by chunk_id).
                 # Use document_title (not document_id) because the same book
                 # may have been ingested more than once with different IDs.
+                # Context-expansion neighbours are exempt: they are the
+                # continuation of a truncated chunk and often share its page.
                 page = chunk.page_number
                 if page is None and chunk.metadata:
                     page = chunk.metadata.get('page_number')
-                if page is not None:
+                is_expansion = bool(chunk.metadata and chunk.metadata.get('context_expansion'))
+                if page is not None and not is_expansion:
                     # Normalize to int for consistent dedup key
                     try:
                         page = int(page)
@@ -573,23 +583,32 @@ class ContextPreparer:
             doc_id = chunk.document_id
             doc_count = document_counts.get(doc_id, 0)
 
-            if doc_count >= max_per_document:
-                continue
+            # Context-expansion neighbours are subordinate continuations of an
+            # already-ranked chunk; exempt them from the per-document diversity
+            # cap and page-diversity checks so they survive ranking.
+            is_expansion = bool(chunk.metadata and chunk.metadata.get('context_expansion'))
 
-            page = self._page_of(chunk)
-            pages_seen = pages_by_doc.get(doc_id, set())
+            if not is_expansion:
+                if doc_count >= max_per_document:
+                    continue
 
-            # After 2 chunks from the same document, require diversity:
-            # skip chunks from pages already represented.
-            if doc_count >= 2 and page is not None and page in pages_seen:
-                continue
+                page = self._page_of(chunk)
+                pages_seen = pages_by_doc.get(doc_id, set())
+
+                # After 2 chunks from the same document, require diversity:
+                # skip chunks from pages already represented.
+                if doc_count >= 2 and page is not None and page in pages_seen:
+                    continue
+            else:
+                page = self._page_of(chunk)
 
             ranked_chunks.append(chunk)
-            document_counts[doc_id] = doc_count + 1
-            if page is not None:
-                if doc_id not in pages_by_doc:
-                    pages_by_doc[doc_id] = set()
-                pages_by_doc[doc_id].add(page)
+            if not is_expansion:
+                document_counts[doc_id] = doc_count + 1
+                if page is not None:
+                    if doc_id not in pages_by_doc:
+                        pages_by_doc[doc_id] = set()
+                    pages_by_doc[doc_id].add(page)
 
         return ranked_chunks
     
@@ -741,6 +760,11 @@ class RAGService:
         self._last_relevance_verdict = None
         self._last_kg_explanation: Optional[str] = None
 
+        # Emergent-bootstrap (Phase 5 §5.5): lazily constructed from the
+        # QueryDecomposer's Neo4j + model-server clients.  None when semantic
+        # decomposition is unavailable (no QueryDecomposer injected).
+        self._emergent_bootstrap: Optional[EmergentBootstrap] = None
+
         # Retrieval result cache: ensures identical queries return
         # identical citation lists within a session.  Keyed by
         # SHA-256(query + user_id + document_filter).
@@ -770,6 +794,57 @@ class RAGService:
         self._retrieval_cache.clear()
         logger.info(f"Cleared {count} retrieval cache entries")
         return count
+
+    def _get_emergent_bootstrap(self) -> Optional[EmergentBootstrap]:
+        """Lazily build the Phase 5 emergent-bootstrap component.
+
+        Reuses the QueryDecomposer's already-injected Neo4j and model-server
+        clients; a fresh ConceptNetValidator wraps the same Neo4j client.  The
+        LLM callable is the service's AIService (same pattern as
+        QueryProcessor._classify_query_intent).
+        """
+        if self._emergent_bootstrap is not None:
+            return self._emergent_bootstrap
+        if self.query_decomposer is None:
+            return None
+        neo4j_client = getattr(self.query_decomposer, "_neo4j_client", None)
+        model_server_client = getattr(
+            self.query_decomposer, "_model_server_client", None
+        )
+        if neo4j_client is None or model_server_client is None:
+            return None
+        self._emergent_bootstrap = EmergentBootstrap(
+            neo4j_client=neo4j_client,
+            model_server_client=model_server_client,
+            conceptnet_validator=ConceptNetValidator(neo4j_client),
+            ai_service=self.ai_service,
+        )
+        return self._emergent_bootstrap
+
+    @staticmethod
+    def _extract_unresolved_phrases(
+        kg_metadata: Dict[str, Any],
+    ) -> List[Any]:
+        """Pull unresolved search phrases out of the stashed decomposition."""
+        decomposition = kg_metadata.get("_decomposition")
+        if decomposition is None:
+            return []
+        return getattr(decomposition, "unresolved_phrases", None) or []
+
+    async def _build_clarification(
+        self,
+        query: str,
+        unresolved_phrases: List[Any],
+    ) -> Optional[ClarificationRequest]:
+        """Build a ClarificationRequest for unresolved phrases, or None on failure."""
+        bootstrap = self._get_emergent_bootstrap()
+        if bootstrap is None:
+            return None
+        try:
+            return await bootstrap.build_clarification(query, unresolved_phrases)
+        except Exception as e:
+            logger.warning(f"Failed to build clarification request: {e}")
+            return None
 
     async def _refresh_conversation_source_cache(self) -> None:
         """Refresh the set of valid conversation source_ids from Postgres.
@@ -885,9 +960,34 @@ class RAGService:
         try:
             # Step 1: Process and enhance query with knowledge graph
             processed_query, related_concepts, kg_metadata = await self.query_processor.process_query(
-                query, conversation_context
+                query, conversation_context, user_id
             )
-            
+
+            # Step 1a: Phase 5 §5.5 — an unresolved idiom surfaced by
+            # decomposition short-circuits retrieval: build a clarification
+            # request for the WebSocket surface instead of answering blindly.
+            unresolved_phrases = self._extract_unresolved_phrases(kg_metadata)
+            if unresolved_phrases:
+                clarification = await self._build_clarification(
+                    query, unresolved_phrases
+                )
+                if clarification is not None:
+                    logger.info(
+                        f"Clarification needed for query (non-streaming): '{query}' "
+                        f"({len(unresolved_phrases)} unresolved phrase(s))"
+                    )
+                    return RAGResponse(
+                        response="",
+                        sources=[],
+                        confidence_score=0.0,
+                        processing_time_ms=int((time.time() - start_time) * 1000),
+                        tokens_used=0,
+                        search_results_count=0,
+                        fallback_used=False,
+                        clarification_request=clarification,
+                        metadata={"clarification_needed": True},
+                    )
+
             # Step 1b: If the LLM classified this as not needing retrieval,
             # skip search entirely and go straight to fallback response.
             if kg_metadata.get('skip_retrieval'):
@@ -1146,8 +1246,30 @@ class RAGService:
         try:
             # Step 1: Process and enhance query with knowledge graph
             processed_query, related_concepts, kg_metadata = await self.query_processor.process_query(
-                query, conversation_context
+                query, conversation_context, user_id
             )
+
+            # Step 1a: Phase 5 §5.5 — surface unresolved idioms as a
+            # clarification chunk rather than retrieving/generating.
+            unresolved_phrases = self._extract_unresolved_phrases(kg_metadata)
+            if unresolved_phrases:
+                clarification = await self._build_clarification(
+                    query, unresolved_phrases
+                )
+                if clarification is not None:
+                    logger.info(
+                        f"Clarification needed for query (streaming): '{query}' "
+                        f"({len(unresolved_phrases)} unresolved phrase(s))"
+                    )
+                    yield RAGStreamingChunk(
+                        content="",
+                        is_final=True,
+                        citations=[],
+                        search_results_count=0,
+                        clarification_request=clarification,
+                        metadata={"clarification_needed": True},
+                    )
+                    return
 
             # Step 1b: If the LLM classified this as not needing retrieval,
             # skip search entirely and go straight to fallback response.
@@ -1640,6 +1762,11 @@ RESPONSE RULES:
             query, chunks, query_decomposition=query_decomposition,
         )
 
+        # Recover truncated KG chunks by appending their chunk_index ± 1
+        # neighbours.  Runs after post-processing so the recovered neighbours
+        # are not dropped by the per-chunk key-noun / relevance filters.
+        chunks = await self._expand_neighbor_context(chunks)
+
         # Cache the result for deterministic repeated queries
         if len(self._retrieval_cache) >= self._max_retrieval_cache_size:
             oldest = next(iter(self._retrieval_cache))
@@ -1674,6 +1801,7 @@ RESPONSE RULES:
                     query,
                     top_k=self.max_search_results,
                     precomputed_decomposition=precomputed_decomposition,
+                    user_id=user_id,
                 )
 
                 # Use KG results if we got chunks and didn't fall back to semantic (Req 1.2)
@@ -2177,9 +2305,151 @@ RESPONSE RULES:
             chunks.append(chunk)
         return chunks
 
+    async def _expand_neighbor_context(
+        self, chunks: List[DocumentChunk]
+    ) -> List[DocumentChunk]:
+        """Append the chunk_index ± 1 neighbours of top KG-retrieved chunks.
+
+        KG retrieval can surface a chunk whose content was truncated mid-sentence
+        at a chunk boundary (e.g. a list split across chunk 33/34).  The
+        continuation chunk may not rank on its own, so we recover it here by
+        fetching each top KG chunk's immediate neighbours from Postgres and
+        appending them as subordinate context.
+
+        Neighbours are located by ``chunk_id`` (the authoritative Postgres
+        ``knowledge_chunks.id`` UUID) within the source's ``chunk_index`` ordering
+        — not by the vector-store ``chunk_index`` metadata, which diverges from
+        the Postgres column once secondary chunking merges/splits chunks.  They
+        are marked ``context_expansion`` so downstream ranking keeps them
+        subordinate: they are exempt from the per-document diversity cap and the
+        same-page dedup, but score at 0.9 × their parent so they rank just below
+        it and survive the context-length cut when their parent does.
+        """
+        import asyncpg
+        import uuid as _uuid
+
+        # Only expand KG-retrieved chunks (the direct concept→chunk hits subject
+        # to truncation).  Web/semantic-fallback chunks lack kg_retrieval metadata.
+        targets: List[DocumentChunk] = []
+        for chunk in chunks:
+            meta = chunk.metadata or {}
+            if not meta.get('kg_retrieval'):
+                continue
+            source_id = meta.get('source_id') or chunk.document_id
+            if not source_id or source_id == 'unknown':
+                continue
+            try:
+                _uuid.UUID(str(source_id))
+            except (ValueError, TypeError):
+                continue
+            targets.append(chunk)
+
+        if not targets:
+            return chunks
+
+        # Expand only the highest-scoring KG chunks; their neighbours are the
+        # ones worth recovering.  Bounds the total number of appended chunks.
+        targets.sort(key=lambda c: c.similarity_score, reverse=True)
+        targets = targets[:10]
+
+        try:
+            conn = await asyncpg.connect(
+                host=self.settings.postgres_host,
+                port=self.settings.postgres_port,
+                user=self.settings.postgres_user,
+                password=self.settings.postgres_password,
+                database=self.settings.postgres_db,
+                timeout=5,
+            )
+        except Exception as e:
+            logger.warning(f"Context expansion: cannot reach Postgres: {e}")
+            return chunks
+
+        try:
+            source_ids = list({str(c.metadata.get('source_id') or c.document_id) for c in targets})
+            rows = await conn.fetch(
+                "SELECT source_id, id FROM multimodal_librarian.knowledge_chunks "
+                "WHERE source_id = ANY($1::uuid[]) ORDER BY source_id, chunk_index ASC",
+                source_ids,
+            )
+            order: Dict[str, List[str]] = {}
+            for r in rows:
+                order.setdefault(str(r['source_id']), []).append(str(r['id']))
+
+            existing_ids = {c.chunk_id for c in chunks}
+            parent_of: Dict[str, DocumentChunk] = {}
+            for chunk in targets:
+                ids = order.get(str(chunk.metadata.get('source_id') or chunk.document_id), [])
+                try:
+                    pos = ids.index(chunk.chunk_id)
+                except ValueError:
+                    continue
+                for npos in (pos - 1, pos + 1):
+                    if 0 <= npos < len(ids):
+                        nid = ids[npos]
+                        if nid not in existing_ids and nid not in parent_of:
+                            parent_of[nid] = chunk
+
+            if not parent_of:
+                return chunks
+
+            nrows = await conn.fetch(
+                "SELECT kc.id, kc.source_id, kc.content, kc.metadata, "
+                "       kc.location_reference, kc.section, ks.title AS document_title "
+                "FROM multimodal_librarian.knowledge_chunks kc "
+                "JOIN multimodal_librarian.knowledge_sources ks ON kc.source_id = ks.id "
+                "WHERE kc.id = ANY($1::uuid[])",
+                list(parent_of.keys()),
+            )
+        finally:
+            await conn.close()
+
+        by_id = {str(r['id']): r for r in nrows}
+        expanded: List[DocumentChunk] = []
+        for nid, parent in parent_of.items():
+            row = by_id.get(nid)
+            if not row:
+                continue
+            content = row['content'] or ''
+            if not content.strip():
+                continue
+            raw_meta = row['metadata']
+            if isinstance(raw_meta, str):
+                try:
+                    raw_meta = json.loads(raw_meta)
+                except Exception:
+                    raw_meta = {}
+            metadata = dict(raw_meta or {})
+            metadata.update({
+                'source_id': str(row['source_id']),
+                'context_expansion': True,
+                'neighbor_of': parent.chunk_id,
+            })
+            page_number = metadata.get('page_number')
+            expanded.append(DocumentChunk(
+                chunk_id=nid,
+                document_id=str(row['source_id']),
+                document_title=row['document_title'] or parent.document_title or 'Unknown Document',
+                content=content,
+                page_number=page_number,
+                section_title=metadata.get('section_title') or (row['section'] or None),
+                chunk_type=metadata.get('chunk_type', 'text'),
+                similarity_score=parent.similarity_score * 0.9,
+                metadata=metadata,
+                source_type=SearchSourceType.LIBRARIAN.value,
+            ))
+
+        if expanded:
+            logger.info(
+                f"Context expansion: appended {len(expanded)} neighbour chunk(s) "
+                f"for {len(targets)} top KG chunk(s)"
+            )
+            return chunks + expanded
+        return chunks
 
 
-    
+
+
     def _convert_kg_results(self, kg_result: "KGRetrievalResult") -> List[DocumentChunk]:
         """Convert KGRetrievalResult to list of DocumentChunks.
         

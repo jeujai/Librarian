@@ -283,6 +283,15 @@ class EnrichmentService:
                 concepts, result.enriched_concepts, document_id
             )
 
+        # --- Step 5c: Materialize compositional/reading anchors (Phase 2) ---
+        # Best-effort, document-scoped: reify polysemous senses as :Anchor
+        # {kind:"reading"} and subgraph-equivalent compounds as :Anchor
+        # {kind:"composite"}.  Runs after SAME_AS bridging so faithful ontology
+        # edges between parts are available.
+        if self.kg_service and self.kg_service.client:
+            await self._materialize_reading_anchors(concepts, document_id)
+            await self._materialize_composite_anchors(concepts, document_id)
+
         # --- Step 6: Compute composite cross-document scores ---
         if self.kg_service and self.kg_service.client:
             from .composite_score_engine import CompositeScoreEngine
@@ -551,6 +560,121 @@ class EnrichmentService:
 
         except Exception as e:
             logger.warning(f"Bulk cross-document link creation failed: {e}")
+            return 0
+
+    async def _materialize_reading_anchors(
+        self,
+        concepts: List[ConceptNode],
+        document_id: str,
+    ) -> int:
+        """Reify polysemous senses as :Anchor {kind:"reading"} nodes (Phase 2 step 4).
+
+        For each concept whose EXTRACTED_FROM edges carry more than one distinct
+        ``r.concept_type``, materialize one reading anchor per type.  The anchor
+        is keyed per (concept, type) via ``name_lower`` so readings never collide
+        across concepts.  No SAME_AS is fabricated here — a reading carries its own
+        identity claim only when the ontology independently supports it.
+
+        Best-effort and document-scoped; returns the number of anchors created.
+        """
+        if not concepts or not (self.kg_service and self.kg_service.client):
+            return 0
+
+        name_lowers = list({c.concept_name.lower() for c in concepts})
+        if not name_lowers:
+            return 0
+
+        try:
+            from datetime import datetime
+            query = """
+            UNWIND $name_lowers AS name_lower
+            MATCH (c:Concept {name_lower: name_lower, scope: 'public'})
+                  -[e:EXTRACTED_FROM]->(:Chunk)
+            WITH c, collect(DISTINCT e.concept_type) AS types
+            WHERE size(types) > 1
+            UNWIND types AS t
+            MERGE (a:Anchor {kind: 'reading', concept_type: t, scope: 'public',
+                             name_lower: c.name_lower})
+            ON CREATE SET a.owner_id = c.owner_id, a.created_at = $created_at
+            MERGE (c)-[:HAS_READING]->(a)
+            RETURN count(a) AS cnt
+            """
+            result = await self.kg_service.client.execute_query(
+                query,
+                {
+                    "name_lowers": name_lowers,
+                    "created_at": datetime.utcnow().isoformat(),
+                },
+            )
+            cnt = result[0].get("cnt", 0) if result else 0
+            if cnt > 0:
+                logger.info(
+                    f"Materialized {cnt} reading anchors for document {document_id}"
+                )
+            return cnt
+
+        except Exception as e:
+            logger.warning(f"Reading-anchor materialization failed: {e}")
+            return 0
+
+    async def _materialize_composite_anchors(
+        self,
+        concepts: List[ConceptNode],
+        document_id: str,
+    ) -> int:
+        """Materialize :Anchor {kind:"composite"} for subgraph-equivalent compounds (Phase 2 step 3).
+
+        For each compound with HAS_HEAD/HAS_MODIFIER grounding, resolve the part
+        surface names to ConceptNetConcept nodes and materialize a composite anchor
+        only when a faithful direct ConceptNetRelation edge joins them (§4.5).  The
+        anchor records that edge type and points at the part ontology nodes via
+        HAS_PART; the compound then reaches canonical identity through SAME_AS.
+
+        Narrow by design: fires only where the ontology already connects the parts.
+        """
+        if not concepts or not (self.kg_service and self.kg_service.client):
+            return 0
+
+        name_lowers = list({c.concept_name.lower() for c in concepts})
+        if not name_lowers:
+            return 0
+
+        try:
+            from datetime import datetime
+            query = """
+            UNWIND $name_lowers AS name_lower
+            MATCH (comp:Concept {name_lower: name_lower, scope: 'public'})
+            MATCH (comp)-[:HAS_HEAD]->(head:Concept)
+            MATCH (comp)-[:HAS_MODIFIER]->(mod:Concept)
+            WITH comp, head, mod,
+                 toLower(head.name) AS hname, toLower(mod.name) AS mname
+            MATCH (h:ConceptNetConcept {name: hname})
+            MATCH (m:ConceptNetConcept {name: mname})
+            MATCH (h)-[r:ConceptNetRelation]->(m)
+            MERGE (a:Anchor {kind: 'composite', relationship_type: r.relation_type,
+                             name_lower: comp.name_lower, scope: 'public'})
+            ON CREATE SET a.owner_id = comp.owner_id, a.created_at = $created_at
+            MERGE (a)-[:HAS_PART]->(h)
+            MERGE (a)-[:HAS_PART]->(m)
+            MERGE (comp)-[:SAME_AS]->(a)
+            RETURN count(a) AS cnt
+            """
+            result = await self.kg_service.client.execute_query(
+                query,
+                {
+                    "name_lowers": name_lowers,
+                    "created_at": datetime.utcnow().isoformat(),
+                },
+            )
+            cnt = result[0].get("cnt", 0) if result else 0
+            if cnt > 0:
+                logger.info(
+                    f"Materialized {cnt} composite anchors for document {document_id}"
+                )
+            return cnt
+
+        except Exception as e:
+            logger.warning(f"Composite-anchor materialization failed: {e}")
             return 0
 
     async def create_cross_document_links(

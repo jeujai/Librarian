@@ -11,12 +11,17 @@ services:
       - "8001:8001"
     environment:
       - EMBEDDING_MODEL=BAAI/bge-base-en-v1.5
-      - NLP_MODEL=en_core_web_sm
+      - NLP_MODEL=en_core_web_md
       - CROSS_ENCODER_MODEL=BAAI/bge-reranker-v2-m3
       - LOG_LEVEL=INFO
       - PRELOAD_MODELS=true
     volumes:
       - ./data/model-cache:/root/.cache # Cache downloaded models
+    # Run as root so the container can read the host-mounted model cache above.
+    # The image's non-root `modelserver` user (uid 1000) can't access these files
+    # (host uid 501 + 0700 perms on macOS Docker Desktop), so it re-downloads
+    # every model into its own empty ~/.cache on each recreate.
+    user: root
     restart: unless-stopped
     networks:
       - app-network
@@ -319,7 +324,11 @@ services:
       # (SNOMEDCT_US, MSH, ICD10CM, RXNORM, LNC, HPO + NDF-RT, ICD10PCS, ATC)
       - NEO4J_dbms_memory_heap_initial__size=512M
       - NEO4J_dbms_memory_heap_max__size=2G
-      - NEO4J_dbms_memory_pagecache_size=512M
+      # ~11 GB of embeddings (Concept 673K + UMLS 1.14M + ConceptNet 1.79M
+      # nodes @ 768-dim x 4B). 512M page cache cannot keep the HNSW index
+      # pages resident, forcing reads from the slow exFAT backing store on
+      # every vector query; 4G keeps the concept + UMLS indexes largely resident.
+      - NEO4J_dbms_memory_pagecache_size=4G
       # Query optimization
       - NEO4J_dbms_query__cache__size=1000
       - NEO4J_cypher_min__replan__interval=10s

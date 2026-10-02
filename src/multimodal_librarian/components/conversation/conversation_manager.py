@@ -85,23 +85,25 @@ class ConversationManager:
         
         logger.info("Initialized ConversationManager")
     
-    def start_conversation(self, user_id: str, initial_message: Optional[str] = None) -> ConversationThread:
+    def start_conversation(self, user_id: str, initial_message: Optional[str] = None, scope: str = "private") -> ConversationThread:
         """
         Initialize new conversation thread.
-        
+
         Args:
             user_id: Identifier for the user
             initial_message: Optional initial message content
-            
+            scope: Privacy scope ("public" | "private")
+
         Returns:
             ConversationThread: New conversation thread
         """
         thread_id = str(uuid.uuid4())
-        
+
         # Create conversation thread
         conversation = ConversationThread(
             thread_id=thread_id,
             user_id=user_id,
+            scope=scope,
             messages=[],
             created_at=datetime.now(),
             last_updated=datetime.now(),
@@ -494,7 +496,9 @@ class ConversationManager:
         results["milvus_deleted"] = await self._delete_vectors_from_milvus(source_id, results)
 
         # --- Neo4j cleanup ---
-        results["neo4j_deleted"] = await self._delete_nodes_from_neo4j(source_id, results)
+        results["neo4j_deleted"] = await self._delete_nodes_from_neo4j(
+            source_id, results, user_id or None
+        )
 
         # --- Postgres cleanup (existing sync logic) ---
         pg_ok = self.delete_conversation(thread_id, user_id)
@@ -561,11 +565,13 @@ class ConversationManager:
         finally:
             await loop.run_in_executor(None, connections.disconnect, alias)
 
-    async def _delete_nodes_from_neo4j(self, source_id: str, results: Dict[str, Any]) -> int:
+    async def _delete_nodes_from_neo4j(
+        self, source_id: str, results: Dict[str, Any], user_id: Optional[str] = None
+    ) -> int:
         """Delete conversation nodes from Neo4j with a 30-second timeout."""
         try:
             return await asyncio.wait_for(
-                self._delete_nodes_from_neo4j_inner(source_id, results),
+                self._delete_nodes_from_neo4j_inner(source_id, results, user_id),
                 timeout=30,
             )
         except asyncio.TimeoutError:
@@ -577,7 +583,9 @@ class ConversationManager:
             results["errors"].append(f"Neo4j: {e}")
             return 0
 
-    async def _delete_nodes_from_neo4j_inner(self, source_id: str, results: Dict[str, Any]) -> int:
+    async def _delete_nodes_from_neo4j_inner(
+        self, source_id: str, results: Dict[str, Any], user_id: Optional[str] = None
+    ) -> int:
         try:
             from ...services.knowledge_graph_service import KnowledgeGraphService
             kg = KnowledgeGraphService()
@@ -600,8 +608,12 @@ class ConversationManager:
                     "MATCH (c:Concept) "
                     "WHERE NOT EXISTS { MATCH (c)-[:EXTRACTED_FROM]->() } "
                     "AND NOT EXISTS { MATCH (c)<-[:SAME_AS]-() } "
+                    "AND c.bridge_status <> 'canonical' "
+                    "AND c.provenance = 'corpus-mined' "
+                    "AND (c.scope = 'public' "
+                    "     OR (c.scope = 'private' AND c.owner_id = $owner_id)) "
                     "DETACH DELETE c RETURN count(c) AS deleted_concepts",
-                    {},
+                    {"owner_id": user_id},
                 )
                 deleted_concepts = res_concepts[0]["deleted_concepts"] if res_concepts else 0
 
@@ -832,14 +844,15 @@ class ConversationManager:
                 session.execute(
                     text(
                         "INSERT INTO multimodal_librarian.conversation_threads "
-                        "(id, user_id, title, created_at, updated_at, last_message_at) "
-                        "VALUES (:tid, :uid, :title, :created, :updated, :lm) "
+                        "(id, user_id, title, scope, created_at, updated_at, last_message_at) "
+                        "VALUES (:tid, :uid, :title, :scope, :created, :updated, :lm) "
                         "ON CONFLICT (id) DO NOTHING"
                     ),
                     {
                         "tid": thread_uuid,
                         "uid": user_uuid,
                         "title": f"Conversation {conversation.thread_id[:8]}",
+                        "scope": getattr(conversation, "scope", "private"),
                         "created": now,
                         "updated": now,
                         "lm": now,

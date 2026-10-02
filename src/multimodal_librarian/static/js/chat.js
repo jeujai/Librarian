@@ -1291,12 +1291,31 @@ class ChatApp {
     }
 
     /**
+     * Resolve the current content privacy scope from the checkbox.
+     */
+    getScope() {
+        const el = document.getElementById('privateScope');
+        return el && el.checked ? 'private' : 'public';
+    }
+
+    /**
+     * Lock the privacy checkbox once content has been created.
+     */
+    lockScope() {
+        const el = document.getElementById('privateScope');
+        if (el) el.disabled = true;
+    }
+
+    /**
      * Start a new conversation
      */
     startNewConversation() {
+        const scope = this.getScope();
         this.wsManager.send({
-            type: 'start_conversation'
+            type: 'start_conversation',
+            scope: scope
         });
+        this.lockScope();
     }
 
     /**

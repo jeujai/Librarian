@@ -270,6 +270,7 @@ BEGIN
         CREATE TABLE IF NOT EXISTS multimodal_librarian.knowledge_sources (
             id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
             source_type VARCHAR(20) NOT NULL,
+            scope VARCHAR(20) NOT NULL DEFAULT 'private',
             title VARCHAR(500) NOT NULL,
             author VARCHAR(200),
             file_path VARCHAR(1000),

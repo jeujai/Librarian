@@ -148,7 +148,7 @@ class PrivacyService:
                 
                 # 5. Delete from knowledge graph
                 try:
-                    await self._delete_from_knowledge_graph(book_id)
+                    await self._delete_from_knowledge_graph(book_id, user_id)
                     deletion_report["deleted_components"].append("knowledge_graph")
                 except Exception as e:
                     error_msg = f"Failed to delete from knowledge graph: {e}"
@@ -244,7 +244,7 @@ class PrivacyService:
                     
                     # 2. Delete from knowledge graph
                     try:
-                        await self._delete_from_knowledge_graph(str(knowledge_source.id))
+                        await self._delete_from_knowledge_graph(str(knowledge_source.id), user_id)
                         deletion_report["deleted_components"].append("knowledge_graph")
                     except Exception as e:
                         error_msg = f"Failed to delete from knowledge graph: {e}"
@@ -350,7 +350,7 @@ class PrivacyService:
             raise
     
 
-    async def _delete_from_knowledge_graph(self, source_id: str):
+    async def _delete_from_knowledge_graph(self, source_id: str, owner_id: Optional[str] = None):
         """Delete chunks, EXTRACTED_FROM relationships, and orphaned concepts from knowledge graph."""
         try:
             logger.info(f"Deleting knowledge graph data for source: {source_id}")
@@ -404,13 +404,14 @@ class PrivacyService:
                     MATCH (c:Concept)
                     WHERE NOT EXISTS { MATCH (c)-[:EXTRACTED_FROM]->() }
                       AND NOT EXISTS { MATCH (c)<-[:SAME_AS]-() }
-                      AND c.scope = 'public'
                       AND c.bridge_status <> 'canonical'
                       AND c.provenance = 'corpus-mined'
+                      AND (c.scope = 'public'
+                           OR (c.scope = 'private' AND c.owner_id = $owner_id))
                     DETACH DELETE c
                     RETURN count(c) AS deleted_concepts
                     """,
-                    {}
+                    {"owner_id": owner_id}
                 )
                 deleted_concepts = result_concepts[0].get("deleted_concepts", 0) if result_concepts else 0
 

@@ -193,6 +193,104 @@ class TestAdjustBoundaryForConceptContiguity:
         assert result == 0
 
 
+class TestSentenceReanchorAfterConceptShift:
+    """A concept-protection shift snaps to the nearest sentence boundary so the
+    split lands on a sentence end rather than mid-sentence.
+
+    Requirements: 3.1, 3.2, 3.4 (sentence + concept contiguity together)
+    """
+
+    def _single_concept_extractor(self, framework, name, confidence=0.9):
+        """Mock the extractor to return exactly one multi-word concept."""
+        mock_extractor = MagicMock()
+        mock_extractor.extract_concepts_regex.return_value = [
+            ConceptNode(
+                concept_id=f"mw_{name.replace(' ', '_')}",
+                concept_name=name,
+                concept_type="MULTI_WORD",
+                confidence=confidence,
+            )
+        ]
+        framework._concept_extractor = mock_extractor
+        framework._extract_domain_concepts = MagicMock(return_value=[])
+
+    def test_forward_shift_snaps_to_sentence_end(self, framework):
+        """Shifting past a concept also lands on the following sentence end."""
+        self._single_concept_extractor(framework, "knowledge graph")
+
+        pre = "we study the knowledge"
+        post = "graph in detail. Then we move"
+        result = framework._adjust_boundary_for_concept_contiguity(
+            pre_boundary_text=pre,
+            post_boundary_text=post,
+            boundary_word_index=4,
+            max_chunk_size=200,
+            current_chunk_size=4,
+            overlap_window=5,
+        )
+        # "knowledge graph" spans [3, 5); the raw forward shift would stop at
+        # 5, but the sentence ends at "detail." (overlap word 6) so the
+        # boundary snaps to 7 to end the sentence cleanly.
+        assert result == 7
+
+    def test_backward_shift_snaps_to_sentence_end(self, framework):
+        """A backward shift lands on the sentence end before the concept start."""
+        self._single_concept_extractor(framework, "knowledge graph")
+
+        pre = "Alpha done. Beta knowledge"
+        post = "graph gamma"
+        result = framework._adjust_boundary_for_concept_contiguity(
+            pre_boundary_text=pre,
+            post_boundary_text=post,
+            boundary_word_index=4,
+            max_chunk_size=4,       # forward shift would exceed the cap
+            current_chunk_size=4,
+            overlap_window=5,
+        )
+        # Forward shift fails (4 + 1 > 4).  Raw backward shift would stop at
+        # the concept start (3), but the sentence ends at "done." (word 2), so
+        # the boundary snaps back to 2.
+        assert result == 2
+
+    def test_forward_shift_snaps_to_newline_list_boundary(self, framework):
+        """A forward shift anchors to a newline list marker, not just a period."""
+        self._single_concept_extractor(framework, "knowledge graph")
+
+        pre = "we study the knowledge"
+        post = "graph in detail\n- Then we move on"
+        result = framework._adjust_boundary_for_concept_contiguity(
+            pre_boundary_text=pre,
+            post_boundary_text=post,
+            boundary_word_index=4,
+            max_chunk_size=200,
+            current_chunk_size=4,
+            overlap_window=20,
+        )
+        # "knowledge graph" spans [3, 5).  The bulleted item starts after
+        # "detail" (overlap word 6); with newlines preserved the boundary
+        # snaps to 7 (before the bullet) instead of stopping at the raw
+        # concept edge (5).
+        assert result == 7
+
+    def test_no_sentence_end_keeps_concept_edge(self, framework):
+        """With no punctuation in the window, the boundary stays at the edge."""
+        self._single_concept_extractor(framework, "knowledge graph")
+
+        pre = "we study the knowledge"
+        post = "graph in detail today now"
+        result = framework._adjust_boundary_for_concept_contiguity(
+            pre_boundary_text=pre,
+            post_boundary_text=post,
+            boundary_word_index=4,
+            max_chunk_size=200,
+            current_chunk_size=4,
+            overlap_window=5,
+        )
+        # No sentence boundary exists, so the forward shift stops at the
+        # concept edge (5) as before.
+        assert result == 5
+
+
 class TestUnresolvedBisectionRecording:
     """Tests for unresolved bisection recording in
     _adjust_boundary_for_concept_contiguity.
@@ -301,73 +399,10 @@ class TestUnresolvedBisectionRecording:
         assert bisections[0].concept_confidence == 0.85
         assert bisections[0].boundary_index == 1
 
-    def test_multiple_concepts_records_unresolved_others(self, framework):
-        """When multiple concepts span, non-best ones are recorded."""
+    def test_overlapping_concepts_resolved_iteratively(self, framework):
+        """Overlapping concepts that both span the boundary are each kept
+        whole — the boundary shifts past them in turn."""
         mock_extractor = MagicMock()
-        concept_low = ConceptNode(
-            concept_id="mw_data_model",
-            concept_name="data model",
-            concept_type="MULTI_WORD",
-            confidence=0.5,
-        )
-        concept_high = ConceptNode(
-            concept_id="mw_knowledge_graph",
-            concept_name="knowledge graph",
-            concept_type="MULTI_WORD",
-            confidence=0.9,
-        )
-        mock_extractor.extract_concepts_regex.return_value = [
-            concept_low, concept_high,
-        ]
-        framework._concept_extractor = mock_extractor
-
-        bisections = []
-        # overlap_pre = ["foo", "data"], overlap_post = ["model", "knowledge", "graph", "bar"]
-        # boundary_in_overlap = 2
-        # "data model" at [1, 3) → spans boundary (1 < 2 < 3) ✓
-        # "knowledge graph" at [3, 5) → does NOT span boundary (3 < 2 is false)
-        # Actually we need BOTH to span. Let's use a different layout.
-        #
-        # overlap_pre = ["the", "data", "knowledge"]
-        # overlap_post = ["model", "graph", "end"]
-        # boundary_in_overlap = 3
-        # "data model": need consecutive "data","model" — at [1] and [3]? No, not consecutive.
-        #
-        # Better: mock returns concepts that both happen to span.
-        # Use overlap where both concepts straddle the boundary:
-        # overlap_pre = ["data", "knowledge"], overlap_post = ["model", "graph"]
-        # boundary_in_overlap = 2
-        # "data" at 0, "model" at 2 → not consecutive in overlap
-        #
-        # Simplest: make the mock return concepts whose tokens DO appear
-        # consecutively spanning the boundary.
-        # overlap = ["x", "data", "model", "knowledge", "graph", "y"]
-        # boundary_in_overlap = 3 (between "model" and "knowledge")
-        # "data model" at [1,3) → spans? 1 < 3 < 3 → NO (3 is not < 3)
-        #
-        # boundary_in_overlap = 2 (between "model" and "knowledge"... wait)
-        # Let's be precise:
-        # pre = "x data", post = "model knowledge graph y"
-        # overlap_pre = ["x", "data"], overlap_post = ["model", "knowledge", "graph", "y"]
-        # boundary_in_overlap = 2
-        # "data model" at [1, 3) → 1 < 2 < 3 ✓
-        # "knowledge graph" at [3, 5) → 3 < 2 is false → NO
-        #
-        # We need both at the same boundary. That requires overlapping
-        # multi-word concepts. Let's use:
-        # pre = "x data model", post = "knowledge graph y"
-        # overlap_pre = ["x", "data", "model"]
-        # overlap_post = ["knowledge", "graph", "y"]
-        # boundary_in_overlap = 3
-        # "data model" at [1, 3) → 1 < 3 < 3 → NO
-        # "model knowledge" at [2, 4) → 2 < 3 < 4 → YES
-        # "knowledge graph" at [3, 5) → 3 < 3 → NO
-        #
-        # Hard to get two concepts spanning the same boundary with real
-        # token positions. Use a 3-word concept trick:
-        # concept_a = "model knowledge graph" (3 tokens) at [2, 5)
-        # concept_b = "data model knowledge" (3 tokens) at [1, 4)
-        # Both span boundary_in_overlap=3.
         concept_a = ConceptNode(
             concept_id="mw_a",
             concept_name="model knowledge graph",
@@ -383,14 +418,15 @@ class TestUnresolvedBisectionRecording:
         mock_extractor.extract_concepts_regex.return_value = [
             concept_a, concept_b,
         ]
+        framework._concept_extractor = mock_extractor
 
+        bisections = []
         pre = "x data model"
         post = "knowledge graph y"
-        # overlap_pre = ["x", "data", "model"], overlap_post = ["knowledge", "graph", "y"]
-        # boundary_in_overlap = 3
-        # "model knowledge graph" at [2, 5) → 2 < 3 < 5 ✓
-        # "data model knowledge" at [1, 4) → 1 < 3 < 4 ✓
-        framework._adjust_boundary_for_concept_contiguity(
+        # overlap = ["x","data","model","knowledge","graph","y"], boundary 3.
+        # "data model knowledge" spans [1,4) and "model knowledge graph"
+        # spans [2,5); both straddle the boundary.
+        result = framework._adjust_boundary_for_concept_contiguity(
             pre_boundary_text=pre,
             post_boundary_text=post,
             boundary_word_index=3,
@@ -399,11 +435,11 @@ class TestUnresolvedBisectionRecording:
             overlap_window=5,
             unresolved_bisections=bisections,
         )
-        # "data model knowledge" (0.9) is the best → resolved.
-        # "model knowledge graph" (0.5) is recorded as unresolved.
-        assert len(bisections) == 1
-        assert bisections[0].concept_name == "model knowledge graph"
-        assert bisections[0].concept_confidence == 0.5
+        # The boundary shifts past the 0.9 concept (to 4), then past the 0.5
+        # concept (to 5), keeping "data model knowledge graph" whole.  Neither
+        # concept is left bisected, so nothing is recorded as unresolved.
+        assert result == 5
+        assert bisections == []
 
     def test_exception_records_nothing(self, framework):
         """If concept extraction raises, no bisections are recorded."""
@@ -499,3 +535,179 @@ class TestPerformPrimaryChunkingBisections:
                     assert bis.chunk_after_id != ""
                     assert bis.chunk_before_id == chunks[boundary_idx].id
                     assert bis.chunk_after_id == chunks[boundary_idx + 1].id
+
+
+class TestKnownConceptPrefetch:
+    """Regression tests for the prefetched known-concept vocabulary path.
+
+    ``known_concept_names`` holds vetted multi-word names (UMLS + seed/
+    canonical/frozen librarian concepts) that the boundary-contiguity check
+    keeps whole even when the regex/spaCy sources miss them.
+    """
+
+    def test_match_known_concepts_returns_vetted_concepts(self, framework):
+        """Vetted multi-word names present in text yield KNOWN_CONCEPT nodes."""
+        framework.known_concept_names = {
+            "hepatitis b surface antigen",
+            "work restrictions",
+        }
+        concepts = framework._match_known_concepts(
+            "tests for hepatitis b surface antigen and work restrictions"
+        )
+        assert {c.concept_name for c in concepts} == {
+            "hepatitis b surface antigen",
+            "work restrictions",
+        }
+        for c in concepts:
+            assert c.concept_type == "KNOWN_CONCEPT"
+            assert c.confidence == 0.92
+            assert c.concept_id == f"public:{c.concept_name}"
+
+    def test_match_known_concepts_empty_when_no_vocab(self, framework):
+        """No prefetched vocabulary yields no matches."""
+        assert framework.known_concept_names == set()
+        assert framework._match_known_concepts("hepatitis b surface antigen") == []
+
+    def test_match_known_concepts_beyond_five_grams(self, framework):
+        """A vetted concept longer than five words is still matched."""
+        framework.known_concept_names = {
+            "attention deficit hyperactivity disorder combined type",
+        }
+        concepts = framework._match_known_concepts(
+            "diagnosis of attention deficit hyperactivity disorder "
+            "combined type today"
+        )
+        assert {c.concept_name for c in concepts} == {
+            "attention deficit hyperactivity disorder combined type",
+        }
+
+    @pytest.mark.parametrize(
+        "token, expected",
+        [
+            ("procedure", "procedure"),
+            ("procedures", "procedure"),
+            ("guideline", "guideline"),
+            ("guidelines", "guideline"),
+            ("restriction", "restriction"),
+            ("restrictions", "restriction"),
+            ("activity", "activity"),
+            ("activities", "activity"),
+            ("category", "category"),
+            ("categories", "category"),
+            ("process", "process"),
+            ("processes", "process"),
+            ("box", "box"),
+            ("boxes", "box"),
+            # Invariant plurals / short words are left alone.
+            ("analysis", "analysis"),
+            ("status", "status"),
+            ("mass", "mass"),
+            ("iii", "iii"),
+        ],
+    )
+    def test_singularize_token(self, framework, token, expected):
+        assert framework._singularize_token(token) == expected
+
+    def test_match_known_concepts_pluralization_robust(self, framework):
+        """A singular surface form still matches its plural in the text."""
+        framework.known_concept_names = {"exposure prone procedure"}
+        concepts = framework._match_known_concepts(
+            "the exposure prone procedures require review"
+        )
+        assert {c.concept_name for c in concepts} == {
+            "exposure prone procedures",
+        }
+        assert concepts[0].concept_type == "KNOWN_CONCEPT"
+
+    def test_match_known_concepts_ies_plural(self, framework):
+        """'ies' plurals (activities) still match their singular form."""
+        framework.known_concept_names = {
+            "category iii",
+            "patient-care activity",
+        }
+        concepts = framework._match_known_concepts(
+            "category III and patient-care activities"
+        )
+        assert {c.concept_name for c in concepts} == {
+            "category iii",
+            "patient-care activities",
+        }
+
+    def test_match_known_concepts_hyphen_insensitive(self, framework):
+        """Hyphenated and unhyphenated forms collapse to one key."""
+        framework.known_concept_names = {"exposure-prone procedures"}
+        concepts = framework._match_known_concepts(
+            "the exposure prone procedure is documented"
+        )
+        assert {c.concept_name for c in concepts} == {
+            "exposure prone procedure",
+        }
+
+    def test_match_known_concepts_hyphen_and_plural_together(self, framework):
+        """A hyphenated plural name matches an unhyphenated singular text."""
+        framework.known_concept_names = {"exposure prone procedure"}
+        concepts = framework._match_known_concepts(
+            "the exposure-prone procedures are documented"
+        )
+        assert {c.concept_name for c in concepts} == {
+            "exposure-prone procedures",
+        }
+
+    def test_known_concept_protects_boundary(self, framework):
+        """A prefetched concept spanning the boundary shifts it forward,
+        even when regex and spaCy sources return nothing."""
+        mock_extractor = MagicMock()
+        mock_extractor.extract_concepts_regex.return_value = []
+        framework._concept_extractor = mock_extractor
+        framework._extract_domain_concepts = MagicMock(return_value=[])
+        framework.known_concept_names = {"hepatitis b surface antigen"}
+
+        pre = "we study the hepatitis b surface"
+        post = "antigen in detail today now"
+        result = framework._adjust_boundary_for_concept_contiguity(
+            pre_boundary_text=pre,
+            post_boundary_text=post,
+            boundary_word_index=5,
+            max_chunk_size=200,
+            current_chunk_size=5,
+            overlap_window=5,
+        )
+        # "hepatitis b surface antigen" spans [2, 6) in the overlap; the
+        # boundary (index 5) is inside, so it shifts forward by one word.
+        assert result == 6
+
+    def test_known_concept_kept_whole_across_hard_split(self, framework):
+        """A concept spanning the no-boundary hard-split is kept whole by
+        pulling lookahead words into the current chunk."""
+        from src.multimodal_librarian.models.chunking import (
+            ChunkingRequirements,
+            ContentProfile,
+        )
+        from src.multimodal_librarian.models.core import ContentType
+
+        # Isolate the known-concept source: no regex, no spaCy.
+        mock_extractor = MagicMock()
+        mock_extractor.extract_concepts_regex.return_value = []
+        framework._concept_extractor = mock_extractor
+        framework._extract_domain_concepts = MagicMock(return_value=[])
+        framework.known_concept_names = {"surface antigen positivity"}
+
+        profile = ContentProfile(
+            content_type=ContentType.GENERAL,
+            chunking_requirements=ChunkingRequirements(
+                preferred_chunk_size=5,
+                max_chunk_size=10,
+            ),
+        )
+        domain_config = framework.get_or_create_domain_config(profile)
+
+        # No punctuation / newlines, so _find_semantic_boundary returns 0 and
+        # the hard-split branch runs.  The buffer ends at "surface" (word 4)
+        # with "antigen positivity" in the lookahead.
+        text = "a b c d surface antigen positivity x y z"
+        chunks, _ = framework._perform_primary_chunking(
+            text, profile, domain_config, document_id="test"
+        )
+
+        contents = [c.content for c in chunks]
+        assert "a b c d surface antigen positivity" in contents

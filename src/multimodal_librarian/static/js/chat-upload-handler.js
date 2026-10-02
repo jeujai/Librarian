@@ -369,7 +369,8 @@ class ChatUploadHandler extends FileHandler {
                 content_type: file.type || 'application/pdf',
                 file_data: base64Data,
                 title: file.name.replace(/\.pdf$/i, ''),
-                description: null
+                description: null,
+                scope: this.chatApp.getScope()
             };
 
             // Track this upload
@@ -381,6 +382,7 @@ class ChatUploadHandler extends FileHandler {
 
             // Send via WebSocket
             const sent = this.wsManager.send(uploadMessage);
+            this.chatApp.lockScope();
 
             if (sent) {
                 this.showUploadProgress(file, 100);
