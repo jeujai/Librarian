@@ -24,6 +24,33 @@ from ...models.kg_retrieval import RetrievedChunk
 logger = logging.getLogger(__name__)
 
 
+def _normalize_for_echo(text: str) -> str:
+    """Lowercase, strip punctuation, and collapse whitespace for echo checks."""
+    text = re.sub(r"[^a-z0-9\s]", " ", (text or "").lower())
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def is_query_echo(content: str, query: str) -> bool:
+    """True when *content* is a near-verbatim echo of *query*.
+
+    A conversation stores the user's prompt as its own chunk
+    (``[timestamp] USER: <query>``). That chunk matches a new query exactly —
+    lexically and semantically — yet carries zero answer content, so it must
+    not outrank the response chunks or the primary sources that actually
+    answer the question.
+
+    Detection is content-based (no source_type dependency): the normalized
+    query must be the dominant substring of the normalized chunk content.
+    """
+    norm_query = _normalize_for_echo(query)
+    norm_content = _normalize_for_echo(content)
+    if not norm_query or len(norm_query) < 16:
+        return False
+    if norm_query not in norm_content:
+        return False
+    return len(norm_query) / max(1, len(norm_content)) >= 0.6
+
+
 class SemanticReranker:
     """
     Re-ranks candidate chunks using semantic similarity.
@@ -227,18 +254,22 @@ class SemanticReranker:
                     chunks_to_rerank, query_embedding
                 )
 
+            # Query-echo chunks (stored user prompts) match the query verbatim,
+            # so their near-1.0 semantic similarity is a trivial self-match, not
+            # evidence of relevance. Neutralize it — otherwise they outrank the
+            # response chunks and primary sources that actually answer. This does
+            # NOT demote conversation chunks: response chunks stay first-class.
+            echo_chunk_ids: set = set()
+            for chunk in chunks_with_scores:
+                if is_query_echo(chunk.content or "", query):
+                    echo_chunk_ids.add(chunk.chunk_id)
+                    chunk.semantic_score = 0.0
+
             # Calculate final scores and sort
             for chunk in chunks_with_scores:
                 chunk.final_score = self._calculate_final_score(
                     chunk.kg_relevance_score,
                     chunk.semantic_score,
-                )
-                print(
-                    f"GEOM_DIAG kg={chunk.kg_relevance_score:.4f} "
-                    f"sem={chunk.semantic_score:.4f} "
-                    f"final={chunk.final_score:.4f} "
-                    f"content={((chunk.content or '')[:80]).replace(chr(10),' ')}",
-                    flush=True
                 )
 
             # Query-term content boost using decomposition.
@@ -286,6 +317,8 @@ class SemanticReranker:
                 ACTION_BOOST = 0.01
                 SYNERGY_BOOST = 0.03  # bonus when both entity+action match
                 for chunk in chunks_with_scores:
+                    if chunk.chunk_id in echo_chunk_ids:
+                        continue
                     content_lower = (chunk.content or "").lower()
                     entity_matched = False
                     action_matched = False

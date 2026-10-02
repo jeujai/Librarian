@@ -36,6 +36,7 @@ from ..components.kg_retrieval import (
 )
 from ..components.kg_retrieval.chain_synthesizer import ChainSynthesizer
 from ..components.kg_retrieval.query_decomposer import is_generic_concept
+from ..components.kg_retrieval.semantic_reranker import is_query_echo
 from ..models.kg_retrieval import (
     ChunkSourceMapping,
     KGRetrievalResult,
@@ -2610,7 +2611,7 @@ class KGRetrievalService:
                     # matched incidental co-mentioned concepts (coverage bonus
                     # can otherwise let many weak HBsAg variants outrank the
                     # single strong "work restrictions" hit).
-                    if _query_verbatim_names:
+                    if _query_verbatim_names and not is_query_echo(chunk.content or "", query):
                         for h in hits:
                             if _norm_name(h.get("concept_name", "")) in _query_verbatim_names:
                                 chunk.kg_relevance_score *= _QUERY_VERBATIM_BOOST
