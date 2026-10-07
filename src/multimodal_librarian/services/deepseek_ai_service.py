@@ -232,6 +232,15 @@ class DeepSeekAIService:
         self._max_empty_stream_retries: int = int(
             os.environ.get("DEEPSEEK_MAX_EMPTY_RETRIES", "1")
         )
+        # Reasoning-effort knob for reasoning-capable models. ``"none"``
+        # disables chain-of-thought so the answer lands directly in
+        # ``content`` instead of burning the token budget on
+        # ``reasoning_content`` (which left ``content`` empty on large RAG
+        # prompts). An empty value disables sending the parameter.
+        self.reasoning_effort: Optional[str] = (
+            os.environ.get("DEEPSEEK_REASONING_EFFORT", "none").strip()
+            or None
+        )
 
         # -------------------------------------------------------------
         # Shared resilience primitives (circuit breaker + error-rate tracker)
@@ -449,6 +458,8 @@ class DeepSeekAIService:
                 "temperature": temperature,
                 "max_tokens": max_tokens,
             }
+            if self.reasoning_effort:
+                payload["reasoning_effort"] = self.reasoning_effort
 
             response = await client.post(
                 "/chat/completions", json=payload
@@ -971,6 +982,8 @@ class DeepSeekAIService:
             "max_tokens": max_tokens,
             "stream": True,
         }
+        if self.reasoning_effort:
+            payload["reasoning_effort"] = self.reasoning_effort
         if self.stream_include_usage:
             payload["stream_options"] = {"include_usage": True}
 
