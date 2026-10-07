@@ -153,7 +153,182 @@ _MEDICAL_MULTI_WORD_SEED = (
     r"health care workers?",
     r"work restrictions?",
     r"management guidelines?",
+    # Treatment modalities / regimens (general — co-linking anchors, not tied
+    # to any one drug class).  These guarantee the high-value multi-word
+    # therapy/regimen compounds stay whole; the co-linking pass links any such
+    # concept to the agents it includes via the generic dose pass.
+    r"first-line therapy",
+    r"initial empiric therapy",
+    r"empiric therapy",
+    r"definitive therapy",
+    r"adjuvant therapy",
+    r"neoadjuvant therapy",
+    r"maintenance therapy",
+    r"antimicrobial therapy",
+    r"antiviral therapy",
+    r"antifungal therapy",
+    r"immunosuppressive therapy",
+    r"combination therapy",
+    r"chemotherapy regimen",
+    r"treatment regimen",
+    r"therapeutic regimen",
+    r"monotherapy",
+    r"empiric treatment",
 )
+
+
+# --- Bottom-up drug + dose composition patterns -----------------------------
+# A dose looks like "<number><unit>" optionally " / <number><unit>" (combined
+# drugs: amoxicillin/clavulanate 500 mg/125 mg), followed by an optional
+# frequency tail ("three times daily", "twice daily", "every 8 h", "daily").
+# The drug is a single token (may contain '/', '-', '+' internally) and MUST
+# already exist as an extracted concept — the composition pass is
+# self-anchoring, so it never mints compounds from non-drug words ("the 2 g").
+_DOSE_NUMBER = r"\d+(?:[.,–-]\d+)?"
+_DOSE_UNIT = r"(?:mcg|µg|ug|mg|g|kg|mL|ml|units?|IU|mEq|mmol)"
+_DOSE_VALUE = (
+    rf"{_DOSE_NUMBER}\s*{_DOSE_UNIT}"
+    rf"(?:\s*/\s*{_DOSE_NUMBER}\s*{_DOSE_UNIT})?"
+)
+_DOSE_FREQ_TOKEN = (
+    r"(?:once|twice|three times|four times|daily|hourly|weekly|monthly"
+    r"|every\s+(?:\d+\s*)?(?:hours?|hrs?|h|days?|weeks?)|bid|tid|qid"
+    r"|\d+\s*(?:hours?|hrs?|h)?"
+    # Timing / duration qualifiers (loading doses, treatment courses).  These
+    # preserve the temporal scoping that distinguishes a first-day loading dose
+    # ("500 mg on first day") from a maintenance dose, and a finite course
+    # ("for 5 days") from an indefinite one.  Generic — no drug-class tokens.
+    r"|on\s+(?:the\s+)?(?:(?:first|1st)\s+day|day\s+\d+)"
+    r"|for\s+\d+(?:\s*[-–]\s*\d+)?\s+(?:days?|weeks?|months?)"
+    r"|days?\s+\d+(?:\s*[-–]\s*\d+)?)"
+)
+
+# Route-of-administration tokens.  A route word between the dose and the
+# frequency ("500 mg orally three times daily", "1 g IV every 24 h") would
+# otherwise break the schedule tail and drop the frequency.  Routes are
+# overwhelmingly "-ly" adverbs (orally, intravenously, subcutaneously,
+# intraperitoneally, epidurally, ...), so a catch-all ``[a-z]+ly`` covers the
+# long tail in addition to the explicit terms below.  Class-agnostic
+# (antibiotic, antiviral, oncologic alike).  Trade-off: the catch-all also
+# admits rare prose adverbs ("typically", "usually") into the tail — accepted,
+# since the frequency is preserved at the cost of a stray adverb in the name.
+_DOSE_ROUTE_TOKEN = (
+    r"(?:orally|oral|by\s+mouth|per\s+os|p\.?o\.?"
+    r"|intravenously|intravenous|i\.?v\.?"
+    r"|intramuscularly|intramuscular|i\.?m\.?"
+    r"|subcutaneously|subcutaneous|subq|sub-q|s\.?c\.?|s\.?q\.?"
+    r"|topically|topical|transdermally|transdermal"
+    r"|sublingually|sublingual|s\.?l\.?"
+    r"|buccally|buccal"
+    r"|intranasally|intranasal"
+    r"|inhaled|inhalation|nebulized|nebulised"
+    r"|rectally|rectal|vaginally|vaginal"
+    r"|intrathecally|intrathecal"
+    r"|intra-articular|intraarticular"
+    r"|[a-z]+ly\b)"
+)
+
+# Combined dose-tail token: frequency/timing OR route.  The schedule tail can
+# interleave route, frequency, and duration qualifiers ("orally three times
+# daily for 5 days").
+_DOSE_SCHEDULE_TOKEN = rf"(?:{_DOSE_FREQ_TOKEN}|{_DOSE_ROUTE_TOKEN})"
+_DOSE_SPAN = re.compile(
+    rf"(?P<drug>[A-Za-z][A-Za-z0-9/+\-]*)[,\s]+"
+    rf"(?P<dose>{_DOSE_VALUE})"
+    rf"(?P<freq>(?:\s+{_DOSE_SCHEDULE_TOKEN}){{1,4}})?",
+    re.IGNORECASE,
+)
+
+# Dose-only pattern (no drug prefix) for the multi-word-drug backward scan.
+# Anchors on the dose itself; the drug is recovered by looking backward past a
+# short formulation/salt modifier ("extended release", "succinate").
+_DOSE_ONLY_PATTERN = re.compile(
+    rf"(?P<dose>{_DOSE_VALUE})(?P<freq>(?:\s+{_DOSE_SCHEDULE_TOKEN}){{1,4}})?",
+    re.IGNORECASE,
+)
+
+# Chained-dose continuation: "azithromycin 500 mg on first day then 250 mg
+# daily".  The primary _DOSE_SPAN captures only the first dose; the second dose
+# follows a connector ("then"/"and then"/"followed by") and would otherwise be
+# dropped (its "drug" token is the connector word, which fails self-anchoring).
+# This pattern matches the orphan dose+tail so a second pass can attribute it
+# back to the nearest preceding drug that the primary pass anchored on.
+_CHAINED_DOSE_PATTERN = re.compile(
+    rf"\b(?:and\s+then|followed\s+by|then)\b\s+"
+    rf"(?P<dose>{_DOSE_VALUE})"
+    rf"(?P<freq>(?:\s+{_DOSE_SCHEDULE_TOKEN}){{1,4}})?",
+    re.IGNORECASE,
+)
+
+# Treatment-modality nouns for co-linking.  Identifies a concept as a
+# therapy/regimen/treatment node (the thing to link FROM) regardless of drug
+# class — antibiotic, antiviral, antifungal, oncologic, or immunosuppressive.
+# The agent side of the link comes from the generic dose pass (HAS_DOSE
+# subjects), never from a hardcoded drug-name list, so the co-linking stays
+# class-agnostic.
+_TREATMENT_PATTERN = re.compile(
+    r"\b(?:therapy|therapies|regimen|regimens|treatment|treatments"
+    r"|prophylaxis|chemotherapy|immunotherapy)\b",
+    re.IGNORECASE,
+)
+
+# Coarse POS tags that a drug→dose gap token may carry and still be part of the
+# drug's identity (a salt or formulation).  Everything else in the gap is prose
+# ("is usually", "given as") and is dropped.  Content-word whitelist rather than
+# a stopword blacklist, so it can never leak a function word into a compound.
+_KEEP_POS = frozenset({"NOUN", "PROPN", "ADJ"})
+
+# POS tags that a drug *agent* may carry.  Narrower than _KEEP_POS: a drug
+# name is a noun/proper-noun, never an adjective or adverb, so function-word
+# concepts ("the", "then", "daily") — which still exist in the corpus-mined
+# concept set — are rejected as agents while "amoxicillin" (NOUN) and
+# "Azithromycin" (PROPN) pass.
+_AGENT_POS = frozenset({"NOUN", "PROPN"})
+
+
+def _token_pos_spans(text: str, pos_tags: Optional[List[dict]]) -> Optional[List[Tuple[int, int, str]]]:
+    """Reconstruct ``(start, end, coarse_pos)`` spans for POS-tagged tokens.
+
+    The model server returns spaCy tokens in order with a coarse ``pos`` but no
+    character offsets.  Walk ``text`` with a forward cursor, matching each token
+    in order, to recover offsets.  Returns ``None`` on any mismatch so callers
+    can degrade gracefully (and never guess a wrong POS).
+    """
+    if not pos_tags:
+        return None
+    spans: List[Tuple[int, int, str]] = []
+    cursor = 0
+    for t in pos_tags:
+        token = (t.get("token") or "").strip()
+        if not token:
+            continue
+        idx = text.find(token, cursor)
+        if idx == -1:
+            return None
+        pos = (t.get("pos") or "").upper()
+        spans.append((idx, idx + len(token), pos))
+        cursor = idx + len(token)
+    return spans
+
+
+def _span_has_agent_pos(
+    start: int, end: int, token_spans: Optional[List[Tuple[int, int, str]]]
+) -> bool:
+    """Whether the text span overlaps a NOUN/PROPN token (a drug agent).
+
+    Gates drug→dose composition on the *agent* being a real content word.
+    Function-word concepts ("the", "then", "daily") still exist in the
+    corpus-mined concept set and would otherwise leak into compounds
+    ("the 2007 g", "then 250 mg daily").  When POS is unavailable
+    (``token_spans is None``) the gate degrades to accepting, since the
+    caller cannot distinguish and must not over-filter.
+    """
+    if token_spans is None:
+        return True
+    for ts, te, pos in token_spans:
+        if ts < end and te > start and pos in _AGENT_POS:
+            return True
+    return False
 
 
 class ConceptExtractor:
@@ -1065,6 +1240,236 @@ class ConceptExtractor:
 
         return (head_text, modifiers)
 
+    def _compose_drug_dose_concepts(
+        self,
+        text: str,
+        concepts: List[ConceptNode],
+        pos_tags: Optional[List[dict]] = None,
+        chunk_id: Optional[str] = None,
+    ) -> Tuple[List[ConceptNode], List[RelationshipEdge]]:
+        """Compose drug + dose compounds bottom-up (inverse of grounding).
+
+        :meth:`_synthesize_compositional_grounding` is top-down only — it
+        decomposes multi-word concepts into head/modifier parts and can never
+        build compounds upward.  This pass does the reverse: it anchors on
+        drug-name concepts already extracted, composes each with the dose
+        phrase that immediately follows in the source text, and emits a
+        compound concept ("amoxicillin 1 g three times daily") plus a
+        ``HAS_DOSE`` edge from the drug to the compound.
+
+        Self-anchoring gate: the drug token must already be an extracted
+        concept (single word), so the pass never mints compounds from
+        non-drug words ("the 2 g").  Callers gate this on
+        ``ContentType.MEDICAL`` — a non-medical document contains no such
+        patterns and would otherwise yield nothing.
+        """
+        by_name: Dict[str, ConceptNode] = {
+            c.concept_name.lower(): c for c in concepts
+        }
+        # Snapshot of the original concepts (before compounds are added), used
+        # by the backward-scan pass to avoid re-anchoring on just-created
+        # compound nodes ("azithromycin 500 mg" → "azithromycin 500 mg 250 mg").
+        original_concepts: List[ConceptNode] = list(by_name.values())
+        extra_concepts: List[ConceptNode] = []
+        extra_relationships: List[RelationshipEdge] = []
+
+        def emit_compound(
+            drug_display: str, drug_concept: ConceptNode, dose: str, freq: str
+        ) -> None:
+            """Register one drug+dose compound and its HAS_DOSE edge."""
+            compound = f"{drug_display} {dose}"
+            if freq:
+                compound += f" {freq}"
+            compound = compound.strip(" .,;:")
+
+            if compound.lower() in by_name:
+                return  # already present as a concept
+
+            node = ConceptNode(
+                concept_id=f"public:{compound.lower()}",
+                concept_name=compound,
+                concept_type="ENTITY",
+                confidence=0.7,
+                provenance="corpus-mined",
+                scope="public",
+            )
+            if chunk_id:
+                node.add_source_chunk(chunk_id)
+            extra_concepts.append(node)
+            by_name[compound.lower()] = node
+            extra_relationships.append(RelationshipEdge(
+                subject_concept=drug_concept.concept_id,
+                predicate="HAS_DOSE",
+                object_concept=node.concept_id,
+                confidence=0.7,
+                relationship_type=RelationshipType.HIERARCHICAL,
+            ))
+
+        def resolve_drug(drug_raw: str) -> Optional[ConceptNode]:
+            """Map a drug token to its concept, accepting slash-separated
+            combination drugs (amoxicillin/clavulanate) by anchoring on any
+            known component.  General — no specific drug names hardcoded."""
+            concept = by_name.get(drug_raw.lower())
+            if concept is not None:
+                return concept
+            if "/" in drug_raw:
+                for part in drug_raw.split("/"):
+                    concept = by_name.get(part.strip().lower())
+                    if concept is not None:
+                        return concept
+            return None
+
+        # POS spans for the whole chunk.  Used to (a) gate the drug agent on
+        # being a content word and (b) keep salt/formulation content words in
+        # the multi-word gap while dropping function-word prose.  None when the
+        # model server is unavailable → both passes degrade gracefully.
+        token_spans = _token_pos_spans(text, pos_tags)
+
+        # First pass: primary drug + dose spans (adjacent, comma-separated, or
+        # slash-combination drugs).  Records each drug's span (for the chained
+        # pass) and each captured dose's span (so the backward-scan pass skips
+        # doses already handled, e.g. the "/clavulanate" component of a
+        # combination drug).
+        primary_spans: List[Tuple[int, int, ConceptNode]] = []
+        primary_dose_spans: Set[Tuple[int, int]] = set()
+        for match in _DOSE_SPAN.finditer(text):
+            if not _span_has_agent_pos(
+                match.start("drug"), match.end("drug"), token_spans
+            ):
+                continue  # function-word "agent" ("the", "then", "daily")
+            drug_raw = match.group("drug").strip()
+            drug_concept = resolve_drug(drug_raw)
+            if drug_concept is None:
+                continue  # self-anchoring: only compose around known drugs
+
+            primary_spans.append((match.start(), match.end(), drug_concept))
+            primary_dose_spans.add(match.span("dose"))
+            emit_compound(
+                drug_raw,
+                drug_concept,
+                match.group("dose").strip(),
+                (match.group("freq") or "").strip(),
+            )
+
+        # Second pass: multi-word drug names with a short formulation/salt
+        # modifier between the drug and the dose ("clarithromycin extended
+        # release 1,000 mg", "metoprolol succinate 50 mg").  The primary regex
+        # anchors on the token immediately before the dose (e.g. "release"),
+        # which is not a known concept; here we look backward up to a bounded
+        # token gap for a known original concept instead.  Fully general — no
+        # hardcoded modifier vocabulary.
+        _MAX_MODIFIER_GAP = 2
+        concept_spans: List[Tuple[int, int, ConceptNode]] = []
+        for concept in original_concepts:
+            name = concept.concept_name
+            for m in re.finditer(r"\b" + re.escape(name) + r"\b", text, re.IGNORECASE):
+                concept_spans.append((m.end(), m.start(), concept))
+        concept_spans.sort(key=lambda s: s[0])  # ascending by end position
+
+        for dmatch in _DOSE_ONLY_PATTERN.finditer(text):
+            if dmatch.span("dose") in primary_dose_spans:
+                continue  # already composed by the primary pass (slash component)
+            dose_start = dmatch.start()
+            nearest: Optional[ConceptNode] = None
+            nearest_end = -1
+            nearest_start = -1
+            for end, start, concept in concept_spans:
+                if end > dose_start:
+                    break
+                nearest = concept
+                nearest_end = end
+                nearest_start = start
+            if nearest is None:
+                continue
+            if not _span_has_agent_pos(nearest_start, nearest_end, token_spans):
+                continue  # backward-scan landed on a function word, not a drug
+            gap_tokens = [
+                t for t in text[nearest_end:dose_start].split()
+                if any(ch.isalnum() for ch in t)
+            ]
+            if len(gap_tokens) > _MAX_MODIFIER_GAP:
+                continue
+            # Preserve only content-word gap tokens (salt/formulation) in the
+            # compound name, dropping function-word prose.  "succinate" and
+            # "extended release" survive; "is usually" is filtered out, so
+            # "amoxicillin is usually 500 mg" never yields a junk compound.
+            kept_tokens: List[str] = []
+            if token_spans is not None:
+                for span_start, span_end, pos in token_spans:
+                    if span_start >= nearest_end and span_end <= dose_start and pos in _KEEP_POS:
+                        kept_tokens.append(text[span_start:span_end])
+            drug_display = nearest.concept_name
+            if kept_tokens:
+                drug_display = f"{nearest.concept_name} " + " ".join(kept_tokens)
+            emit_compound(
+                drug_display,
+                nearest,
+                dmatch.group("dose").strip(),
+                (dmatch.group("freq") or "").strip(),
+            )
+
+        # Third pass: chained doses ("... then 250 mg daily") attributed to
+        # the nearest preceding primary drug.  Without this, the second dose of
+        # "azithromycin 500 mg on first day then 250 mg daily" is shredded into
+        # a noise concept and never linked to azithromycin.
+        for cmatch in _CHAINED_DOSE_PATTERN.finditer(text):
+            drug_concept: Optional[ConceptNode] = None
+            for start, end, dc in reversed(primary_spans):
+                if end <= cmatch.start():
+                    drug_concept = dc
+                    break
+            if drug_concept is None:
+                continue
+            emit_compound(
+                drug_concept.concept_name,
+                drug_concept,
+                cmatch.group("dose").strip(),
+                (cmatch.group("freq") or "").strip(),
+            )
+
+        return (extra_concepts, extra_relationships)
+
+    def _compose_treatment_links(
+        self,
+        concepts: List[ConceptNode],
+        agent_concept_ids: Set[str],
+    ) -> List[RelationshipEdge]:
+        """Link therapy/regimen concepts to the agents they include.
+
+        Generalizes "regimen co-linking": rather than hardcoding antibiotic
+        names or suffixes, this pass links any treatment-modality concept
+        ("empiric therapy", "chemotherapy regimen", "antiviral therapy", …) to
+        the *agents* it appears alongside in the same chunk.  Agents are
+        identified by the generic dose pass (``HAS_DOSE`` subjects), which
+        anchors on ``agent + number+unit`` for any drug class, so antibiotic,
+        antiviral, and oncologic regimens all flow through the same path.
+
+        Self-anchoring gate: both endpoints must already be extracted concepts,
+        so the pass never mints an agent from an arbitrary word.  Callers gate
+        this on ``ContentType.MEDICAL``.
+        """
+        treatment_ids = {
+            c.concept_id for c in concepts
+            if _TREATMENT_PATTERN.search(c.concept_name)
+        }
+        if not treatment_ids:
+            return []
+
+        agent_ids = set(agent_concept_ids)
+        agent_ids.difference_update(treatment_ids)
+
+        edges: List[RelationshipEdge] = []
+        for treatment_id in treatment_ids:
+            for agent_id in agent_ids:
+                edges.append(RelationshipEdge(
+                    subject_concept=treatment_id,
+                    predicate="INCLUDES",
+                    object_concept=agent_id,
+                    confidence=0.6,
+                    relationship_type=RelationshipType.ASSOCIATIVE,
+                ))
+        return edges
+
     async def extract_concepts_umls_ngrams(
         self, text: str
     ) -> Tuple[List[ConceptNode], bool]:
@@ -1770,6 +2175,22 @@ class KnowledgeGraphBuilder:
             logger.warning(f"Model server not available: {e}")
         return self._model_server_client
 
+    async def _get_pos_tags(self, text: str) -> Optional[List[dict]]:
+        """Fetch spaCy POS tags for a chunk (best-effort; None on failure).
+
+        Used to filter drug→dose gap tokens in the composition pass.  Returns
+        the raw ``pos_tags`` list so callers can reconstruct token offsets.
+        """
+        try:
+            client = await self._get_model_server_client()
+            if client is None:
+                return None
+            results = await client.process_nlp([text], tasks=["pos"])
+            return (results[0].get("pos_tags") or []) if results else None
+        except Exception as e:
+            logger.debug(f"POS tag fetch failed: {e}")
+            return None
+
     def _get_conceptnet_validator(self):
         """Get or create the ConceptNet validator (requires neo4j_client)."""
         if self._conceptnet_validator is None and self._neo4j_client is not None:
@@ -2169,7 +2590,32 @@ class KnowledgeGraphBuilder:
             for concept in concepts:
                 concept.add_source_chunk(chunk.id)
 
-            # Step 1b: Synthesize compositional grounding (HAS_HEAD/HAS_MODIFIER).
+            # Step 1b: Compose drug + dose compounds bottom-up (HAS_DOSE),
+            # medical scope only.  Anchors on already-extracted drug concepts.
+            dose_concepts = []
+            dose_relationships = []
+            if content_type == ContentType.MEDICAL:
+                pos_tags = await self._get_pos_tags(chunk.content)
+                dose_concepts, dose_relationships = \
+                    self.concept_extractor._compose_drug_dose_concepts(
+                        chunk.content, concepts, pos_tags=pos_tags,
+                        chunk_id=chunk.id,
+                    )
+            if dose_concepts:
+                concepts.extend(dose_concepts)
+
+            # Step 1b': Link therapy/regimen concepts to the agents they
+            # include (INCLUDES), medical scope only.  Agents are the HAS_DOSE
+            # subjects from the dose pass (generic, not drug-class-specific).
+            treatment_relationships = []
+            if content_type == ContentType.MEDICAL:
+                agent_ids = {rel.subject_concept for rel in dose_relationships}
+                treatment_relationships = \
+                    self.concept_extractor._compose_treatment_links(
+                        concepts, agent_ids
+                    )
+
+            # Step 1c: Synthesize compositional grounding (HAS_HEAD/HAS_MODIFIER).
             # Mints missing head/modifier parts with provenance
             # "materialized-for-grounding"; best-effort (never blocks extraction).
             extra_concepts, grounding_relationships = \
@@ -2193,7 +2639,9 @@ class KnowledgeGraphBuilder:
             )
 
             all_relationships = (
-                pattern_relationships + embedding_relationships + grounding_relationships
+                pattern_relationships + embedding_relationships
+                + grounding_relationships + dose_relationships
+                + treatment_relationships
             )
             for relationship in all_relationships:
                 relationship.add_evidence_chunk(chunk.id)

@@ -940,17 +940,10 @@ class PDFProcessor:
         
         try:
             with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-                page_count = len(pdf.pages)
-                is_large_pdf = page_count > self.large_pdf_threshold
-                
-                if is_large_pdf:
-                    logger.info(f"Large PDF: Limiting table extraction to first {self.large_pdf_threshold} pages")
-                    # For large PDFs, only extract tables from first N pages
-                    pages_to_process = pdf.pages[:self.large_pdf_threshold]
-                else:
-                    pages_to_process = pdf.pages
-                
-                for page_num, page in enumerate(pages_to_process, 1):
+                # Process ALL pages: tables on pages beyond the former 50-page
+                # threshold were silently dropped. Per-page try/except and
+                # batch gc already bound memory.
+                for page_num, page in enumerate(pdf.pages, 1):
                     try:
                         page_tables = page.extract_tables()
                         
@@ -992,8 +985,8 @@ class PDFProcessor:
                         logger.warning(f"Failed to extract tables from page {page_num}: {str(e)}")
                         continue
                     
-                    # Garbage collection every batch_size pages for large PDFs
-                    if is_large_pdf and page_num % self.batch_size == 0:
+                    # Garbage collection every batch_size pages
+                    if page_num % self.batch_size == 0:
                         gc.collect()
         
         except Exception as e:

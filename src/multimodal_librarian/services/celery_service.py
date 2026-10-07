@@ -1909,7 +1909,10 @@ async def _extract_pdf_content_async(document_id: str) -> Dict[str, Any]:
                 'element_type': table.element_type,
                 'caption': table.caption,
                 'alt_text': table.alt_text,
-                'metadata': table.metadata
+                'metadata': table.metadata,
+                # Preserve the structured cell data (headers+rows JSON bytes)
+                # so the chunker can render tables into retrievable chunks.
+                'content_data': table.content_data.hex() if table.content_data else None
             } for table in pdf_content.tables
         ],
         'charts': [
@@ -2054,7 +2057,7 @@ def generate_chunks_task(pdf_content: Dict[str, Any], document_id: str):
             GenericMultiLevelChunkingFramework,
         )
         from ..database.connection import db_manager
-        from ..models.core import DocumentContent, DocumentMetadata
+        from ..models.core import DocumentContent, DocumentMetadata, MediaElement
         
         logger.info(f"Generating chunks for document {document_id}")
         
@@ -2080,7 +2083,7 @@ def generate_chunks_task(pdf_content: Dict[str, Any], document_id: str):
         doc_content = DocumentContent(
             text=pdf_content['text'],
             images=[],  # Simplified for now
-            tables=[],  # Simplified for now
+            tables=[MediaElement.from_dict(t) for t in pdf_content.get('tables', [])],
             charts=[],  # Simplified for now
             metadata=metadata
         )
@@ -2187,7 +2190,14 @@ def generate_chunks_task(pdf_content: Dict[str, Any], document_id: str):
         # through the Celery message broker. Large payloads (68MB+) cause
         # JSON serialization timeouts and chord dispatch failures.
         asyncio.run(_store_processing_payload(document_id, serialized_processed))
-        
+
+        # Persist the domain content type onto knowledge_sources.metadata so
+        # re-extraction can still gate medical composition after the payload
+        # is deleted on completion.
+        asyncio.run(_persist_document_content_type(
+            document_id, processed_document.content_profile.content_type.value
+        ))
+
         # Return only the document_id — downstream tasks retrieve the
         # payload from PostgreSQL via _retrieve_processing_payload().
         asyncio.run(_record_stage_timing(document_id, "generate_chunks", _time.monotonic() - _t0))
@@ -3074,7 +3084,8 @@ def update_knowledge_graph_task(upstream_result: Dict[str, Any], document_id: st
         ))
         
         # Process chunks through knowledge graph builder
-        kg_failures = asyncio.run(_update_knowledge_graph(document_id, processed_document['chunks']))
+        doc_content_type = (processed_document.get('content_profile') or {}).get('content_type', 'general')
+        kg_failures = asyncio.run(_update_knowledge_graph(document_id, processed_document['chunks'], doc_content_type))
         
         logger.info(f"Knowledge graph updated for document {document_id}")
         
@@ -3159,8 +3170,28 @@ def re_extract_concepts_task(document_id: str):
             'Re-extracting concepts'
         ))
 
+        # Best-effort: read the document content_type so medical
+        # re-extraction still composes drug+dose concepts. Prefer the
+        # persisted metadata (durable across payload deletion), then fall back
+        # to the in-flight processing payload.
+        _doc_content_type = "general"
+        try:
+            _doc_content_type = _task_loop.run_until_complete(
+                _read_document_content_type(document_id)
+            ) or "general"
+        except Exception:
+            pass
+        if _doc_content_type == "general":
+            try:
+                _payload = _task_loop.run_until_complete(
+                    _retrieve_processing_payload(document_id)
+                )
+                _doc_content_type = (_payload.get('content_profile') or {}).get('content_type', 'general')
+            except Exception:
+                pass
+
         kg_failures = _task_loop.run_until_complete(
-            _update_knowledge_graph(document_id, chunks)
+            _update_knowledge_graph(document_id, chunks, _doc_content_type)
         )
 
         logger.info(
@@ -3255,7 +3286,7 @@ async def _execute_with_retry(client, query, params, max_retries=3):
             await asyncio.sleep(backoff)
 
 
-async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]):
+async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]], content_type: str = "general"):
     """Update knowledge graph with concepts and relationships from chunks.
 
     Processes chunks in batches of 50 with concurrent extraction and
@@ -3420,15 +3451,19 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
         total_concepts_persisted = 0
         total_relationships_persisted = 0
 
+        # Resolve the document's content type ONCE.  The chunking framework
+        # computes it at the document level (content_profile); per-chunk
+        # 'chunk_type' is a chunking-type label ("content"/"table"), not the
+        # content domain, so deriving from it silently classified every
+        # medical document as GENERAL.
+        try:
+            doc_content_type = ContentType(content_type)
+        except ValueError:
+            doc_content_type = ContentType.GENERAL
+
         # Convert all chunks to KnowledgeChunk objects first
         knowledge_chunks = []
         for chunk in chunks:
-            chunk_type = chunk.get('chunk_type', 'general')
-            try:
-                content_type = ContentType(chunk_type)
-            except ValueError:
-                content_type = ContentType.GENERAL
-
             knowledge_chunk = KnowledgeChunk(
                 id=chunk['id'],
                 content=chunk['content'],
@@ -3436,7 +3471,7 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
                 source_id=document_id,
                 location_reference=str(chunk.get('chunk_index', 0)),
                 section=chunk.get('metadata', {}).get('section', ''),
-                content_type=content_type
+                content_type=doc_content_type
             )
             knowledge_chunks.append(knowledge_chunk)
 
@@ -4706,6 +4741,55 @@ async def _retrieve_processing_payload(document_id: str) -> Dict[str, Any]:
         if isinstance(payload, str):
             return json.loads(payload)
         return payload
+    finally:
+        await conn.close()
+
+
+async def _persist_document_content_type(document_id: str, content_type: str) -> None:
+    """Persist the domain content type onto the document's metadata.
+
+    The processing payload (which carries ``content_profile``) is deleted on
+    completion, but re-extraction needs the domain content type to gate
+    medical composition (drug+dose HAS_DOSE / INCLUDES).  Storing it on
+    ``knowledge_sources.metadata`` makes it durable across the payload's
+    deletion.
+    """
+    from ..database.connection import get_async_connection
+    conn = await get_async_connection()
+    try:
+        await conn.execute(
+            """
+            UPDATE multimodal_librarian.knowledge_sources
+            SET metadata = jsonb_set(
+                    COALESCE(metadata, '{}'::jsonb),
+                    '{content_type}',
+                    to_jsonb($2::text)
+                ),
+                updated_at = NOW()
+            WHERE id = $1::uuid
+            """,
+            document_id, content_type,
+        )
+    finally:
+        await conn.close()
+
+
+async def _read_document_content_type(document_id: str) -> Optional[str]:
+    """Read the persisted domain content type from the document's metadata."""
+    from ..database.connection import get_async_connection
+    conn = await get_async_connection()
+    try:
+        row = await conn.fetchrow(
+            """
+            SELECT metadata->>'content_type' AS content_type
+            FROM multimodal_librarian.knowledge_sources
+            WHERE id = $1::uuid
+            """,
+            document_id,
+        )
+        if row is None:
+            return None
+        return row["content_type"]
     finally:
         await conn.close()
 

@@ -103,6 +103,13 @@ DEFAULT_MAX_HOPS = 2  # Maximum relationship hops (Requirement 2.1)
 DEFAULT_AUGMENTATION_THRESHOLD = 3  # Minimum chunks before augmentation (Requirement 3.3)
 DEFAULT_QUERY_TIMEOUT_SECONDS = 5.0  # Neo4j query timeout (Requirement 6.4)
 
+# Query decomposition is a multi-phase operation (batch embedding + concurrent
+# vector searches across concept/UMLS/ConceptNet indexes, each with their own
+# internal 10-30s budget).  Reusing DEFAULT_QUERY_TIMEOUT_SECONDS (5s) as the
+# decomposition deadline starves it and forces a semantic fallback on every
+# multi-concept clinical query.  Match the internal semantic budget instead.
+DECOMPOSITION_TIMEOUT_SECONDS = 35.0
+
 
 # Relationship types eligible for concept promotion to direct retrieval.
 # UMLS-derived and clinically-meaningful ConceptNet types only — loose
@@ -238,6 +245,7 @@ _PATH_TYPE_DECAY = {
     "umls_bridge_2hop": 0.85,    # 2-hop UMLS bridge — slight decay
     "direct": 0.7,               # Document-extracted direct edge — moderate decay
     "shared_chunk": 0.5,         # Co-occurrence in shared chunk — full decay
+    "shared_chunk_dose": 0.85,   # Co-occurrence + INCLUDES→HAS_DOSE dose chain
 }
 _PATH_TYPE_RANK = {
     "umls_1hop": 0,
@@ -246,6 +254,7 @@ _PATH_TYPE_RANK = {
     "umls_bridge_2hop": 1,
     "direct": 2,
     "shared_chunk": 3,
+    "shared_chunk_dose": 1,
 }
 
 # 2-hop traversal limits — keep fan-out bounded to avoid
@@ -255,6 +264,7 @@ _MAX_2HOP_TARGETS_PER_INTERMEDIATE = 3  # max 2-hop targets per intermediate
 _MAX_CONCEPTS_FOR_2HOP = 3        # only top-N concepts by match score get 2-hop
 _MAX_CONCEPTS_FOR_1HOP = 10       # only top-N concepts by match score get 1-hop traversal
 _MAX_CONCEPTS_FOR_UMLS_1HOP = 5  # narrower cap for UMLS bridge (13.9M UMLS_REL edges)
+_MAX_CONCEPTS_FOR_SHARED_CHUNK = 10  # top-N concepts get shared-chunk co-occurrence discovery
 _MAX_PROMOTED_CHUNKS_PER_CONCEPT = 30  # wider pool; pre-filter selects relevant via cosine sim
 _MAX_CONCEPTS_DIRECT = 15         # cap direct chunk retrieval to top-N concepts
 
@@ -267,6 +277,8 @@ PRIORITY_RELATIONSHIP_TYPES = [
     "CAUSES",
     "RELATED_TO",
     "SIMILAR_TO",
+    "INCLUDES",
+    "HAS_DOSE",
     # ConceptNet relationship types (PascalCase as stored in Neo4j)
     "IsA",
     "PartOf",
@@ -631,11 +643,11 @@ class KGRetrievalService:
         try:
             return await with_timeout(
                 self._query_decomposer.decompose(query, user_id),
-                self._query_timeout
+                DECOMPOSITION_TIMEOUT_SECONDS
             )
         except asyncio.TimeoutError:
             logger.warning(
-                f"Query decomposition timed out after {self._query_timeout}s"
+                f"Query decomposition timed out after {DECOMPOSITION_TIMEOUT_SECONDS}s"
             )
             raise
         except Exception as e:
@@ -1571,6 +1583,33 @@ class KGRetrievalService:
                 (concept_id, concept_name, parent_score, "umls_neighbor")
             )
 
+        # Shared-chunk co-occurrence discovery: matched concept
+        # → EXTRACTED_FROM → Chunk ← EXTRACTED_FROM → co-occurring concept.
+        # This is the associative signal that reaches treatment/dosage
+        # content a surface term ("chest x-ray") co-occurs with in the same
+        # passage ("antibiotic therapy", "community-acquired pneumonia"),
+        # even when no Concept→Concept edge links them.  Each query walks
+        # only the concept's own chunks, so it stays cheap.
+        for concept in sorted_matches[:_MAX_CONCEPTS_FOR_SHARED_CHUNK]:
+            concept_id = concept.get("concept_id", "")
+            concept_name = concept.get("name", "")
+            if concept.get("match_type") == "semantic":
+                parent_score = float(concept.get("similarity_score", 0.0)) * 10.0
+            else:
+                parent_score = float(concept.get("match_score", 0.0))
+
+            if not concept_id:
+                continue
+            if is_generic_concept(concept_name) and concept.get("match_type") == "semantic":
+                continue
+
+            tasks.append(
+                self._query_shared_chunk_related_concepts(concept_id, concept_name)
+            )
+            task_meta.append(
+                (concept_id, concept_name, parent_score, "shared_chunk_dose")
+            )
+
         # 2-hop traversal for top-N concepts only (Requirement 2.2).
         # Limits fan-out to keep query times reasonable.
         if self._max_hops >= 2:
@@ -1805,6 +1844,124 @@ class KGRetrievalService:
         except Exception as e:
             logger.warning(
                 f"Error querying related concepts for {concept_name}: {e}"
+            )
+            return []
+
+    async def _query_shared_chunk_related_concepts(
+        self, concept_id: str, concept_name: str
+    ) -> List[Dict[str, Any]]:
+        """Discover treatment agents and their dose chunks via shared chunks.
+
+        Co-occurrence is the graph's cheapest associative signal: two concepts
+        extracted from the same passage (``EXTRACTED_FROM`` into a common
+        ``Chunk``) are contextually related even when no Concept→Concept edge
+        exists.  A clinical vignette's surface term ("chest x-ray") shares a
+        passage with a treatment-modality concept ("treatment", "therapy")
+        that ``INCLUDES`` its agents, whose ``HAS_DOSE`` compounds were
+        extracted from concrete dosage passages.  Following that chain from the
+        co-occurring concept surfaces the drug→dosage chunks the surface term
+        alone cannot reach.
+
+        Two branches: (a) a co-occurring regimen concept ``INCLUDES`` an agent
+        that ``HAS_DOSE`` a dose compound; (b) a co-occurring concept is itself
+        an agent carrying a ``HAS_DOSE`` compound.  Each returns per-agent rows
+        so a single regimen concept's many agents are not merged into one
+        arbitrarily-truncated chunk list.
+
+        Args:
+            concept_id: Starting concept ID
+            concept_name: Starting concept name (for logging)
+
+        Returns:
+            List of related concept dicts with keys:
+            concept_id, name, chunk_ids, hop_distance=1, relationship_path
+        """
+        if not self._neo4j_client:
+            return []
+
+        try:
+            if hasattr(self._neo4j_client, '_is_connected') and not self._neo4j_client._is_connected:
+                logger.info("Neo4j client connection is stale, reconnecting...")
+                if hasattr(self._neo4j_client, 'connect'):
+                    await self._neo4j_client.connect()
+
+            dose_via_regimen = """
+            MATCH (start:Concept {concept_id: $concept_id})
+                  -[:EXTRACTED_FROM]->(:Chunk)<-[:EXTRACTED_FROM]-(co:Concept)
+            WHERE co.concept_id <> start.concept_id
+            WITH DISTINCT co, start
+            MATCH (co)-[:INCLUDES]->(drug:Concept)
+                  -[:HAS_DOSE]->(:Concept)-[:EXTRACTED_FROM]->(dose_ch:Chunk)
+            WITH DISTINCT drug, dose_ch, start
+            RETURN drug.concept_id AS concept_id,
+                   drug.name AS name,
+                   collect(DISTINCT dose_ch.chunk_id) AS chunk_ids,
+                   1 AS hop_distance,
+                   ['EXTRACTED_FROM', 'INCLUDES', 'HAS_DOSE'] AS relationship_path
+            LIMIT 40
+            """
+
+            dose_direct = """
+            MATCH (start:Concept {concept_id: $concept_id})
+                  -[:EXTRACTED_FROM]->(:Chunk)<-[:EXTRACTED_FROM]-(co:Concept)
+            WHERE co.concept_id <> start.concept_id
+            WITH DISTINCT co, start
+            MATCH (co)-[:HAS_DOSE]->(:Concept)-[:EXTRACTED_FROM]->(dose_ch:Chunk)
+            WITH DISTINCT co, dose_ch, start
+            RETURN co.concept_id AS concept_id,
+                   co.name AS name,
+                   collect(DISTINCT dose_ch.chunk_id) AS chunk_ids,
+                   1 AS hop_distance,
+                   ['EXTRACTED_FROM', 'HAS_DOSE'] AS relationship_path
+            LIMIT 40
+            """
+
+            async with self._neo4j_semaphore:
+                reg_results = await with_timeout(
+                    self._neo4j_client.execute_query(
+                        dose_via_regimen, {"concept_id": concept_id}
+                    ),
+                    self._query_timeout,
+                )
+            async with self._neo4j_semaphore:
+                direct_results = await with_timeout(
+                    self._neo4j_client.execute_query(
+                        dose_direct, {"concept_id": concept_id}
+                    ),
+                    self._query_timeout,
+                )
+
+            related_concepts = []
+            seen_agents = set()
+            for r in (reg_results or []) + (direct_results or []):
+                raw_chunk_ids = r.get("chunk_ids", [])
+                chunk_ids = [cid for cid in raw_chunk_ids if cid]
+                cid = r.get("concept_id", "")
+                if not cid or not chunk_ids or cid in seen_agents:
+                    continue
+                seen_agents.add(cid)
+                related_concepts.append({
+                    "concept_id": cid,
+                    "name": r.get("name", ""),
+                    "chunk_ids": chunk_ids[:_MAX_PROMOTED_CHUNKS_PER_CONCEPT],
+                    "hop_distance": r.get("hop_distance", 1),
+                    "relationship_path": r.get("relationship_path", []),
+                })
+
+            logger.debug(
+                f"Found {len(related_concepts)} shared-chunk dose agents "
+                f"for {concept_name}"
+            )
+            return related_concepts
+
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"Timeout querying shared-chunk co-occurrence for {concept_name}"
+            )
+            return []
+        except Exception as e:
+            logger.warning(
+                f"Error querying shared-chunk co-occurrence for {concept_name}: {e}"
             )
             return []
 

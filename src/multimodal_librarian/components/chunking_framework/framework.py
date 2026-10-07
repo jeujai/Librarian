@@ -376,7 +376,13 @@ class GenericMultiLevelChunkingFramework:
                 }
                 for b in bisections
             ]
-        
+
+        # Step 4: Append table chunks (discrete units, excluded from gap analysis)
+        table_chunks = self._chunk_tables(document, document_id or "")
+        if table_chunks:
+            final_chunks = final_chunks + table_chunks
+            processing_notes.append(f"Appended {len(table_chunks)} table chunks")
+
         return {
             'chunks': final_chunks,
             'gaps_analyzed': len(gap_analyses),
@@ -384,7 +390,72 @@ class GenericMultiLevelChunkingFramework:
             'unresolved_bisections_serialized': unresolved_serialized,
             'processing_notes': processing_notes,
         }
-    
+
+    def _chunk_tables(self, document: DocumentContent,
+                      document_id: str) -> List[ProcessedChunk]:
+        """Render extracted tables into dedicated retrievable chunks.
+
+        Each table's structured cell data (headers + rows) is decoded from
+        ``MediaElement.content_data`` (JSON bytes) and rendered as a stable
+        pipe-delimited text block, so downstream retrieval/citation can surface
+        tabular facts (e.g. drug-dose rows) that the main text stream omits.
+
+        Returns one ``ProcessedChunk`` per table with ``chunk_type="table"``.
+        """
+        import json as _json
+
+        chunks: List[ProcessedChunk] = []
+        for table in document.tables:
+            if table.element_type != "table" or not table.content_data:
+                continue
+            try:
+                table_dict = _json.loads(table.content_data.decode("utf-8"))
+            except (ValueError, UnicodeDecodeError) as e:
+                logger.warning(
+                    "Skipping table %s: bad content_data (%s)", table.element_id, e
+                )
+                continue
+
+            headers = table_dict.get("headers") or []
+            rows = table_dict.get("rows") or []
+            if not rows:
+                continue
+
+            def _cells(row):
+                return [
+                    ("" if c is None else str(c)).replace("\n", " ")
+                    for c in row
+                ]
+
+            lines = []
+            if headers:
+                lines.append(" | ".join(_cells(headers)))
+            for row in rows:
+                lines.append(" | ".join(_cells(row)))
+
+            content = "\n".join(lines).strip()
+            if not content:
+                continue
+
+            table_meta = table.metadata or {}
+            chunks.append(ProcessedChunk(
+                id=str(uuid.uuid4()),
+                content=content,
+                start_position=0,
+                end_position=0,
+                chunk_type="table",
+                metadata={
+                    "page_number": table_meta.get("page_number"),
+                    "table_index": table_meta.get("table_index"),
+                    "row_count": table_dict.get("row_count", len(rows)),
+                    "col_count": table_dict.get("col_count", len(headers)),
+                    "element_id": table.element_id,
+                    "caption": table.caption,
+                },
+            ))
+
+        return chunks
+
     def generate_bridges_for_document(self, bridge_generation_data: Dict[str, Any],
                                      progress_callback: callable = None,
                                      storage_callback: callable = None) -> Tuple[List[BridgeChunk], BatchGenerationStats]:

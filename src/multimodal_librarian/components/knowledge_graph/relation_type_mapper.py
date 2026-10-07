@@ -20,6 +20,9 @@ class RelationTypeMapper:
     _HIERARCHICAL: frozenset = frozenset({
         "isa", "partof", "hasa", "instanceof", "mannerof",
         "madeof", "definedas", "formof",
+        # Internal predicate for drug -> dosing-regimen compounds
+        # ("amoxicillin" HAS_DOSE "amoxicillin 1 g three times daily").
+        "hasdose",
     })
 
     @classmethod

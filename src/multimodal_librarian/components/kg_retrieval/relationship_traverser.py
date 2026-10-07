@@ -50,6 +50,8 @@ class RelationshipTraverser:
         "PART_OF",
         "RELATED_TO",
         "SIMILAR_TO",
+        "INCLUDES",
+        "HAS_DOSE",
         "IsA",
         "PartOf",
         "RelatedTo",
