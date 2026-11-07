@@ -482,7 +482,7 @@ class ConversationKnowledgeService:
 
         # Legacy / no-segment path
         if not segments:
-            concepts, _ner_failed, _llm_failed = (
+            concepts, _failed_sources = (
                 await self._concept_extractor.extract_all_concepts_async(
                     chunk.content
                 )
@@ -498,7 +498,7 @@ class ConversationKnowledgeService:
             if not content:
                 continue
 
-            extracted, _ner_failed, _llm_failed = (
+            extracted, _failed_sources = (
                 await self._concept_extractor.extract_all_concepts_async(
                     content
                 )

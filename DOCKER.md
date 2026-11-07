@@ -177,8 +177,8 @@ The model server is a dedicated container that handles ML model inference:
 
 Configuration:
 ```bash
-# Model Server URL (default: http://model-server:8001)
-MODEL_SERVER_URL=http://model-server:8001
+# Model Server URL (host-native sidecar; default http://host.docker.internal:8001)
+MODEL_SERVER_URL=http://host.docker.internal:8001
 
 # Request timeout in seconds (default: 30)
 MODEL_SERVER_TIMEOUT=30
@@ -407,14 +407,14 @@ docker-compose ps
 
 5. **Model Server Issues**:
    ```bash
-   # Check model server health
+   # Check model server health (host-native process)
    curl http://localhost:8001/health
    
-   # Check model server logs
-   docker compose logs model-server
+   # Check model server logs (launchd-managed; or /tmp/model-server-native.log when run manually)
+   tail -f ~/Library/Logs/librarian-model-server.log
    
-   # Restart model server
-   docker compose restart model-server
+   # Restart model server (host-native)
+   scripts/start-model-server-native.sh
    
    # If model server is unavailable, the app will fall back to local model loading
    # To disable model server entirely:

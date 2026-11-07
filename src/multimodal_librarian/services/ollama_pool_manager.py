@@ -91,8 +91,8 @@ class PoolStats:
 @dataclass
 class ConcurrencyScalingState:
     """Tracks dynamic concurrency scaling state."""
-    max_capacity: int = 16              # Configured OLLAMA_NUM_PARALLEL
-    active_limit: int = 16              # Current active concurrency limit
+    max_capacity: int = 22              # Configured VLLM_NUM_PARALLEL
+    active_limit: int = 22              # Current active concurrency limit
     active_count: int = 0               # Currently executing tasks
     timeout_window: int = 20            # Sliding window size
     timeout_threshold: float = 0.5      # 50% timeout rate triggers scale-down
@@ -220,7 +220,7 @@ class OllamaPoolManager:
     @property
     def pool_size(self) -> int:
         """Get configured pool size from environment."""
-        return int(os.environ.get('OLLAMA_NUM_PARALLEL', '16'))
+        return int(os.environ.get('VLLM_NUM_PARALLEL', '22'))
 
     def _ensure_pool(self) -> ThreadPoolExecutor:
         """Lazily initialize the thread pool and dispatcher on first use."""

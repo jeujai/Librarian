@@ -155,21 +155,19 @@ The model server is configured via environment variables:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MODEL_SERVER_URL` | `http://model-server:8001` | Model server URL |
+| `MODEL_SERVER_URL` | `http://host.docker.internal:8001` | Model server URL (host-native sidecar) |
 | `MODEL_SERVER_ENABLED` | `true` | Enable/disable model server |
 | `MODEL_SERVER_TIMEOUT` | `30.0` | Request timeout in seconds |
 
 #### Running the Model Server
 
-With Docker Compose (recommended):
+The model server runs natively on the host (not Docker) so it can use Apple Metal (MPS). Start it with:
+
 ```bash
-docker compose up model-server
+scripts/start-model-server-native.sh
 ```
 
-Standalone:
-```bash
-uvicorn src.model_server.main:app --host 0.0.0.0 --port 8001
-```
+It binds `0.0.0.0:8001`; the app container reaches it at `http://host.docker.internal:8001`. A launchd agent (`com.librarian.model-server.plist`) is provided to auto-start it on boot, but it requires a one-time Full Disk Access grant for `/bin/bash` (System Settings → Privacy & Security → Full Disk Access) because the repo lives on an external volume.
 
 #### API Endpoints
 

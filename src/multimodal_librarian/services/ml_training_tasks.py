@@ -176,14 +176,14 @@ async def _build_training_data_generator(strategies: Optional[List[str]] = None)
     # Pass None when RAG strategy is not in use — TrainingDataGenerator
     # only accesses self._rag when "rag" is in config.strategies.
     #
-    # For training data generation we use OllamaAIService (local
-    # llama3.1:8b) instead of AIService (DeepSeek) to eliminate API
-    # cost.  The model name is configurable via OLLAMA_TRAINING_MODEL.
+    # For training data generation we use VLLMAIService (local vLLM)
+    # instead of AIService (DeepSeek) to eliminate API cost.  The model
+    # name is configurable via VLLM_MODEL.
     rag_service = None
     if strategies and "rag" in strategies:
         try:
             # Use DeepSeek API if key is available, otherwise fall back
-            # to Ollama for local inference.
+            # to vLLM for local inference.
             deepseek_key = os.environ.get("DEEPSEEK_API_KEY", "")
             if deepseek_key:
                 from ..services.deepseek_ai_service import DeepSeekAIService
@@ -202,13 +202,13 @@ async def _build_training_data_generator(strategies: Optional[List[str]] = None)
                     ai_service.model,
                 )
             else:
-                from ..services.ollama_ai_service import OllamaAIService
+                from ..services.vllm_ai_service import VLLMAIService
                 from ..services.rag_service import RAGService
 
-                ai_service = OllamaAIService()
+                ai_service = VLLMAIService()
 
-                # Hard pre-flight gate: verify the Ollama training model
-                # is reachable and responds BEFORE any expensive work.
+                # Hard pre-flight gate: verify the vLLM model is
+                # reachable and responds BEFORE any expensive work.
                 # If this fails, the entire task aborts immediately.
                 await ai_service.verify_available()
 
@@ -218,7 +218,7 @@ async def _build_training_data_generator(strategies: Optional[List[str]] = None)
                 )
                 logger.info(
                     "RAG service constructed for training data generation "
-                    "(Ollama model=%s)",
+                    "(vLLM model=%s)",
                     ai_service.model,
                 )
         except Exception as exc:
@@ -284,9 +284,9 @@ def generate_training_data_task(
         )
     else:
         logger.info(
-            "LLM provider for RAG/eval: OllamaAIService "
-            "(OLLAMA_TRAINING_MODEL=%s). DeepSeek is NOT used.",
-            os.environ.get("OLLAMA_TRAINING_MODEL", "llama3.1:8b"),
+            "LLM provider for RAG/eval: VLLMAIService "
+            "(VLLM_MODEL=%s). DeepSeek is NOT used.",
+            os.environ.get("VLLM_MODEL", "mlx-community/Llama-3.2-3B-Instruct-4bit"),
         )
     start = time.monotonic()
 
@@ -493,10 +493,10 @@ def generate_training_data_task(
                                 ai_service.model,
                             )
                         else:
-                            from ..services.ollama_ai_service import OllamaAIService
+                            from ..services.vllm_ai_service import VLLMAIService
                             from ..services.rag_service import RAGService
 
-                            ai_service = OllamaAIService()
+                            ai_service = VLLMAIService()
                             await ai_service.verify_available()
 
                             rag_service = RAGService(
@@ -505,7 +505,7 @@ def generate_training_data_task(
                             )
                             logger.info(
                                 "Built RAG service for eval set generation "
-                                "(Ollama model=%s)",
+                                "(vLLM model=%s)",
                                 ai_service.model,
                             )
                     except Exception as rag_exc:
@@ -544,8 +544,8 @@ def generate_training_data_task(
                 else:
                     logger.warning(
                         "No RAG service available — skipping eval set. "
-                        "Ensure an LLM provider (OpenAI, DeepSeek, or "
-                        "Ollama) is configured."
+                        "Ensure an LLM provider (DeepSeek or vLLM) is "
+                        "configured."
                     )
             except Exception as eval_exc:
                 logger.warning(

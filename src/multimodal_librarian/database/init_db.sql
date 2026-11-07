@@ -252,6 +252,30 @@ CREATE TABLE IF NOT EXISTS processing_payloads (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+-- KG extraction failures table (durable per-source failure tracking).
+-- Records (chunk, source) pairs whose knowledge-graph extraction failed
+-- (e.g. transient CancelledError from the model server / Ollama pool), so a
+-- targeted recovery pass can re-run only the failed source (ner / llm /
+-- umls / gerund) instead of re-running all four for the chunk.  resolved_at
+-- is set (or the row deleted) once a source succeeds.
+CREATE TABLE IF NOT EXISTS kg_extraction_failures (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    document_id UUID NOT NULL REFERENCES knowledge_sources(id) ON DELETE CASCADE,
+    chunk_id UUID NOT NULL REFERENCES knowledge_chunks(id) ON DELETE CASCADE,
+    source VARCHAR(50) NOT NULL,
+    error_type VARCHAR(255) NOT NULL,
+    error_message TEXT,
+    attempt_count INTEGER NOT NULL DEFAULT 1,
+    resolved_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    UNIQUE(document_id, chunk_id, source)
+);
+
+CREATE INDEX IF NOT EXISTS idx_kg_extraction_failures_unresolved
+    ON kg_extraction_failures(document_id) WHERE resolved_at IS NULL;
+
 -- Audit log table (for security and compliance)
 CREATE TABLE IF NOT EXISTS audit.audit_log (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

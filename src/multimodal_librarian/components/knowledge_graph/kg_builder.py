@@ -17,6 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+import httpx
 import numpy as np
 
 from ...config import get_settings
@@ -37,6 +38,37 @@ _kg_thread_local = threading.local()
 
 # Thread pool for CPU-bound embedding operations
 _kg_executor: Optional[ThreadPoolExecutor] = None
+
+# Stable keys for the four concurrent concept-extraction sources.  Used for
+# durable per-source failure tracking (kg_extraction_failures.source) so a
+# single failed source can be retried without re-running the other three.
+NER_SOURCE = "ner"
+LLM_SOURCE = "llm"
+UMLS_SOURCE = "umls"
+GERUND_SOURCE = "gerund"
+ALL_CONCEPT_SOURCES: frozenset = frozenset(
+    {NER_SOURCE, LLM_SOURCE, UMLS_SOURCE, GERUND_SOURCE}
+)
+
+# Pattern types whose regexes are case-insensitive by design.  The CODE_TERM
+# patterns (snake_case/camelCase/PascalCase/function-call/dotted) and ACRONYM
+# are case-SENSITIVE: their whole purpose is to spot mixed-case identifiers
+# and uppercase acronyms.  Applying re.IGNORECASE to them neutralises the case
+# boundaries and makes them match every ordinary 3+ character word in the text.
+_CASE_INSENSITIVE_PATTERN_TYPES: frozenset = frozenset({"MULTI_WORD"})
+
+# Standard spaCy (en_core_web_sm) NER labels.  For MEDICAL content these are
+# citation/administrative noise (author names, publishers, locations, dates)
+# rather than biomedical entities — the clinical signal already comes from the
+# LLM and UMLS extraction sources.  Other content types (legal, narrative,
+# academic, general) legitimately rely on these labels, so the filter is
+# applied only when content_type == ContentType.MEDICAL.  Any label outside
+# this set (e.g. a future scispaCy biomedical label set) is always kept.
+_STANDARD_SPACY_NER_LABELS: frozenset = frozenset({
+    "PERSON", "NORP", "FAC", "ORG", "GPE", "LOC", "PRODUCT",
+    "EVENT", "WORK_OF_ART", "LAW", "LANGUAGE",
+    "DATE", "TIME", "PERCENT", "MONEY", "QUANTITY", "ORDINAL", "CARDINAL",
+})
 
 
 def _get_kg_executor() -> ThreadPoolExecutor:
@@ -374,9 +406,6 @@ class ConceptExtractor:
             "BE", "OF", "AS",
         }
         
-        # Lazy-initialized OllamaClient (no import-time connection)
-        self._ollama_client = None  # Optional[OllamaClient]
-
         # UMLS client for n-gram clinical term lookup during extraction.
         # Set via set_umls_client() after construction (UMLS client is
         # created after KnowledgeGraphBuilder in _update_knowledge_graph).
@@ -394,45 +423,11 @@ class ConceptExtractor:
 
         # Provider statistics for observability
         self._concept_provider_stats = {
-            'ollama_success': 0,
+            'vllm_success': 0,
             'deepseek_fallback': 0,
             'both_failed': 0,
         }
     
-    async def _get_ollama_client(self):
-        """Get or initialize the Ollama client (lazy, cached).
-
-        Follows the same lazy-init pattern as
-        ``SmartBridgeGenerator._get_ollama_client`` — the import and
-        availability check happen on first call only.  Returns ``None``
-        when Ollama is unreachable so callers can degrade gracefully.
-
-        Caches negative results via ``_ollama_checked`` sentinel to avoid
-        re-checking availability on every chunk when Ollama is down.
-        """
-        if self._ollama_client is not None:
-            return self._ollama_client
-
-        # Already checked and found unavailable — skip re-check
-        if getattr(self, '_ollama_checked', False):
-            return None
-
-        try:
-            from ...clients.ollama_client import get_ollama_client
-
-            client = get_ollama_client()
-            if await client.is_available():
-                self._ollama_client = client
-                return client
-            else:
-                logger.warning("Ollama not available, LLM concept extraction will be skipped")
-                self._ollama_checked = True
-                return None
-        except Exception as e:
-            logger.warning(f"Failed to initialize Ollama client: {e}")
-            self._ollama_checked = True
-            return None
-
     def set_umls_client(self, umls_client) -> None:
         """Set the UMLS client for n-gram clinical term lookup.
 
@@ -471,9 +466,9 @@ class ConceptExtractor:
     async def _extract_concepts_deepseek(
         self, text: str, prompt: str
     ) -> List[Dict]:
-        """Extract concepts via DeepSeek (fallback from Ollama).
+        """Extract concepts via DeepSeek (fallback from vLLM).
 
-        Uses the same prompt and JSON parsing as the Ollama path.
+        Uses the same prompt and JSON parsing as the vLLM path.
         Returns ``[]`` if DeepSeek is unavailable or fails.
         """
         service = self._ensure_deepseek()
@@ -524,7 +519,7 @@ class ConceptExtractor:
     ) -> str:
         """Build the domain-aware concept extraction prompt.
 
-        Shared by both Ollama and DeepSeek code paths so the same prompt
+        Shared by vLLM and DeepSeek code paths so the same prompt
         template is used regardless of provider.
         """
         config = DOMAIN_PROMPT_REGISTRY[content_type]
@@ -535,22 +530,22 @@ class ConceptExtractor:
         )
 
     # ------------------------------------------------------------------
-    # LLM-based concept extraction (Ollama)
+    # LLM-based concept extraction (vLLM)
     # ------------------------------------------------------------------
 
-    async def extract_concepts_ollama(
+    async def extract_concepts_llm(
         self, text: str, content_type: ContentType = ContentType.GENERAL
     ) -> Tuple[List[ConceptNode], bool]:
-        """Extract concepts via the local Ollama LLM, with DeepSeek fallback.
+        """Extract concepts via the local vLLM server.
 
-        Sends a domain-aware prompt to Ollama, parses the JSON response,
-        and returns ConceptNodes with domain-aware confidence scores.
-        If Ollama fails, falls back to DeepSeek using the same prompt.
+        Sends a domain-aware prompt to vLLM (OpenAI-compatible), parses the
+        JSON response, and returns ConceptNodes with domain-aware confidence
+        scores. DeepSeek fallback is disabled pending vLLM debugging.
 
         Returns ``(concepts, llm_failed)`` where ``llm_failed=True`` when
-        both Ollama and DeepSeek fail.
+        vLLM fails.
         """
-        # Build shared prompt (used by both Ollama and DeepSeek)
+        # Build shared prompt (used by vLLM, DeepSeek, and the fallback paths)
         prompt = self._build_concept_prompt(text, content_type)
 
         # Domain-aware confidence
@@ -559,121 +554,147 @@ class ConceptExtractor:
         else:
             base_confidence = 0.70
 
-        # --- Try Ollama first ---
-        grounded = await self._try_ollama_extraction(text, prompt)
+        # --- Try vLLM first ---
+        grounded = await self._try_vllm_extraction(text, prompt)
 
         if grounded is not None:
-            self._concept_provider_stats['ollama_success'] += 1
+            self._concept_provider_stats['vllm_success'] += 1
             return (self._build_concept_nodes(grounded, base_confidence), False)
 
-        # --- Ollama failed, fall back to DeepSeek ---
-        logger.info("Ollama concept extraction failed, falling back to DeepSeek")
-        deepseek_grounded = await self._extract_concepts_deepseek(text, prompt)
-
-        if deepseek_grounded:
-            self._concept_provider_stats['deepseek_fallback'] += 1
-            return (self._build_concept_nodes(deepseek_grounded, base_confidence), False)
-
-        # Both failed
+        # DeepSeek fallback disabled pending vLLM debugging
+        logger.warning("vLLM concept extraction failed (DeepSeek fallback disabled)")
         self._concept_provider_stats['both_failed'] += 1
         return ([], True)
 
-    async def _try_ollama_extraction(
+    async def _try_vllm_extraction(
         self, text: str, prompt: str
     ) -> Optional[List[Dict]]:
-        """Attempt concept extraction via Ollama.
+        """Attempt concept extraction via vLLM (OpenAI-compatible).
 
-        Submits only the Ollama HTTP call through the shared pool
-        (task_type="kg") for fair share scheduling with bridge
-        generation.  All other work (JSON parsing) stays on the
-        caller's event loop.
+        Runs the vLLM HTTP call through the shared pool (task_type="kg")
+        for fair share scheduling with bridge generation.  All other work
+        (JSON parsing) stays on the caller's event loop.
 
         Returns a list of grounded candidate dicts on success,
-        an empty list when Ollama responded but produced no usable
+        an empty list when vLLM responded but produced no usable
         concepts (unparseable JSON, empty content), or ``None``
         only on infrastructure failures (pool exhausted, connection
         error, timeout).
         """
         try:
-            # Check availability first (cached negative result avoids
-            # repeated checks when Ollama is down).
-            if getattr(self, '_ollama_checked', False):
-                return None
-
             from ...services.ollama_pool_manager import (
                 PoolExhaustedError,
                 submit_ollama_work,
             )
 
-            def _ollama_sync():
+            settings = get_settings()
+
+            def _vllm_sync():
                 import asyncio as _aio
 
-                from ...clients.ollama_client import get_ollama_client
+                import httpx
 
-                # Reuse a per-thread event loop AND a per-thread
-                # Ollama client.  The httpx AsyncClient inside the
-                # Ollama client binds its internal asyncio primitives
-                # (locks, events) to the loop that created it.
-                # Creating the client on the SAME loop that will
-                # run_until_complete avoids "bound to a different
-                # event loop" errors.
+                # Reuse a per-thread event loop AND a per-thread vLLM
+                # client.  httpx.AsyncClient binds its internal asyncio
+                # primitives to the loop that created it, so create the
+                # client on the SAME loop that will run_until_complete.
                 loop = getattr(_kg_thread_local, 'event_loop', None)
                 if loop is None or loop.is_closed():
                     loop = _aio.new_event_loop()
                     _kg_thread_local.event_loop = loop
                     # Force a new client for the new loop
-                    _kg_thread_local.ollama_client = None
+                    _kg_thread_local.vllm_client = None
 
-                client = getattr(_kg_thread_local, 'ollama_client', None)
+                client = getattr(_kg_thread_local, 'vllm_client', None)
                 if client is None:
-                    client = get_ollama_client()
-                    _kg_thread_local.ollama_client = client
+                    client = httpx.AsyncClient(
+                        base_url=settings.vllm_url,
+                        timeout=httpx.Timeout(settings.vllm_timeout),
+                        limits=httpx.Limits(
+                            max_keepalive_connections=5,
+                            max_connections=20,
+                        ),
+                    )
+                    _kg_thread_local.vllm_client = client
 
-                return loop.run_until_complete(
-                    client.generate(prompt, temperature=0.2, max_tokens=1500)
+                system_prompt = (
+                    "You extract key concepts from text and return them as a "
+                    "JSON array of objects with 'name' and 'type' fields. "
+                    "Return ONLY the JSON array, no explanation."
                 )
+                payload = {
+                    "model": settings.vllm_model,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": prompt},
+                    ],
+                    "max_tokens": 2048,
+                    "temperature": 0.2,
+                }
+
+                async def _post():
+                    r = await client.post("/v1/chat/completions", json=payload)
+                    r.raise_for_status()
+                    return r.json()
+
+                return loop.run_until_complete(_post())
 
             try:
-                future = submit_ollama_work(
-                    _ollama_sync,
-                    task_type="kg",
+                future = submit_ollama_work(_vllm_sync, task_type="kg")
+                data = await asyncio.wait_for(
+                    asyncio.wrap_future(future), timeout=360
                 )
-                response = future.result(timeout=120)
             except PoolExhaustedError:
-                logger.warning("Ollama pool exhausted for KG extraction")
+                logger.warning("Shared pool exhausted for vLLM KG extraction")
                 return None
             except Exception as pool_err:
-                logger.warning("Ollama pool call failed: %s", pool_err)
+                logger.warning("vLLM pool call failed: %s", pool_err)
                 return None
 
-            if not response.is_successful():
-                logger.warning("Ollama concept extraction failed: %s", response.error)
+            content = (
+                (data.get("choices", [{}])[0]
+                 .get("message", {}).get("content", "") or "")
+            )
+            if not content:
+                logger.warning("vLLM concept extraction returned empty content")
                 return []
 
-            entries = self._extract_json_array(response.content)
+            entries = self._extract_json_array(content)
             if entries is None:
                 logger.debug(
-                    "Ollama returned unparseable response (first 300 chars): %.300s",
-                    response.content,
+                    "vLLM returned unparseable response (first 300 chars): %.300s",
+                    content,
                 )
                 return []
 
             return entries
         except Exception as e:
-            logger.warning("Unexpected error in Ollama concept extraction: %s", e)
+            logger.warning("Unexpected error in vLLM concept extraction: %s", e)
             return None
 
     def _build_concept_nodes(
         self, grounded: List[Dict], base_confidence: float
     ) -> List[ConceptNode]:
-        """Convert grounded candidate dicts into ConceptNode instances."""
+        """Convert grounded candidate dicts into ConceptNode instances.
+
+        Deduplicates on a bag-of-words key so the 3B model re-emitting a
+        concept as surface-form variants ("work restrictions" vs "restrictions
+        for work") on term-dense pages collapses to a single node instead of
+        flooding the graph with near-identical permutations.
+        """
+        _stop = {'the', 'a', 'an', 'of', 'in', 'on', 'at', 'to', 'for', 'with'}
         concepts: List[ConceptNode] = []
+        seen: Set[frozenset] = set()
         for entry in grounded:
             name = entry.get("name", "")
             ctype = entry.get("type", "")
             if not name or not ctype:
                 continue
-            normalized = self._normalize_concept_name(name)
+            words = re.sub(r'[^a-z0-9 ]', ' ', name.lower()).split()
+            key = frozenset(w for w in words if w not in _stop)
+            if not key or key in seen:
+                continue
+            seen.add(key)
             concept = ConceptNode(
                 concept_id=f"public:{name.lower()}",
                 concept_name=name,
@@ -844,8 +865,13 @@ class ConceptExtractor:
         freq_boost_map: Dict[str, float] = {}
 
         for concept_type, patterns in self.concept_patterns.items():
+            flags = (
+                re.IGNORECASE
+                if concept_type in _CASE_INSENSITIVE_PATTERN_TYPES
+                else 0
+            )
             for pattern in patterns:
-                matches = re.finditer(pattern, text, re.IGNORECASE)
+                matches = re.finditer(pattern, text, flags)
                 for match in matches:
                     concept_name = match.group().strip()
                     if len(concept_name) < 3:  # Skip very short concepts
@@ -919,7 +945,9 @@ class ConceptExtractor:
         re.compile(r'^[a-z]+://', re.IGNORECASE),        # URLs: http://
     ]
 
-    async def extract_concepts_with_ner(self, text: str) -> Tuple[List[ConceptNode], bool]:
+    async def extract_concepts_with_ner(
+        self, text: str, content_type: ContentType = ContentType.GENERAL
+    ) -> Tuple[List[ConceptNode], bool]:
         """Extract concepts using spaCy NER via model server.
 
         Calls ``ModelServerClient.get_entities()`` and converts each spaCy
@@ -927,11 +955,18 @@ class ConceptExtractor:
         the spaCy label and ``confidence`` of 0.85.
 
         Filters out code-like patterns (function calls, snake_case identifiers)
-        that spaCy may incorrectly tag as named entities.
+        that spaCy may incorrectly tag as named entities.  For MEDICAL content,
+        also drops the standard spaCy entity labels (person/org/location/date/
+        etc.) which surface as citation noise; other content types keep them.
 
         Returns ``(concepts, ner_failed)`` where ``ner_failed=True`` when the
         model server is unavailable or ``get_entities`` raises an exception.
         """
+        skip_labels = (
+            _STANDARD_SPACY_NER_LABELS
+            if content_type == ContentType.MEDICAL
+            else frozenset()
+        )
         client = await self._get_model_server_client()
         if client is None:
             logger.warning(
@@ -951,6 +986,12 @@ class ConceptExtractor:
             name = entity.get("text", "").strip()
             label = entity.get("label", "ENTITY")
             if not name or len(name) < 2:
+                continue
+            if label in skip_labels:
+                logger.debug(
+                    f"Skipping NER entity '{name}' (label={label}) for "
+                    f"content_type={content_type.value}"
+                )
                 continue
             
             # Filter out code-like patterns that spaCy misidentifies as entities
@@ -996,10 +1037,10 @@ class ConceptExtractor:
             )
         return (concepts, False)
 
-    async def extract_gerund_compounds(self, text: str) -> List[ConceptNode]:
+    async def extract_gerund_compounds(self, text: str) -> Tuple[List[ConceptNode], bool]:
         """Form gerund-as-modifier compound candidates ("lifting restrictions").
 
-        spaCy's NER and Ollama often read a leading gerund as a verb and never
+        spaCy's NER and the LLM often read a leading gerund as a verb and never
         emit the compound ("lifting restrictions" -> "lifting" + "restrictions"
         as separate concepts).  Here we parse the text *in context* and, for any
         token attached to an immediately-following noun as a modifier — a VBG
@@ -1009,18 +1050,18 @@ class ConceptExtractor:
         so grounding can decompose it.  The ``-ing`` guard keeps ordinary
         noun-noun compounds (already extracted elsewhere) out of scope.
 
-        Best-effort: returns ``[]`` when the model server is unavailable or the
-        parse fails.
+        Returns ``(concepts, failed)``; ``failed=True`` when the model server
+        is unavailable or the parse raises, so the source can be retried.
         """
         client = await self._get_model_server_client()
         if client is None:
-            return []
+            return ([], True)
 
         try:
             results = await client.process_nlp([text], tasks=["pos"])
         except Exception as e:
             logger.debug(f"Gerund-compound extraction failed: {e}")
-            return []
+            return ([], True)
 
         pos_tags = (results[0].get("pos_tags") or []) if results else []
 
@@ -1056,7 +1097,7 @@ class ConceptExtractor:
                     confidence=0.6,
                 )
             )
-        return concepts
+        return (concepts, False)
 
     async def _synthesize_compositional_grounding(
         self,
@@ -1480,17 +1521,19 @@ class ConceptExtractor:
         Only n-grams that match a UMLS concept (by preferred name or synonym)
         are returned as concepts.
 
-        Degrades gracefully: returns ``([], True)`` when the UMLS client is
-        not configured or the lookup fails.
+        Degrades gracefully: returns ``([], False)`` when the UMLS client is
+        not configured, the text is too short, or no n-grams match (none of
+        these are transient — retrying would not help).  Returns ``([], True)``
+        only when the lookup itself raised, so the source can be retried.
 
         Returns ``(concepts, umls_failed)``.
         """
         if self._umls_client is None:
-            return ([], True)
+            return ([], False)
 
         words = text.split()
         if len(words) < 2:
-            return ([], True)
+            return ([], False)
 
         # Generate all contiguous 2-to-5-grams
         candidates: List[str] = []
@@ -1503,7 +1546,7 @@ class ConceptExtractor:
                     candidates.append(gram)
 
         if not candidates:
-            return ([], True)
+            return ([], False)
 
         try:
             umls_map = await self._umls_client.batch_search_by_names(candidates)
@@ -1540,33 +1583,84 @@ class ConceptExtractor:
         return (concepts, False)
 
     async def extract_all_concepts_async(
-        self, text: str, content_type: ContentType = ContentType.GENERAL
-    ) -> Tuple[List[ConceptNode], bool, bool]:
-        """Combine NER + Ollama + UMLS + regex + gerund extraction and deduplicate.
+        self,
+        text: str,
+        content_type: ContentType = ContentType.GENERAL,
+        sources: Optional[Set[str]] = None,
+    ) -> Tuple[List[ConceptNode], Set[str]]:
+        """Combine NER + LLM + UMLS + regex + gerund extraction and deduplicate.
 
         Runs :meth:`extract_concepts_with_ner`,
-        :meth:`extract_concepts_ollama`, :meth:`extract_concepts_umls_ngrams`,
+        :meth:`extract_concepts_llm`, :meth:`extract_concepts_umls_ngrams`,
         and :meth:`extract_gerund_compounds` concurrently via
         ``asyncio.gather``, then :meth:`extract_concepts_regex`
         synchronously.  Deduplicates by normalized concept name,
         keeping the higher-confidence entry.
 
-        Returns ``(concepts, ner_failed, llm_failed)`` so callers can track
-        per-chunk failure flags for the quality gate.
+        ``sources`` restricts which of the four sources run (default: all).
+        Used by targeted recovery to re-run only the sources that failed.
 
-        If the model server, Ollama, or UMLS is unavailable the respective
-        method returns ``([], True)`` and the pipeline continues with the
-        remaining sources.
+        Returns ``(concepts, failed_sources)`` where ``failed_sources`` is the
+        set of source keys that failed, so callers can durably track which
+        source needs retrying.
         """
-        ner_result, ollama_result, umls_result, gerund_concepts = await asyncio.gather(
-            self.extract_concepts_with_ner(text),
-            self.extract_concepts_ollama(text, content_type),
-            self.extract_concepts_umls_ngrams(text),
-            self.extract_gerund_compounds(text),
+        requested: Set[str] = set(sources) if sources is not None else set(ALL_CONCEPT_SOURCES)
+
+        coros: Dict[str, Any] = {}
+        if NER_SOURCE in requested:
+            coros[NER_SOURCE] = self.extract_concepts_with_ner(text, content_type)
+        if LLM_SOURCE in requested:
+            coros[LLM_SOURCE] = self.extract_concepts_llm(text, content_type)
+        if UMLS_SOURCE in requested:
+            coros[UMLS_SOURCE] = self.extract_concepts_umls_ngrams(text)
+        if GERUND_SOURCE in requested:
+            coros[GERUND_SOURCE] = self.extract_gerund_compounds(text)
+
+        if not coros:
+            return ([], set())
+
+        # return_exceptions=True: a single source failing (including a
+        # transient asyncio.CancelledError from a model-server/vLLM
+        # connection reset) must not cancel the other sources and lose the
+        # whole chunk.  Each failure is demoted to a value and recorded in
+        # failed_sources below, so the remaining sources still contribute.
+        names = list(coros.keys())
+        gathered = await asyncio.gather(
+            *(coros[name] for name in names),
+            return_exceptions=True,
         )
-        ner_concepts, ner_failed = ner_result
-        ollama_concepts, llm_failed = ollama_result
-        umls_concepts, _umls_failed = umls_result
+
+        failed_sources: Set[str] = set()
+        ner_concepts: List[ConceptNode] = []
+        llm_concepts: List[ConceptNode] = []
+        umls_concepts: List[ConceptNode] = []
+        gerund_concepts: List[ConceptNode] = []
+
+        for name, result in zip(names, gathered):
+            if isinstance(result, BaseException):
+                logger.warning(
+                    "Concept source %s failed (%s), continuing with remaining sources",
+                    name, type(result).__name__,
+                )
+                failed_sources.add(name)
+                continue
+            if name == NER_SOURCE:
+                ner_concepts, ner_failed = result
+                if ner_failed:
+                    failed_sources.add(NER_SOURCE)
+            elif name == LLM_SOURCE:
+                llm_concepts, llm_failed = result
+                if llm_failed:
+                    failed_sources.add(LLM_SOURCE)
+            elif name == UMLS_SOURCE:
+                umls_concepts, umls_failed = result
+                if umls_failed:
+                    failed_sources.add(UMLS_SOURCE)
+            elif name == GERUND_SOURCE:
+                gerund_concepts, gerund_failed = result
+                if gerund_failed:
+                    failed_sources.add(GERUND_SOURCE)
+
         regex_concepts = self.extract_concepts_regex(text)
 
         # Merge: index by raw name_lower (case-normalized surface form), keep
@@ -1574,7 +1668,7 @@ class ConceptExtractor:
         # slug, so distinct senses ("work restrictions" vs "restrictions for
         # work") are not over-merged.
         merged: Dict[str, ConceptNode] = {}
-        for concept in ner_concepts + regex_concepts + ollama_concepts + umls_concepts + gerund_concepts:
+        for concept in ner_concepts + regex_concepts + llm_concepts + umls_concepts + gerund_concepts:
             key = concept.concept_name.lower()
             existing = merged.get(key)
             if existing is None:
@@ -1582,7 +1676,7 @@ class ConceptExtractor:
                 continue
             if concept.confidence > existing.confidence:
                 merged[key] = concept
-        return (list(merged.values()), ner_failed, llm_failed)
+        return (list(merged.values()), failed_sources)
 
     def extract_concepts_definition_patterns(self, text: str, chunk_id: str) -> List[ConceptNode]:
         """Extract concepts using LLM-based analysis."""
@@ -2480,9 +2574,9 @@ class KnowledgeGraphBuilder:
         try:
             extraction_id = str(uuid.uuid4())
 
-            # Step 1: Extract concepts using combined NER + Ollama + regex pipeline
+            # Step 1: Extract concepts using combined NER + LLM + regex pipeline
             content_type = getattr(chunk, 'content_type', ContentType.GENERAL)
-            concepts, _ner_failed, _llm_failed = await self.concept_extractor.extract_all_concepts_async(
+            concepts, _failed_sources = await self.concept_extractor.extract_all_concepts_async(
                 chunk.content, content_type=content_type
             )
 
@@ -2569,74 +2663,92 @@ class KnowledgeGraphBuilder:
                 confidence_score=0.0
             )
 
-    async def process_knowledge_chunk_extract_only(self, chunk: KnowledgeChunk) -> Tuple[ConceptExtraction, bool, bool]:
+    async def process_knowledge_chunk_extract_only(
+        self,
+        chunk: KnowledgeChunk,
+        sources: Optional[Set[str]] = None,
+    ) -> Tuple[ConceptExtraction, Set[str]]:
         """Extract concepts and relationships from a chunk WITHOUT ConceptNet validation.
 
         Identical to process_knowledge_chunk_async but skips the per-chunk
         ConceptNet validation gate (Step 2). Validation is deferred to
         batch level via validate_batch_concepts().
 
-        Returns ``(extraction, ner_failed, llm_failed)`` so the caller can
-        accumulate per-document failure counters for the quality gate.
+        ``sources`` restricts which concept sources run (default: all).  Used
+        by targeted recovery to re-run only the sources that failed.
+
+        Returns ``(extraction, failed_sources)`` where ``failed_sources`` is
+        the set of source keys (``ner``/``llm``/``umls``/``gerund``) that
+        failed for this chunk, so the caller can durably track which source
+        needs retrying without re-running the others.
         """
         try:
             extraction_id = str(uuid.uuid4())
 
-            # Step 1: Extract concepts using combined NER + Ollama + regex pipeline
+            # Step 1: Extract concepts using combined NER + LLM + regex pipeline
             content_type = getattr(chunk, 'content_type', ContentType.GENERAL)
-            concepts, ner_failed, llm_failed = await self.concept_extractor.extract_all_concepts_async(
-                chunk.content, content_type=content_type
+            concepts, failed_sources = await self.concept_extractor.extract_all_concepts_async(
+                chunk.content, content_type=content_type, sources=sources
             )
             for concept in concepts:
                 concept.add_source_chunk(chunk.id)
 
-            # Step 1b: Compose drug + dose compounds bottom-up (HAS_DOSE),
-            # medical scope only.  Anchors on already-extracted drug concepts.
-            dose_concepts = []
+            # Step 1b/1b'/1c/3/4: composition + relationships.  These are
+            # best-effort enrichments on top of the already-extracted concepts.
+            # A failure here (including a transient CancelledError from the
+            # model server) must not discard the concepts we already have, so
+            # they run in their own try/except and degrade to concepts-only.
+            dose_concepts: List[ConceptNode] = []
             dose_relationships = []
-            if content_type == ContentType.MEDICAL:
-                pos_tags = await self._get_pos_tags(chunk.content)
-                dose_concepts, dose_relationships = \
-                    self.concept_extractor._compose_drug_dose_concepts(
-                        chunk.content, concepts, pos_tags=pos_tags,
-                        chunk_id=chunk.id,
-                    )
-            if dose_concepts:
-                concepts.extend(dose_concepts)
-
-            # Step 1b': Link therapy/regimen concepts to the agents they
-            # include (INCLUDES), medical scope only.  Agents are the HAS_DOSE
-            # subjects from the dose pass (generic, not drug-class-specific).
             treatment_relationships = []
-            if content_type == ContentType.MEDICAL:
-                agent_ids = {rel.subject_concept for rel in dose_relationships}
-                treatment_relationships = \
-                    self.concept_extractor._compose_treatment_links(
-                        concepts, agent_ids
+            grounding_relationships = []
+            pattern_relationships = []
+            embedding_relationships = []
+            try:
+                if content_type == ContentType.MEDICAL:
+                    pos_tags = await self._get_pos_tags(chunk.content)
+                    dose_concepts, dose_relationships = \
+                        self.concept_extractor._compose_drug_dose_concepts(
+                            chunk.content, concepts, pos_tags=pos_tags,
+                            chunk_id=chunk.id,
+                        )
+                if dose_concepts:
+                    concepts.extend(dose_concepts)
+
+                if content_type == ContentType.MEDICAL:
+                    agent_ids = {rel.subject_concept for rel in dose_relationships}
+                    treatment_relationships = \
+                        self.concept_extractor._compose_treatment_links(
+                            concepts, agent_ids
+                        )
+
+                extra_concepts, grounding_relationships = \
+                    await self.concept_extractor._synthesize_compositional_grounding(
+                        concepts
                     )
+                if extra_concepts:
+                    concepts.extend(extra_concepts)
 
-            # Step 1c: Synthesize compositional grounding (HAS_HEAD/HAS_MODIFIER).
-            # Mints missing head/modifier parts with provenance
-            # "materialized-for-grounding"; best-effort (never blocks extraction).
-            extra_concepts, grounding_relationships = \
-                await self.concept_extractor._synthesize_compositional_grounding(
-                    concepts
+                pattern_relationships = self.relationship_extractor.extract_relationships_pattern(
+                    chunk.content, concepts
                 )
-            if extra_concepts:
-                concepts.extend(extra_concepts)
 
-            # Step 2: SKIPPED — no per-chunk ConceptNet validation
-
-            # Step 3: Extract pattern-based relationships
-            pattern_relationships = self.relationship_extractor.extract_relationships_pattern(
-                chunk.content, concepts
-            )
-
-            # Step 4: Extract embedding-based relationships
-            model_server_client = await self._get_model_server_client()
-            embedding_relationships = await self.relationship_extractor.extract_relationships_embedding_async(
-                concepts, model_server_client
-            )
+                model_server_client = await self._get_model_server_client()
+                embedding_relationships = await self.relationship_extractor.extract_relationships_embedding_async(
+                    concepts, model_server_client
+                )
+            except asyncio.CancelledError:
+                if asyncio.current_task().cancelled():
+                    raise
+                logger.warning(
+                    f"Composition/relationship step cancelled for chunk {chunk.id}; "
+                    f"keeping {len(concepts)} concepts without relationships"
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Composition/relationship step failed for chunk {chunk.id}: {e}; "
+                    f"keeping {len(concepts)} concepts without relationships"
+                )
 
             all_relationships = (
                 pattern_relationships + embedding_relationships
@@ -2667,7 +2779,25 @@ class KnowledgeGraphBuilder:
                 f"Extracted (no validation) chunk {chunk.id}: "
                 f"{len(concepts)} concepts, {len(relationships)} relationships"
             )
-            return (extraction, ner_failed, llm_failed)
+            return (extraction, failed_sources)
+
+        except asyncio.CancelledError:
+            # Re-raise only if THIS task is being cancelled (worker shutdown /
+            # soft limit).  A transient sub-await cancellation is handled above
+            # and must not abort the whole chunk.
+            if asyncio.current_task().cancelled():
+                raise
+            logger.error(
+                f"CancelledError in extract-only processing for chunk {chunk.id}; "
+                f"returning empty extraction"
+            )
+            return (ConceptExtraction(
+                extraction_id=str(uuid.uuid4()),
+                chunk_id=chunk.id,
+                extracted_concepts=[],
+                extracted_relationships=[],
+                confidence_score=0.0
+            ), set(ALL_CONCEPT_SOURCES))
 
         except Exception as e:
             logger.error(f"Error in extract-only processing: {e}")
@@ -2677,7 +2807,7 @@ class KnowledgeGraphBuilder:
                 extracted_concepts=[],
                 extracted_relationships=[],
                 confidence_score=0.0
-            ), False, False)
+            ), set(ALL_CONCEPT_SOURCES))
 
     async def validate_batch_concepts(
         self, concepts: List[ConceptNode]

@@ -88,8 +88,14 @@ class Settings(BaseSettings):
     ollama_model: str = Field(default="llama3.2:3b", description="Ollama model to use")
     ollama_enabled: bool = Field(default=True, description="Enable Ollama for local LLM")
     ollama_timeout: float = Field(default=120.0, description="Ollama request timeout in seconds")
-    # Bridge generation provider: "ollama" (local, fast) or "deepseek" (cloud, higher quality)
-    bridge_generation_provider: str = Field(default="ollama", description="Provider for bridge generation")
+    # Bridge generation provider: "vllm" (local, Apple Metal), "ollama" (legacy local), or "deepseek" (cloud)
+    bridge_generation_provider: str = Field(default="vllm", description="Provider for bridge generation")
+    # vLLM (Apple Metal) — local OpenAI-compatible inference for bridge generation.
+    # Runs natively on the host (like the model server); Docker reaches it via
+    # host.docker.internal:8002. Must be started with --host 0.0.0.0.
+    vllm_url: str = Field(default="http://host.docker.internal:8002", description="vLLM server base URL")
+    vllm_model: str = Field(default="mlx-community/Llama-3.2-3B-Instruct-4bit", description="vLLM model name")
+    vllm_timeout: float = Field(default=300.0, description="vLLM request timeout in seconds")
 
     # File storage settings
     upload_dir: str = Field(default="uploads", description="Directory for uploaded files")

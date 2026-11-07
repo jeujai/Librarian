@@ -219,6 +219,8 @@ _UMLS_NEIGHBOR_EXPANSION_RELA = [
     "cause_of", "due_to",
     "has_manifestation", "manifestation_of",
     "has_causative_agent",
+    "causative_agent_of",
+    "induces", "induced_by",
     "has_pharmacokinetics",
     "has_physiologic_effect",
     "has_mechanism_of_action",
@@ -250,7 +252,7 @@ class QueryDecomposer:
         model_server_client: Optional[Any] = None,
         similarity_threshold: float = 0.65,
         canonical_similarity_threshold: float = 0.75,
-        semantic_max_results: int = 30,
+        semantic_max_results: int = 60,
         semantic_enabled: bool = True,
         ner_extractor: Optional[Any] = None,
     ):
@@ -772,6 +774,62 @@ class QueryDecomposer:
                 logger.warning(f"Vector search failed for a phrase: {e}")
             return []
 
+    async def _search_concept_rationale_index(
+        self,
+        embedding: List[float],
+        threshold: float,
+        top_k: int,
+        user_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Vector-search concept_rationale_embedding_index for a single embedding.
+
+        Mirrors ``_search_concept_index`` but over the concept-level rationale
+        embedding (mean of per-edge LLM rationales) instead of the name
+        embedding.  This surfaces implied-diagnosis anchors whose bare name
+        scores low against the query but whose co-text rationale is close.
+        Matches are tagged ``match_type='rationale'`` and carry their cosine
+        as both ``similarity_score`` and ``rationale_score``.
+        """
+        cypher = """
+        CALL db.index.vector.queryNodes(
+            'concept_rationale_embedding_index', $top_k, $embedding
+        )
+        YIELD node, score
+        WHERE score >= $threshold
+          AND (node.scope = 'public'
+               OR ($user_id IS NOT NULL AND node.owner_id = $user_id))
+        RETURN node.concept_id AS concept_id,
+               node.name AS name,
+               node.type AS type,
+               node.confidence AS confidence,
+               node.source_document AS source_document,
+               node.source_chunks AS source_chunks,
+               node.scope AS scope,
+               node.owner_id AS owner_id,
+               score AS similarity_score
+        """
+        try:
+            async with self._vector_search_semaphore:
+                results = await asyncio.wait_for(
+                    self._neo4j_client.execute_query(cypher, {
+                        'embedding': embedding,
+                        'top_k': top_k,
+                        'threshold': threshold,
+                        'user_id': user_id,
+                    }),
+                    timeout=10.0,
+                )
+            return [
+                {**record, 'match_type': 'rationale'}
+                for record in (results or [])
+            ]
+        except (asyncio.TimeoutError, Exception) as e:
+            if isinstance(e, asyncio.TimeoutError):
+                logger.warning("Rationale vector search timed out (10s) for a phrase")
+            else:
+                logger.warning(f"Rationale vector search failed for a phrase: {e}")
+            return []
+
     async def _find_semantic_matches(
         self, query: str, user_id: Optional[str] = None
     ) -> tuple[List[Dict[str, Any]], List[UnresolvedPhrase]]:
@@ -873,7 +931,10 @@ class QueryDecomposer:
                 except (asyncio.TimeoutError, Exception):
                     return []  # ConceptNet index may not exist yet; degrade gracefully
 
-            # Run concept + UMLS + ConceptNet searches in parallel
+            # Run concept + UMLS + ConceptNet + rationale searches in parallel.
+            # The rationale index is searched with the FULL query embedding only
+            # (the co-text bridge surfaces the implied diagnosis, not the NER
+            # sub-phrase self-confirmations).
             concept_tasks = [
                 self._search_concept_index(
                     emb, self._similarity_threshold, self._semantic_max_results,
@@ -883,13 +944,31 @@ class QueryDecomposer:
             ]
             umls_tasks = [_search_umls(emb) for emb in embeddings]
             conceptnet_tasks = [_search_conceptnet(emb) for emb in embeddings]
-            all_tasks = concept_tasks + umls_tasks + conceptnet_tasks
+            rationale_tasks = [
+                self._search_concept_rationale_index(
+                    embeddings[0], self._similarity_threshold,
+                    self._semantic_max_results, user_id,
+                )
+            ]
+            all_tasks = concept_tasks + umls_tasks + conceptnet_tasks + rationale_tasks
             all_results = await asyncio.gather(*all_tasks)
             mid = len(embeddings)
             mid2 = mid * 2
             all_match_lists = list(all_results[:mid])
             umls_match_lists = list(all_results[mid:mid2])
-            conceptnet_match_lists = list(all_results[mid2:])
+            conceptnet_match_lists = list(all_results[mid2:-1])
+            rationale_match_lists = list(all_results[-1:])
+
+            # Tag the FULL query phrase's direct matches (search_phrases[0]).
+            # Short NER sub-phrases like "CXR" self-match their own concept
+            # name at ~1.0 cosine (self-confirmation), whereas the full
+            # sentence embedding surfaces the IMPLIED disease ("pneumonia")
+            # at a lower but clinically meaningful score.  Ranking sub-phrase
+            # self-matches above the full query's matches crowds the implied
+            # disease out of the top-N, so full-query matches get priority.
+            if all_match_lists and all_match_lists[0]:
+                for m in all_match_lists[0]:
+                    m['full_query'] = True
 
             # Collect unique UMLS embeddings (dedup by preferred_name).
             # Cap at _max_umls_bridge to prevent fan-out from overwhelming Neo4j
@@ -1032,15 +1111,57 @@ class QueryDecomposer:
                     f"(from {sum(len(r) for r in umls_match_lists)} raw UMLS hits)"
                 )
 
+            # ── 3.5. Fold rationale-bridge matches into the candidate pool ──
+            # The concept-level rationale embedding surfaces implied diagnoses
+            # whose bare name scores low against the query.  Fold its matches
+            # in as a promotion signal: name matches keep their semantic score
+            # (downstream KG scoring depends on it) but gain
+            # rationale_score/rationale_bridge; rationale-only concepts are
+            # appended as new candidates carrying the rationale cosine.
+            if rationale_match_lists:
+                rationale_by_cid: Dict[str, Dict[str, Any]] = {}
+                for rml in rationale_match_lists:
+                    for m in rml:
+                        cid = m.get('concept_id')
+                        if cid is None:
+                            continue
+                        rs = m.get('similarity_score', 0.0)
+                        if (
+                            cid not in rationale_by_cid
+                            or rs > rationale_by_cid[cid].get('rationale_score', 0.0)
+                        ):
+                            rm = dict(m)
+                            rm['rationale_score'] = rs
+                            rm['rationale_bridge'] = True
+                            rm['full_query'] = True
+                            rationale_by_cid[cid] = rm
+                name_cids: Set[str] = set()
+                for ml in all_match_lists:
+                    for m in ml:
+                        cid = m.get('concept_id')
+                        if cid is None:
+                            continue
+                        name_cids.add(cid)
+                        if cid in rationale_by_cid:
+                            m['rationale_score'] = rationale_by_cid[cid]['rationale_score']
+                            m['rationale_bridge'] = True
+                rationale_only = [
+                    rm for cid, rm in rationale_by_cid.items() if cid not in name_cids
+                ]
+                if rationale_only:
+                    all_match_lists.append(rationale_only)
+
             # ── 4. Merge, deduplicate, keep highest score ─────────────
-            # Coverage-aware ordering: direct matches (umls_bridge=False) sort
-            # ABOVE UMLS-bridged matches, then higher similarity, then the
-            # caller's own private concepts (so user content surfaces above
-            # the public corpus at a tie).  Putting direct matches first keeps
+            # Coverage-aware ordering: full-query matches sort first (they
+            # carry the implied disease concept), then rationale-bridged
+            # matches (co-text-validated) above non-bridged, then direct
+            # matches over UMLS-bridged, then higher similarity, then the
+            # caller's own private concepts at a tie.
+            # Putting direct matches before the UMLS bridge fan-out keeps
             # the query's own named concepts (e.g. seeded "management
-            # guidelines" / "work restrictions") from being crowded out of the
-            # top-N by a UMLS bridge fan-out (e.g. dozens of vaccination
-            # concepts reached via UMLS_REL).
+            # guidelines" / "work restrictions") from being crowded out of
+            # the top-N by dozens of vaccination concepts reached via
+            # UMLS_REL.
             def _is_private_owned(m: Dict[str, Any]) -> bool:
                 return (
                     user_id is not None
@@ -1049,13 +1170,21 @@ class QueryDecomposer:
                 )
 
             def _rank(m: Dict[str, Any]) -> tuple:
-                # not umls_bridge → True for direct matches, so direct sorts
-                # first under reverse=True.  A direct hit (query embedding →
-                # concept_embedding_index) is stronger evidence than the
-                # indirect query → UMLS → concept_embedding_index path.
+                # Sort key (reverse=True): full-query matches first (they
+                # surface the implied disease rather than self-confirming
+                # surface forms), then rationale-bridged matches (co-text
+                # signal) above non-bridged, then direct matches over
+                # UMLS-bridged, then higher similarity, then the caller's own
+                # private concepts at a tie.  Rationale-bridged concepts rank
+                # by their rationale_score (compressed 0.7–0.8 band) so the
+                # name-space self-confirmation flood can't outrank the
+                # implied-diagnosis anchors.
+                has_rat = (m.get('rationale_score') or 0) > 0
                 return (
+                    m.get('full_query', False),
+                    has_rat,
                     not m.get('umls_bridge', False),
-                    m.get('similarity_score', 0),
+                    m.get('rationale_score', 0) if has_rat else m.get('similarity_score', 0),
                     _is_private_owned(m),
                 )
 
@@ -1100,6 +1229,7 @@ class QueryDecomposer:
             specific_count = sum(1 for m in merged if not m['is_generic'])
             generic_count = sum(1 for m in merged if m['is_generic'])
             umls_bridged_count = sum(1 for m in merged if m.get('umls_bridge'))
+            rationale_bridged_count = sum(1 for m in merged if m.get('rationale_bridge'))
 
             _elapsed = (time.monotonic() - _t0) * 1000
             logger.info(
@@ -1108,7 +1238,8 @@ class QueryDecomposer:
                 f"→ {len(seen)} by-id → {len(name_deduped)} by-name "
                 f"→ {len(merged)} final "
                 f"({specific_count} specific, {generic_count} generic, "
-                f"{umls_bridged_count} umls-bridged) "
+                f"{umls_bridged_count} umls-bridged, "
+                f"{rationale_bridged_count} rationale-bridged) "
                 f"in {_elapsed:.0f}ms"
             )
 

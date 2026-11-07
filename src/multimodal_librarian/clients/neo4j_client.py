@@ -334,6 +334,17 @@ class Neo4jClient:
             "'conceptnet_embedding_index', 'ConceptNetConcept', 'embedding', 768, 'cosine')"
         )
 
+        # Vector index over the concept-level rationale embedding.  Unlike
+        # concept_embedding_index (which embeds concept NAMES only), this
+        # indexes the mean of the per-edge LLM rationales — a paraphrased
+        # "why this concept matters in this passage" co-text — so implied
+        # diagnoses surface even when their bare name scores low against the
+        # query (e.g. "Pneumocystis" name-cos 0.59 vs rationale-cos 0.79).
+        concept_rationale_vector_index_statement = (
+            "CALL db.index.vector.createNodeIndex("
+            "'concept_rationale_embedding_index', 'Concept', 'rationale_embedding', 768, 'cosine')"
+        )
+
         try:
             async with self.driver.session(database=self.database) as session:
                 for statement in index_statements:
@@ -366,6 +377,13 @@ class Neo4jClient:
                     logger.debug("Created vector index: conceptnet_embedding_index")
                 except Exception as e:
                     logger.warning(f"ConceptNet vector index creation warning (may already exist): {e}")
+
+                # Create vector index for concept-level rationale matching
+                try:
+                    await session.run(concept_rationale_vector_index_statement)
+                    logger.debug("Created vector index: concept_rationale_embedding_index")
+                except Exception as e:
+                    logger.warning(f"Rationale vector index creation warning (may already exist): {e}")
                 logger.info("Neo4j indexes and constraints ensured")
                 
         except Exception as e:

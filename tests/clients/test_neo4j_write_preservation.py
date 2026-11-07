@@ -423,7 +423,7 @@ class TestUMLSBridgingSkipPreservation:
 
         mock_builder = MagicMock()
         mock_builder.process_knowledge_chunk_extract_only = (
-            AsyncMock(return_value=mock_extraction)
+            AsyncMock(return_value=(mock_extraction, set()))
         )
         mock_builder.validate_batch_concepts = AsyncMock(
             return_value=([], [], {})
@@ -600,7 +600,7 @@ class TestDocumentDeletionAbortPreservation:
 
         mock_builder = MagicMock()
         mock_builder.process_knowledge_chunk_extract_only = (
-            AsyncMock(return_value=mock_extraction)
+            AsyncMock(return_value=(mock_extraction, set()))
         )
         mock_builder.validate_batch_concepts = AsyncMock(
             return_value=([], [], {})

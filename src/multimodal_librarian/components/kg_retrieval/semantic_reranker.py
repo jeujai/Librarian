@@ -77,8 +77,9 @@ class SemanticReranker:
     DEFAULT_SEMANTIC_WEIGHT = BRIDGE_WEIGHT
     
     # Optimization constants
-    MAX_CHUNKS_FOR_CROSS_ENCODER = 12  # Keep low for CPU cross-encoder performance
+    MAX_CHUNKS_FOR_CROSS_ENCODER = 50  # Match bi-encoder window so the cross-encoder sees the same candidate set
     MAX_CHUNKS_FOR_BI_ENCODER = 50  # Bi-encoder is fast, can handle more
+
     QUERY_CACHE_SIZE = 50  # Max cached query embeddings
     QUERY_CACHE_TTL_SECONDS = 300  # 5 minutes
 
@@ -138,6 +139,7 @@ class SemanticReranker:
         query: str,
         top_k: int = 15,
         decomposition: Optional[Any] = None,
+        rerank_query: Optional[str] = None,
     ) -> List[RetrievedChunk]:
         """
         Re-rank chunks using semantic similarity.
@@ -159,6 +161,11 @@ class SemanticReranker:
             top_k: Maximum chunks to return (default 15)
             decomposition: Optional QueryDecomposition with extracted
                 entities and actions from the query decomposer.
+            rerank_query: Optional query used for the cross-encoder only.
+                When provided, embeds KG provenance terms (reachable UMLS
+                neighbor names) so the cross-encoder can recognize
+                structurally-retrieved chunks that share those tokens. The
+                embedding/pre-filter and echo checks still use ``query``.
 
         Returns:
             Re-ranked list of chunks, sorted by final_score descending.
@@ -209,7 +216,7 @@ class SemanticReranker:
             if use_cross_encoder:
                 try:
                     cross_encoder_scores = await self._model_client.rerank(
-                        query, [c.content for c in chunks_to_rerank]
+                        rerank_query or query, [c.content for c in chunks_to_rerank]
                     )
                     if len(cross_encoder_scores) != len(chunks_to_rerank):
                         logger.warning(
@@ -228,25 +235,29 @@ class SemanticReranker:
                     logger.warning(f"Cross-encoder reranking failed, falling back to bi-encoder: {e}")
 
             if cross_encoder_success:
-                # Rescale cross-encoder scores: BGE reranker v2 m3 outputs
-                # sigmoid-normalized scores centered around 0.5 (neutral).
-                # To make the geometric formula effective, we rescale so that:
-                #   - 0.5 (neutral) → 0.1 (strong penalty in geometric mean)
-                #   - 1.0 (highly relevant) → 1.0
-                #   - 0.0 (irrelevant) → 0.0
-                # Using a power transform: rescaled = (2 * max(0, score - 0.5))^2
-                # This maps [0.5, 1.0] → [0, 1] with quadratic emphasis on high scores
-                for chunk in chunks_to_rerank:
-                    raw = chunk.semantic_score
-                    if raw <= 0.5:
-                        chunk.semantic_score = 0.05  # Floor for neutral/irrelevant
-                    else:
-                        # Map (0.5, 1.0] → (0.05, 1.0] with quadratic curve
-                        normalized = (raw - 0.5) * 2  # [0, 1]
-                        chunk.semantic_score = 0.05 + 0.95 * (normalized ** 1.5)
-                    logger.debug(
-                        f"Cross-encoder score rescaled: {raw:.4f} → {chunk.semantic_score:.4f}"
-                    )
+                # bge-reranker-base emits sigmoid scores clustered tightly
+                # around 0.5 (neutral) even for relevant chunks. A
+                # temperature-scaled softmax over that narrow band collapses
+                # to a near-one-hot — one chunk absorbs almost all probability
+                # mass, and the geometric mean below then crushes every other
+                # chunk (including KG-promoted treatment/dose chunks) to ~0.
+                # Instead, rescale linearly (min-max) to [0,1]: this preserves
+                # the cross-encoder's *relative* ordering but keeps the spread
+                # graded. The unclamped KG score carries the actual ranking;
+                # the cross-encoder only reorders within it.
+                raw_scores = np.array(
+                    [c.semantic_score for c in chunks_to_rerank], dtype=np.float64
+                )
+                lo = raw_scores.min()
+                hi = raw_scores.max()
+                span = hi - lo
+                if span <= 1e-6:
+                    sem = np.full_like(raw_scores, 0.5)
+                else:
+                    sem = (raw_scores - lo) / span
+                sem = np.clip(sem, 0.0, 1.0)
+                for chunk, s in zip(chunks_to_rerank, sem):
+                    chunk.semantic_score = float(s)
                 chunks_with_scores = chunks_to_rerank
             else:
                 # Bi-encoder fallback: generate chunk embeddings and calculate cosine similarities
@@ -265,7 +276,10 @@ class SemanticReranker:
                     echo_chunk_ids.add(chunk.chunk_id)
                     chunk.semantic_score = 0.0
 
-            # Calculate final scores and sort
+            # Calculate final scores and sort.  Both the cross-encoder and
+            # bi-encoder paths share the KG-dominant weights (0.7/0.3) and the
+            # raw, unclamped KG score — kg is the only signal with real spread,
+            # so flattening it to [0,1] or down-weighting it destroys ranking.
             for chunk in chunks_with_scores:
                 chunk.final_score = self._calculate_final_score(
                     chunk.kg_relevance_score,

@@ -5,7 +5,8 @@
 #   1. Edge:        nginx
 #   2. App layer:   app, celery-worker
 #   3. Milvus:      milvus      (must stop BEFORE etcd/minio so it flushes)
-#   4. Infra:       etcd, minio, postgres, neo4j, redis, model-server
+#   4. Infra:       etcd, minio, postgres, neo4j, redis
+#   5. Native:      model-server (host process, stopped after containers)
 #   5. Misc:        searxng (if running)
 #
 # Usage:
@@ -25,7 +26,7 @@ PHASES=(
   "nginx"
   "app celery-worker"
   "milvus"
-  "etcd minio postgres neo4j redis model-server"
+  "etcd minio postgres neo4j redis"
   "searxng"
 )
 
@@ -78,6 +79,15 @@ for phase in "${PHASES[@]}"; do
   docker compose -f "$COMPOSE_FILE" stop -t "$TIMEOUT" "${to_stop[@]}"
   success "  stopped ${to_stop[*]}"
 done
+
+# Stop the host-native model-server (not a compose service).
+if lsof -tiTCP:8001 -sTCP:LISTEN >/dev/null 2>&1; then
+  log "phase: stop native model-server"
+  kill "$(lsof -tiTCP:8001 -sTCP:LISTEN)" 2>/dev/null || true
+  success "  stopped native model-server"
+else
+  log "phase: native model-server not running"
+fi
 
 if [[ $REMOVE -eq 1 ]]; then
   args=(-f "$COMPOSE_FILE" down --remove-orphans -t "$TIMEOUT")

@@ -28,7 +28,8 @@ fi
 
 INPUT_DIR="$(cd "$(dirname "$INPUT")" && pwd)"
 INPUT_NAME="$(basename "$INPUT")"
-HTML_TEMP="$(mktemp /tmp/md-to-pdf.XXXXXX.html)"
+TMP_DIR="$(mktemp -d /tmp/md-to-pdf.XXXXXX)"
+HTML_TEMP="${TMP_DIR}/input.html"
 OUTPUT_ABS="$(cd "$(dirname "$OUTPUT")" 2>/dev/null && pwd)/$(basename "$OUTPUT")" || OUTPUT_ABS="$OUTPUT"
 
 # --- Preflight ----------------------------------------------------------------
@@ -72,7 +73,8 @@ except Exception as exc:
 
 # --- Cleanup -----------------------------------------------------------------
 
-rm -f "$HTML_LOCAL" "$HTML_TEMP"
+rm -f "$HTML_LOCAL"
+rm -rf "$TMP_DIR"
 
 if [[ -f "$OUTPUT_ABS" ]]; then
   size=$(ls -lh "$OUTPUT_ABS" | awk '{print $5}')

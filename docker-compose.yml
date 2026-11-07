@@ -1,40 +1,11 @@
 version: "3.8"
 
 services:
-  # Model Server - Dedicated ML model inference service
-  # Separates model loading from the main app for faster development iteration
-  model-server:
-    build:
-      context: .
-      dockerfile: Dockerfile.model-server
-    ports:
-      - "8001:8001"
-    environment:
-      - EMBEDDING_MODEL=BAAI/bge-base-en-v1.5
-      - NLP_MODEL=en_core_web_md
-      - CROSS_ENCODER_MODEL=BAAI/bge-reranker-v2-m3
-      - LOG_LEVEL=INFO
-      - PRELOAD_MODELS=true
-    volumes:
-      - ./data/model-cache:/root/.cache # Cache downloaded models
-    # Run as root so the container can read the host-mounted model cache above.
-    # The image's non-root `modelserver` user (uid 1000) can't access these files
-    # (host uid 501 + 0700 perms on macOS Docker Desktop), so it re-downloads
-    # every model into its own empty ~/.cache on each recreate.
-    user: root
-    restart: unless-stopped
-    networks:
-      - app-network
-    healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:8001/health/ready" ]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 90s # Allow time for model loading
-    deploy:
-      resources:
-        limits:
-          memory: 4G
+  # Model Server now runs natively on the host (Apple Silicon / MPS) instead of
+  # in the Colima Linux VM (which cannot see Apple Metal). Start it with:
+  #   scripts/start-model-server-native.sh
+  # The app and celery-worker reach it at http://host.docker.internal:8001.
+  # (Colima maps host.docker.internal to the host automatically.)
 
   # Main application service with chat interface and ML APIs
   # Uses lightweight container - ML models are loaded from model-server
@@ -80,6 +51,8 @@ services:
       - ML_NEO4J_PORT=7687
       - ML_NEO4J_USER=neo4j
       - ML_NEO4J_PASSWORD=password
+      # UMLS vocabulary Bloom filter (pre-filter for n-gram lookups)
+      - UMLS_BLOOM_FILTER_PATH=/app/data/umls_bloom_filter.bin
 
       # Redis
       - ML_REDIS_HOST=redis
@@ -101,6 +74,7 @@ services:
       # DeepSeek API (primary AI provider for chat)
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
       - DEEPSEEK_MODEL=deepseek-v4-flash
+      - DEEPSEEK_REASONING_EFFORT=${DEEPSEEK_REASONING_EFFORT:-none}
 
       # File storage - MinIO (S3-compatible) for local development
       - MINIO_ENDPOINT=http://minio:9000
@@ -122,17 +96,24 @@ services:
       - CONCEPTNET_API_BASE=http://api.conceptnet.io
 
       # Model Server configuration
-      - MODEL_SERVER_URL=http://model-server:8001
+      - MODEL_SERVER_URL=http://host.docker.internal:8001
       - MODEL_SERVER_TIMEOUT=120
       - MODEL_SERVER_ENABLED=true
+      - USE_CROSS_ENCODER=true
 
-      # Ollama Configuration (Local LLM for bridge generation)
-      # Ollama runs natively on the host for Metal GPU acceleration
+      # vLLM Configuration (Local LLM for bridge generation)
+      # vLLM runs natively on the host (Apple Metal) like the model server.
+      # Must be started with --host 0.0.0.0 for Docker to reach it.
+      - BRIDGE_GENERATION_PROVIDER=vllm
+      - VLLM_URL=http://host.docker.internal:8002
+      - VLLM_MODEL=mlx-community/Llama-3.2-3B-Instruct-4bit
+      - VLLM_TIMEOUT=300.0
+
+      # Ollama Configuration (legacy; bridge generation now uses vLLM)
       - OLLAMA_HOST=http://host.docker.internal:11434
       - OLLAMA_MODEL=deepseek-r1:7b
-      - OLLAMA_ENABLED=true
+      - OLLAMA_ENABLED=false
       - OLLAMA_TIMEOUT=120.0
-      - BRIDGE_GENERATION_PROVIDER=ollama
 
       # SearXNG web search (optional, requires web-search profile)
       - SEARXNG_ENABLED=true
@@ -148,6 +129,7 @@ services:
       - ./exports:/app/exports
       - ./logs:/app/logs
       - ./audit_logs:/app/audit_logs
+      - ./data:/app/data
       - ./test_uploads:/app/test_uploads
       - ./test_media:/app/test_media
       - ./test_exports:/app/test_exports
@@ -159,8 +141,6 @@ services:
     # ws-max-size set to 16GB to support large file uploads (10GB file + base64 overhead)
     command: [ "python", "-m", "uvicorn", "multimodal_librarian.main:app", "--host", "0.0.0.0", "--port", "8000", "--ws-max-size", "17179869184" ]
     depends_on:
-      model-server:
-        condition: service_healthy
       postgres:
         condition: service_healthy
       milvus:
@@ -422,6 +402,8 @@ services:
       - ML_NEO4J_PORT=7687
       - ML_NEO4J_USER=neo4j
       - ML_NEO4J_PASSWORD=password
+      # UMLS vocabulary Bloom filter (pre-filter for n-gram lookups)
+      - UMLS_BLOOM_FILTER_PATH=/app/data/umls_bloom_filter.bin
 
       # Redis
       - ML_REDIS_HOST=redis
@@ -443,27 +425,34 @@ services:
       - EMBEDDING_MODEL=BAAI/bge-base-en-v1.5
 
       # Model Server configuration
-      - MODEL_SERVER_URL=http://model-server:8001
+      - MODEL_SERVER_URL=http://host.docker.internal:8001
       - MODEL_SERVER_TIMEOUT=120
       - MODEL_SERVER_ENABLED=true
 
-      # Ollama Configuration (Local LLM for bridge generation)
+      # vLLM Configuration (Local LLM for bridge generation)
+      # vLLM runs natively on the host (Apple Metal) like the model server.
+      # Must be started with --host 0.0.0.0 for Docker to reach it.
+      - BRIDGE_GENERATION_PROVIDER=vllm
+      - VLLM_URL=http://host.docker.internal:8002
+      - VLLM_MODEL=mlx-community/Llama-3.2-3B-Instruct-4bit
+      - VLLM_TIMEOUT=300.0
+
+      # Ollama Configuration (legacy; bridge generation now uses vLLM)
       # Ollama runs natively on the host for Metal GPU acceleration
       - OLLAMA_HOST=http://host.docker.internal:11434
       - OLLAMA_MODEL=llama3.2:3b
-      - OLLAMA_ENABLED=true
+      - OLLAMA_ENABLED=false
       - OLLAMA_TIMEOUT=120.0
-      - OLLAMA_NUM_PARALLEL=14
-      - BRIDGE_GENERATION_PROVIDER=ollama
+      - VLLM_NUM_PARALLEL=22
 
-      # Ollama model for ML training data & eval generation (RAG gold answers)
-      - OLLAMA_TRAINING_MODEL=mistral-nemo:12b
-      - OLLAMA_TRAINING_TIMEOUT=180.0
+      # ML training data & eval generation (RAG gold answers) now use vLLM
+      # (VLLM_MODEL / VLLM_URL above) as the local fallback when no DeepSeek key.
       - RAG_TRAINING_CONCURRENCY=4
 
       # DeepSeek API for high-quality training data generation
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
       - DEEPSEEK_MODEL=deepseek-v4-flash
+      - DEEPSEEK_REASONING_EFFORT=${DEEPSEEK_REASONING_EFFORT:-none}
 
       # Logging
       - LOG_LEVEL=INFO
@@ -474,6 +463,7 @@ services:
       - ./media:/app/media
       - ./exports:/app/exports
       - ./logs:/app/logs
+      - ./data:/app/data
       # Mount source code for development
       - ./src:/app/src
     depends_on:
@@ -483,8 +473,6 @@ services:
         condition: service_healthy
       milvus:
         condition: service_started
-      model-server:
-        condition: service_healthy
     restart: unless-stopped
     networks:
       - app-network

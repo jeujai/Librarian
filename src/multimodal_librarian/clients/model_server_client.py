@@ -17,6 +17,10 @@ logger = logging.getLogger(__name__)
 # Global client instance
 _model_client: Optional["ModelServerClient"] = None
 
+# Keep-alive must be shorter than uvicorn's default 5s, otherwise we reuse a
+# connection the server already closed and cascade into "Server disconnected".
+_KEEPALIVE_TIMEOUT = 3.0
+
 
 class ModelServerError(Exception):
     """Exception raised for model server errors."""
@@ -91,14 +95,22 @@ class ModelServerClient:
                         pass  # Ignore errors closing old session
                 
                 timeout = aiohttp.ClientTimeout(total=self.timeout)
-                self._session = aiohttp.ClientSession(timeout=timeout)
-                
+                connector = aiohttp.TCPConnector(
+                    keepalive_timeout=_KEEPALIVE_TIMEOUT
+                )
+                self._session = aiohttp.ClientSession(
+                    timeout=timeout, connector=connector
+                )
+
             return self._session
         except Exception as e:
             # If anything goes wrong, create a fresh session
             logger.warning(f"Error checking session state, creating new session: {e}")
             timeout = aiohttp.ClientTimeout(total=self.timeout)
-            self._session = aiohttp.ClientSession(timeout=timeout)
+            connector = aiohttp.TCPConnector(keepalive_timeout=_KEEPALIVE_TIMEOUT)
+            self._session = aiohttp.ClientSession(
+                timeout=timeout, connector=connector
+            )
             return self._session
     
     async def close(self):
@@ -155,24 +167,14 @@ class ModelServerClient:
                 )
             except aiohttp.ServerDisconnectedError as e:
                 last_error = e
-                # Force a fresh session on next attempt — the TCP connection died
-                if self._session is not None and not self._session.closed:
-                    try:
-                        await self._session.close()
-                    except Exception:
-                        pass
-                self._session = None
+                # The connector drops the dead connection from its pool on its
+                # own; do NOT close the shared session here — that cancels every
+                # other in-flight request (CancelledError) and bypasses retry.
                 logger.warning(
                     f"Model server disconnected (attempt {attempt + 1}/{attempts}): {e}"
                 )
             except (aiohttp.ClientOSError, ConnectionResetError) as e:
                 last_error = e
-                if self._session is not None and not self._session.closed:
-                    try:
-                        await self._session.close()
-                    except Exception:
-                        pass
-                self._session = None
                 logger.warning(
                     f"Model server connection reset (attempt {attempt + 1}/{attempts}): {e}"
                 )
@@ -189,16 +191,21 @@ class ModelServerClient:
                 logger.warning(
                     f"Model server timeout (attempt {attempt + 1}/{attempts})"
                 )
+            except asyncio.CancelledError as e:
+                # A transient cancellation (e.g. a sibling request erroring) must
+                # not skip the retry path.  Only propagate when THIS task is
+                # genuinely being cancelled (worker shutdown / soft limit).
+                if asyncio.current_task().cancelled():
+                    raise
+                last_error = e
+                logger.warning(
+                    f"Model server request cancelled (attempt {attempt + 1}/{attempts})"
+                )
             except Exception as e:
                 last_error = e
                 err_str = str(e).lower()
                 # Retry on connection-related errors instead of raising immediately
                 if any(s in err_str for s in ("session is closed", "connector is closed", "connection closed")):
-                    if self._session is not None and not self._session.closed:
-                        try:
-                            await self._session.close()
-                        except Exception:
-                            pass
                     self._session = None
                     logger.warning(
                         f"Model server session error (attempt {attempt + 1}/{attempts}): {e}"

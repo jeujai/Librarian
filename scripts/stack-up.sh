@@ -5,7 +5,7 @@
 # Phases (bottom-up, dependencies first):
 #   1. Milvus deps:  etcd, minio
 #   2. Databases:    postgres, neo4j, redis
-#   3. Models:       model-server
+#   3. Models:       model-server (host-native, MPS — started via start-model-server-native.sh)
 #   4. Milvus:       milvus           (needs etcd + minio healthy first)
 #   5. App:          app, celery-worker
 #   6. Edge:         nginx            (optional, only if profile active)
@@ -19,6 +19,7 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
 WAIT_TIMEOUT="${WAIT_TIMEOUT:-180}"
 POLL_INTERVAL=2
@@ -125,6 +126,28 @@ wait_for() {
   done
 }
 
+# Start the host-native model-server (lifted out of Docker so the bi-encoder
+# and cross-encoder can use Apple MPS). Returns 0 once /health/ready reports
+# ready, or exits 1 on timeout.
+start_native_model_server() {
+  if lsof -iTCP:8001 -sTCP:LISTEN >/dev/null 2>&1; then
+    log "  native model-server already listening on :8001"
+  else
+    nohup "${SCRIPT_DIR}/start-model-server-native.sh" > /tmp/model-server-native.log 2>&1 &
+    log "  launched native model-server (pid $!)"
+  fi
+  local deadline=$(( $(date +%s) + WAIT_TIMEOUT ))
+  while ! curl -fsS http://localhost:8001/health/ready >/dev/null 2>&1; do
+    if (( $(date +%s) > deadline )); then
+      err "timeout after ${WAIT_TIMEOUT}s waiting for native model-server"
+      tail -30 /tmp/model-server-native.log >&2 || true
+      return 1
+    fi
+    sleep "$POLL_INTERVAL"
+  done
+  success "  native model-server ready"
+}
+
 log "starting stack in dependency-aware phases"
 for entry in "${PHASES[@]}"; do
   label="${entry%%|*}"
@@ -148,6 +171,12 @@ for entry in "${PHASES[@]}"; do
   done
 
   if (( ${#phase_list[@]} == 0 )); then
+    continue
+  fi
+
+  if [[ "$label" == "models" ]]; then
+    log "phase [models]: start native model-server (host, MPS)"
+    start_native_model_server || exit 1
     continue
   fi
 

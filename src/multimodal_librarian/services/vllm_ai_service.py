@@ -1,15 +1,11 @@
 """
-Ollama-backed AI Service for training data and eval set generation.
+vLLM-backed AI Service for training data and eval set generation.
 
 Drop-in replacement for ``AIService`` that routes ``generate_response()``
-calls to a local Ollama instance instead of a cloud LLM.  Used exclusively by
-the ML training pipeline so that RAG gold-answer generation and eval-set
-generation run against a local model (e.g. ``llama3.1:8b``) with zero
-API cost.
-
-The rest of the application continues to use ``AIService`` (DeepSeek) for
-user-facing chat and ``OllamaClient`` (llama3.2:3b) for bridge
-generation and KG extraction.
+calls to the host-native vLLM server (Apple Metal, OpenAI-compatible) instead
+of a cloud LLM.  Used by the ML training pipeline so RAG
+gold-answer and eval-set generation run against the local vLLM model with
+zero API cost.
 """
 
 from __future__ import annotations
@@ -29,45 +25,41 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-_DEFAULT_HOST = "http://host.docker.internal:11434"
-_DEFAULT_MODEL = "llama3.1:8b"
+_DEFAULT_URL = "http://host.docker.internal:8002"
+_DEFAULT_MODEL = "mlx-community/Llama-3.2-3B-Instruct-4bit"
 _DEFAULT_TIMEOUT = 180.0  # 3 minutes — gold answers can be long
 
 
 # ---------------------------------------------------------------------------
-# OllamaAIService
+# VLLMAIService
 # ---------------------------------------------------------------------------
 
 
-class OllamaAIService:
-    """AI service backed by a local Ollama model.
+class VLLMAIService:
+    """AI service backed by the host-native vLLM server.
 
-    Implements the same ``generate_response`` interface that
-    ``RAGService`` expects from ``AIService``, so it can be used as
-    a drop-in replacement when constructing the RAG service for
-    training data generation.
+    Implements the same ``generate_response`` interface that ``RAGService``
+    expects from ``AIService``, so it can be used as a drop-in replacement
+    when constructing the RAG service for training data generation.
 
     Args:
-        model: Ollama model name (default ``llama3.1:8b``).
-        host: Ollama API URL.  Defaults to
-            ``OLLAMA_HOST`` env var or ``http://host.docker.internal:11434``.
+        model: vLLM model name (default ``VLLM_MODEL`` env var or
+            ``mlx-community/Llama-3.2-3B-Instruct-4bit``).
+        url: vLLM API base URL.  Defaults to ``VLLM_URL`` env var or
+            ``http://host.docker.internal:8002``.
         timeout: Request timeout in seconds.
     """
 
     def __init__(
         self,
         model: Optional[str] = None,
-        host: Optional[str] = None,
+        url: Optional[str] = None,
         timeout: Optional[float] = None,
     ) -> None:
-        self.model: str = model or os.environ.get(
-            "OLLAMA_TRAINING_MODEL", _DEFAULT_MODEL
-        ) or _DEFAULT_MODEL
-        self.host: str = host or os.environ.get(
-            "OLLAMA_HOST", _DEFAULT_HOST
-        ) or _DEFAULT_HOST
+        self.model: str = model or os.environ.get("VLLM_MODEL", _DEFAULT_MODEL) or _DEFAULT_MODEL
+        self.url: str = url or os.environ.get("VLLM_URL", _DEFAULT_URL) or _DEFAULT_URL
         self.timeout: float = timeout or float(
-            os.environ.get("OLLAMA_TRAINING_TIMEOUT", str(_DEFAULT_TIMEOUT))
+            os.environ.get("VLLM_TIMEOUT", str(_DEFAULT_TIMEOUT))
         )
         self._client: Optional[httpx.AsyncClient] = None
 
@@ -77,9 +69,9 @@ class OllamaAIService:
         self._failed_calls = 0
 
         logger.info(
-            "OllamaAIService initialised: model=%s, host=%s, timeout=%.0fs",
+            "VLLMAIService initialised: model=%s, url=%s, timeout=%.0fs",
             self.model,
-            self.host,
+            self.url,
             self.timeout,
         )
 
@@ -90,7 +82,7 @@ class OllamaAIService:
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
             self._client = httpx.AsyncClient(
-                base_url=self.host,
+                base_url=self.url,
                 timeout=httpx.Timeout(self.timeout),
                 limits=httpx.Limits(
                     max_keepalive_connections=5,
@@ -109,88 +101,54 @@ class OllamaAIService:
     # ------------------------------------------------------------------
 
     async def verify_available(self) -> None:
-        """Confirm Ollama is reachable and the training model is loaded.
+        """Confirm vLLM is reachable and the model responds.
 
-        Sends a single-token test prompt to ``/api/chat`` and checks
-        for a successful response.  This MUST be called before any
+        Sends a single-token test prompt to ``/v1/chat/completions`` and
+        checks for a successful response.  This MUST be called before any
         expensive pipeline work begins.
 
         Raises:
-            RuntimeError: If Ollama is unreachable, the model is not
-                found, or the test prompt fails.  The error message
-                includes the model name and host so the operator can
-                diagnose immediately.
+            RuntimeError: If vLLM is unreachable or the test prompt fails.
         """
         logger.info(
-            "OllamaAIService: Pre-flight check — verifying model "
+            "VLLMAIService: Pre-flight check — verifying model "
             "'%s' is available at %s",
             self.model,
-            self.host,
+            self.url,
         )
 
-        # Step 1: Check Ollama is running and list models
+        # Send a trivial test prompt to confirm inference works
         try:
             client = await self._get_client()
-            tags_resp = await client.get("/api/tags", timeout=10.0)
-        except Exception as exc:
-            raise RuntimeError(
-                f"PREFLIGHT FAILED: Cannot reach Ollama at {self.host}. "
-                f"Is Ollama running? Error: {exc}"
-            ) from exc
-
-        if tags_resp.status_code != 200:
-            raise RuntimeError(
-                f"PREFLIGHT FAILED: Ollama returned HTTP "
-                f"{tags_resp.status_code} from {self.host}/api/tags."
-            )
-
-        # Step 2: Verify the model exists
-        tags_data = tags_resp.json()
-        available_models = [
-            m.get("name", "") for m in tags_data.get("models", [])
-        ]
-        model_found = any(
-            self.model in m or m.startswith(self.model.split(":")[0])
-            for m in available_models
-        )
-        if not model_found:
-            raise RuntimeError(
-                f"PREFLIGHT FAILED: Model '{self.model}' not found in "
-                f"Ollama. Available models: {available_models}. "
-                f"Run: ollama pull {self.model}"
-            )
-
-        # Step 3: Send a trivial test prompt to confirm inference works
-        try:
             test_resp = await client.post(
-                "/api/chat",
+                "/v1/chat/completions",
                 json={
                     "model": self.model,
-                    "messages": [
-                        {"role": "user", "content": "Say OK."}
-                    ],
-                    "stream": False,
-                    "options": {"num_predict": 5},
+                    "messages": [{"role": "user", "content": "Say OK."}],
+                    "max_tokens": 5,
+                    "temperature": 0.0,
                 },
                 timeout=30.0,
             )
         except Exception as exc:
             raise RuntimeError(
-                f"PREFLIGHT FAILED: Test prompt to '{self.model}' "
-                f"failed: {exc}"
+                f"PREFLIGHT FAILED: Cannot reach vLLM at {self.url}. "
+                f"Is vLLM running (--host 0.0.0.0)? Error: {exc}"
             ) from exc
 
         if test_resp.status_code != 200:
             raise RuntimeError(
-                f"PREFLIGHT FAILED: Test prompt returned HTTP "
+                f"PREFLIGHT FAILED: vLLM returned HTTP "
                 f"{test_resp.status_code}: {test_resp.text[:200]}"
             )
 
         test_content = (
-            test_resp.json().get("message", {}).get("content", "")
+            test_resp.json().get("choices", [{}])[0]
+            .get("message", {}).get("content", "")
+            or ""
         )
         logger.info(
-            "OllamaAIService: Pre-flight PASSED — model '%s' "
+            "VLLMAIService: Pre-flight PASSED — model '%s' "
             "responded: %s",
             self.model,
             test_content[:50],
@@ -208,21 +166,10 @@ class OllamaAIService:
         max_tokens: int = 2048,
         preferred_provider: Optional[Any] = None,
     ) -> AIResponse:
-        """Generate a response via Ollama's ``/api/chat`` endpoint.
+        """Generate a response via vLLM's ``/v1/chat/completions`` endpoint.
 
         The signature matches ``AIService.generate_response`` so that
         ``RAGService`` can use this as a transparent replacement.
-
-        Args:
-            messages: List of ``{"role": ..., "content": ...}`` dicts.
-            context: Optional additional context (appended to the last
-                user message if provided).
-            temperature: Sampling temperature.
-            max_tokens: Maximum tokens to generate.
-            preferred_provider: Ignored (present for interface compat).
-
-        Returns:
-            An ``AIResponse`` with the generated text.
         """
         self._total_calls += 1
         start = time.time()
@@ -245,27 +192,24 @@ class OllamaAIService:
             payload = {
                 "model": self.model,
                 "messages": messages,
-                "stream": False,
-                "options": {
-                    "temperature": temperature,
-                    "num_predict": max_tokens,
-                },
+                "max_tokens": max_tokens,
+                "temperature": temperature,
             }
 
-            response = await client.post("/api/chat", json=payload)
+            response = await client.post("/v1/chat/completions", json=payload)
 
             elapsed_ms = int((time.time() - start) * 1000)
 
             if response.status_code != 200:
                 self._failed_calls += 1
                 error_msg = (
-                    f"Ollama API error: {response.status_code} — "
+                    f"vLLM API error: {response.status_code} — "
                     f"{response.text[:200]}"
                 )
                 logger.error(error_msg)
                 return AIResponse(
                     content=error_msg,
-                    provider="ollama",
+                    provider="vllm",
                     model=self.model,
                     tokens_used=0,
                     processing_time_ms=elapsed_ms,
@@ -277,34 +221,38 @@ class OllamaAIService:
                 )
 
             data = response.json()
-            message = data.get("message", {})
-            content = message.get("content", "")
+            content = (
+                data.get("choices", [{}])[0]
+                .get("message", {}).get("content", "")
+                or ""
+            )
 
-            eval_count = data.get("eval_count", 0)
-            prompt_eval_count = data.get("prompt_eval_count", 0)
+            usage = data.get("usage", {}) or {}
+            prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
+            completion_tokens = int(usage.get("completion_tokens", 0) or 0)
 
             self._successful_calls += 1
 
             logger.debug(
-                "OllamaAIService: %d prompt + %d eval tokens in %dms "
+                "VLLMAIService: %d prompt + %d completion tokens in %dms "
                 "(model=%s)",
-                prompt_eval_count,
-                eval_count,
+                prompt_tokens,
+                completion_tokens,
                 elapsed_ms,
                 self.model,
             )
 
             return AIResponse(
                 content=content,
-                provider="ollama",
+                provider="vllm",
                 model=self.model,
-                tokens_used=prompt_eval_count + eval_count,
+                tokens_used=prompt_tokens + completion_tokens,
                 processing_time_ms=elapsed_ms,
                 confidence_score=1.0,
                 metadata={
                     "finish_reason": "completed",
-                    "eval_count": eval_count,
-                    "prompt_eval_count": prompt_eval_count,
+                    "completion_tokens": completion_tokens,
+                    "prompt_tokens": prompt_tokens,
                 },
             )
 
@@ -312,13 +260,13 @@ class OllamaAIService:
             elapsed_ms = int((time.time() - start) * 1000)
             self._failed_calls += 1
             error_msg = (
-                f"Ollama request timed out after {self.timeout:.0f}s "
+                f"vLLM request timed out after {self.timeout:.0f}s "
                 f"(model={self.model})"
             )
             logger.error(error_msg)
             return AIResponse(
                 content=error_msg,
-                provider="ollama",
+                provider="vllm",
                 model=self.model,
                 tokens_used=0,
                 processing_time_ms=elapsed_ms,
@@ -332,11 +280,11 @@ class OllamaAIService:
         except Exception as exc:
             elapsed_ms = int((time.time() - start) * 1000)
             self._failed_calls += 1
-            error_msg = f"Ollama generation failed: {exc}"
+            error_msg = f"vLLM generation failed: {exc}"
             logger.error(error_msg)
             return AIResponse(
                 content=error_msg,
-                provider="ollama",
+                provider="vllm",
                 model=self.model,
                 tokens_used=0,
                 processing_time_ms=elapsed_ms,
@@ -352,11 +300,11 @@ class OllamaAIService:
     # ------------------------------------------------------------------
 
     def get_available_providers(self) -> List[str]:
-        return ["ollama"]
+        return ["vllm"]
 
     def get_provider_status(self) -> Dict[str, Dict[str, Any]]:
         return {
-            "ollama": {
+            "vllm": {
                 "available": True,
                 "model": self.model,
                 "total_calls": self._total_calls,

@@ -152,7 +152,8 @@ _ENRICH_MAX_CONCEPTS = int(os.environ.get("ENRICH_MAX_CONCEPTS", "15"))
 _ENRICH_CONCURRENCY = int(os.environ.get("ENRICH_CONCURRENCY", "3"))
 _ENRICH_WRITE_CONCURRENCY = int(os.environ.get("ENRICH_WRITE_CONCURRENCY", "1"))
 _ENRICH_MAX_CHARS = int(os.environ.get("ENRICH_MAX_CHARS", "2000"))
-_ENRICH_OLLAMA_TIMEOUT = float(os.environ.get("OLLAMA_TIMEOUT", "180"))
+_ENRICH_VLLM_TIMEOUT = float(os.environ.get("ENRICH_VLLM_TIMEOUT", "180"))
+_ENRICH_VLLM_MAX_TOKENS = int(os.environ.get("ENRICH_VLLM_MAX_TOKENS", "1500"))
 
 _ENRICH_CLINICAL_FILTER = """  AND (
     EXISTS { (c)-[:SAME_AS]->(:UMLSConcept) }
@@ -172,11 +173,37 @@ _ENRICH_READ_QUERY = (
     + "RETURN ch.chunk_id AS chunk_id, c.concept_id AS cid, c.name AS name\n"
 )
 
+_ENRICH_READ_QUERY_SCOPED = (
+    "MATCH (c:Concept)-[r:EXTRACTED_FROM]->(ch:Chunk {source_id: $doc})\n"
+    "WHERE r.rationale IS NULL\n"
+    "AND ch.chunk_id IN $chunk_ids\n"
+    + _ENRICH_CLINICAL_FILTER
+    + "RETURN ch.chunk_id AS chunk_id, c.concept_id AS cid, c.name AS name\n"
+)
+
 _ENRICH_WRITE_QUERY = """
 UNWIND $rows AS row
 MATCH (c:Concept {concept_id: row.cid})-[r:EXTRACTED_FROM]->(ch:Chunk {chunk_id: row.chid})
 SET r.rationale = row.rationale, r.rationale_embedding = row.emb
 RETURN count(r) AS cnt
+"""
+
+# Recompute the concept-level rationale embedding (mean of its edge rationale
+# embeddings) for the given concepts, so concept_rationale_embedding_index stays
+# fresh after enrichment writes new edge rationales.  The mean is un-normalized:
+# the vector index uses cosine (magnitude-invariant), so normalization is moot.
+_RECOMPUTE_RATIONALE_EMBEDDING_QUERY = """
+UNWIND $cids AS cid
+MATCH (c:Concept {concept_id: cid})-[r:EXTRACTED_FROM]->(:Chunk)
+WHERE r.rationale_embedding IS NOT NULL
+WITH c, collect(r.rationale_embedding) AS embs
+WITH c, embs, size(embs) AS n, size(embs[0]) AS d
+UNWIND range(0, d - 1) AS i
+WITH c, i, reduce(s = 0.0, e IN embs | s + e[i]) / n AS mean_i
+WITH c, i, mean_i
+ORDER BY c.concept_id, i
+WITH c, collect(mean_i) AS mean_vec
+SET c.rationale_embedding = mean_vec
 """
 
 _ENRICH_PROMPT = """You are given a passage from a clinical document and a list of \
@@ -289,17 +316,47 @@ async def _write_with_retry(session, write_tx_fn, *, max_retries: int = 5, base_
             await asyncio.sleep(delay)
 
 
+async def _recompute_concept_rationale_embeddings(kg_client, concept_ids) -> int:
+    """Refresh the concept-level rationale embedding for the given concepts.
+
+    Recomputes ``c.rationale_embedding`` as the mean of the concept's
+    EXTRACTED_FROM edge rationale embeddings (all of them, including any from
+    prior documents), so ``concept_rationale_embedding_index`` reflects the
+    newest enrichment pass.  Best-effort: failures are logged, not raised —
+    the full backfill script can catch any stragglers.
+    """
+    cids = list(dict.fromkeys(concept_ids))
+    if not cids:
+        return 0
+    try:
+        async with kg_client.driver.session(database=kg_client.database) as session:
+            result = await session.run(
+                _RECOMPUTE_RATIONALE_EMBEDDING_QUERY, {"cids": cids}
+            )
+            summary = await result.consume()
+            return (
+                summary.counters.properties_set
+                if summary and summary.counters else 0
+            )
+    except Exception as e:
+        logger.warning(
+            f"Rationale embedding recompute failed for {len(cids)} concepts: {e}"
+        )
+        return 0
+
+
 async def _run_lean_rationale_enrichment(
     document_id: str,
     kg_client,
     model_client,
-    ollama_url: str = "http://host.docker.internal:11434",
-    ollama_model: str = "llama3.2:3b",
+    vllm_url: str = "http://host.docker.internal:8002",
+    vllm_model: str = "mlx-community/Llama-3.2-3B-Instruct-4bit",
+    chunk_ids: Optional[List[str]] = None,
 ) -> dict:
     """Run lean rationale enrichment on a freshly-extracted document.
 
     Reads null-rationale clinical EXTRACTED_FROM edges from Neo4j, generates
-    rationales via Ollama, embeds them, and SETs the edge properties.  This is
+    rationales via vLLM, embeds them, and SETs the edge properties.  This is
     the post-extraction density pass — it fills what the extraction prompt
     (now rationale-free) intentionally leaves empty.
 
@@ -310,7 +367,13 @@ async def _run_lean_rationale_enrichment(
     # 1. Read edges needing rationale, grouped by chunk
     cid_to_name: dict = {}
     async with kg_client.driver.session(database=kg_client.database) as session:
-        result = await session.run(_ENRICH_READ_QUERY, {"doc": document_id})
+        if chunk_ids:
+            query = _ENRICH_READ_QUERY_SCOPED
+            params = {"doc": document_id, "chunk_ids": chunk_ids}
+        else:
+            query = _ENRICH_READ_QUERY
+            params = {"doc": document_id}
+        result = await session.run(query, params)
         by_chunk: dict = {}
         async for rec in result:
             by_chunk.setdefault(rec["chunk_id"], []).append(
@@ -344,13 +407,14 @@ async def _run_lean_rationale_enrichment(
         f"{sum(len(v) for v in by_chunk.values())} edges to enrich"
     )
 
-    # 3. Per-chunk: Ollama → rationales → embed → SET edges
+    # 3. Per-chunk: vLLM → rationales → embed → SET edges
     import httpx
     import json as _json
 
     sem = asyncio.Semaphore(_ENRICH_CONCURRENCY)
     write_sem = asyncio.Semaphore(_ENRICH_WRITE_CONCURRENCY)
     stats = {"updated": 0, "done": 0}
+    written_cids: set = set()
     total = len(by_chunk)
 
     def _norm(name: str) -> str:
@@ -383,25 +447,27 @@ async def _run_lean_rationale_enrichment(
                 )
                 try:
                     resp = await http.post(
-                        f"{ollama_url}/api/generate",
+                        f"{vllm_url}/v1/chat/completions",
                         json={
-                            "model": ollama_model,
-                            "prompt": prompt,
-                            "stream": False,
-                            "options": {
-                                "temperature": 0.2,
-                                "num_predict": 4096,
-                                "num_ctx": 4096,
-                            },
+                            "model": vllm_model,
+                            "messages": [{"role": "user", "content": prompt}],
+                            "max_tokens": _ENRICH_VLLM_MAX_TOKENS,
+                            "temperature": 0.2,
                         },
-                        timeout=_ENRICH_OLLAMA_TIMEOUT,
+                        timeout=_ENRICH_VLLM_TIMEOUT,
                     )
                     resp.raise_for_status()
-                    content = resp.json().get("response", "")
+                    content = (
+                        resp.json()
+                        .get("choices", [{}])[0]
+                        .get("message", {})
+                        .get("content", "")
+                        or ""
+                    )
                 except Exception as exc:
                     logger.warning(
                         f"Lean enrichment [{document_id}] chunk {chunk_id}: "
-                        f"Ollama call failed: {type(exc).__name__}: {exc}"
+                        f"vLLM call failed: {type(exc).__name__}: {exc}"
                     )
                     content = ""
 
@@ -459,6 +525,7 @@ async def _run_lean_rationale_enrichment(
                 ),
                 key=lambda row: row["cid"],
             )
+            written_cids.update(row["cid"] for row in write_rows)
 
             async def _write_tx(tx):
                 res = await tx.run(_ENRICH_WRITE_QUERY, {"rows": write_rows})
@@ -486,6 +553,15 @@ async def _run_lean_rationale_enrichment(
                 _process_chunk(http, cid, concepts)
                 for cid, concepts in by_chunk.items()
             )
+        )
+
+    # Refresh the concept-level rationale embeddings for every concept this
+    # pass touched, so the rationale vector index stays fresh for selection.
+    if written_cids:
+        n = await _recompute_concept_rationale_embeddings(kg_client, written_cids)
+        logger.info(
+            f"Lean enrichment [{document_id}]: refreshed rationale embeddings "
+            f"for {n} of {len(written_cids)} concepts"
         )
 
     if stats["updated"] == 0:
@@ -574,6 +650,7 @@ celery_app.conf.update(
         'regenerate_bridges_task': {'queue': 'chunking'},
         'update_knowledge_graph_task': {'queue': 'knowledge_graph'},
         're_extract_concepts_task': {'queue': 'knowledge_graph'},
+        'recover_kg_failures_task': {'queue': 'knowledge_graph'},
         'finalize_processing_task': {'queue': 'document_processing'},
         'enrich_concepts_task': {'queue': 'enrichment'}
     }
@@ -2049,6 +2126,7 @@ def generate_chunks_task(pdf_content: Dict[str, Any], document_id: str):
 
     try:
         # Import here to avoid circular imports
+        import hashlib
         import time as _time
         _t0 = _time.monotonic()
         from uuid import UUID
@@ -2104,6 +2182,7 @@ def generate_chunks_task(pdf_content: Dict[str, Any], document_id: str):
         
         serialized_chunks = []
         last_seen_page = None
+        seen_content_hashes = set()
         for chunk in processed_document.chunks:
             # Extract page number from [Page N] markers in chunk content
             page_number = _extract_page_number_from_content(chunk.content)
@@ -2112,10 +2191,31 @@ def generate_chunks_task(pdf_content: Dict[str, Any], document_id: str):
             elif last_seen_page is not None:
                 # Propagate last-seen page to chunks without a marker
                 page_number = last_seen_page
-            
+
+            content = chunk.content
+            content_hash = hashlib.sha256(content.encode('utf-8')).hexdigest()
+            if content_hash in seen_content_hashes:
+                # Identical text legitimately appears more than once (e.g. a
+                # repeated table or heading on the same page). The unique
+                # (source_id, source_type, content_hash) constraint must not
+                # collapse these into one chunk, so tag the duplicate with its
+                # page and a run counter to keep it distinct and citable.
+                tag = f"[Page {page_number}]" if page_number is not None else "[Chunk]"
+                n = 0
+                while True:
+                    n += 1
+                    suffix = tag if n == 1 else f"{tag} #{n}"
+                    candidate = f"{chunk.content}\n{suffix}"
+                    candidate_hash = hashlib.sha256(candidate.encode('utf-8')).hexdigest()
+                    if candidate_hash not in seen_content_hashes:
+                        content = candidate
+                        content_hash = candidate_hash
+                        break
+            seen_content_hashes.add(content_hash)
+
             serialized_chunk = {
                 'id': chunk.id,
-                'content': chunk.content,
+                'content': content,
                 'start_position': chunk.start_position,
                 'end_position': chunk.end_position,
                 'chunk_type': chunk.chunk_type,
@@ -3086,9 +3186,12 @@ def update_knowledge_graph_task(upstream_result: Dict[str, Any], document_id: st
         # Process chunks through knowledge graph builder
         doc_content_type = (processed_document.get('content_profile') or {}).get('content_type', 'general')
         kg_failures = asyncio.run(_update_knowledge_graph(document_id, processed_document['chunks'], doc_content_type))
-        
+
         logger.info(f"Knowledge graph updated for document {document_id}")
-        
+
+        # Durable auto-recovery: re-run extraction on any chunks that failed.
+        _trigger_kg_failure_recovery(document_id)
+
         asyncio.run(_record_stage_timing(document_id, "update_knowledge_graph", _time.monotonic() - _t0))
         return {'status': 'completed', 'document_id': document_id, 'kg_failures': kg_failures}
         
@@ -3225,6 +3328,9 @@ def re_extract_concepts_task(document_id: str):
         except Exception:
             pass
 
+        # Durable auto-recovery: re-run extraction on any chunks that failed.
+        _trigger_kg_failure_recovery(document_id)
+
         return {
             'status': 'completed',
             'document_id': document_id,
@@ -3263,6 +3369,197 @@ def re_extract_concepts_task(document_id: str):
         asyncio.set_event_loop(None)
 
 
+async def _max_unresolved_kg_failure_attempt(document_id: str) -> int:
+    """Return the highest attempt_count among a document's unresolved failures."""
+    from ..database.connection import get_async_connection
+
+    conn = await get_async_connection()
+    try:
+        row = await conn.fetchrow(
+            """
+            SELECT COALESCE(MAX(attempt_count), 0) AS max_attempt
+            FROM multimodal_librarian.kg_extraction_failures
+            WHERE document_id = $1::uuid
+              AND resolved_at IS NULL
+            """,
+            document_id,
+        )
+        return row['max_attempt'] if row else 0
+    finally:
+        await conn.close()
+
+
+@celery_app.task(
+    name='recover_kg_failures_task',
+    time_limit=TASK_HARD_TIME_LIMIT,
+    soft_time_limit=TASK_SOFT_TIME_LIMIT,
+)
+@redis_task_lock("kg_recover_lock:{document_id}")
+def recover_kg_failures_task(document_id: str, max_attempts: int = 3):
+    """
+    Re-run KG extraction on only the (chunk, source) pairs that failed.
+
+    Reads unresolved failure rows from ``kg_extraction_failures`` (written
+    durably by ``_update_knowledge_graph``), re-runs extraction on just those
+    failed sources (ner / llm / umls / gerund) per chunk, and clears the rows
+    for sources that now succeed.  A failed source does NOT cancel the other
+    three, and only the failed source is re-run.  Re-queues itself with backoff
+    while unresolved failures remain under ``max_attempts``, so recovery is
+    automatic and durable — no one-off scripts.
+
+    Runs with ``update_progress=False`` so it never flips a completed document
+    back to ``running``.
+    """
+    import time as _time
+    from uuid import UUID
+
+    _t0 = _time.monotonic()
+    _task_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(_task_loop)
+
+    try:
+        logger.info(
+            f"Starting targeted KG failure recovery for document {document_id}"
+        )
+
+        _check_document_deleted(document_id, "recover_kg_failures start")
+
+        recovery_sources = _task_loop.run_until_complete(
+            _read_unresolved_kg_failures(document_id)
+        )
+        if not recovery_sources:
+            logger.info(
+                f"No unresolved KG failures for document {document_id}"
+            )
+            return {
+                'status': 'completed', 'document_id': document_id,
+                'recovered': 0,
+            }
+
+        failed_chunk_ids = list(recovery_sources.keys())
+        total_failed_pairs = sum(len(s) for s in recovery_sources.values())
+        logger.info(
+            f"Recovering {total_failed_pairs} failed source(s) across "
+            f"{len(failed_chunk_ids)} chunks for document {document_id}"
+        )
+
+        chunks = _task_loop.run_until_complete(
+            _read_chunks_by_ids(document_id, failed_chunk_ids)
+        )
+        if not chunks:
+            logger.warning(
+                f"No chunk content found for {len(failed_chunk_ids)} "
+                f"failed chunks of document {document_id}"
+            )
+            return {
+                'status': 'completed', 'document_id': document_id,
+                'recovered': 0,
+            }
+
+        _doc_content_type = "general"
+        try:
+            _doc_content_type = _task_loop.run_until_complete(
+                _read_document_content_type(document_id)
+            ) or "general"
+        except Exception:
+            pass
+        if _doc_content_type == "general":
+            try:
+                _payload = _task_loop.run_until_complete(
+                    _retrieve_processing_payload(document_id)
+                )
+                _doc_content_type = (_payload.get('content_profile') or {}).get(
+                    'content_type', 'general'
+                )
+            except Exception:
+                pass
+
+        _task_loop.run_until_complete(
+            _update_knowledge_graph(
+                document_id,
+                chunks,
+                _doc_content_type,
+                recovery_sources=recovery_sources,
+                update_progress=False,
+            )
+        )
+
+        still_failed = _task_loop.run_until_complete(
+            _read_unresolved_kg_failures(document_id)
+        )
+        still_failed_pairs = sum(len(s) for s in still_failed.values())
+        recovered = total_failed_pairs - still_failed_pairs
+        logger.info(
+            f"KG failure recovery pass for document {document_id}: "
+            f"{total_failed_pairs} source(s) attempted, {recovered} recovered, "
+            f"{still_failed_pairs} still unresolved"
+        )
+
+        if still_failed:
+            max_attempt = _task_loop.run_until_complete(
+                _max_unresolved_kg_failure_attempt(document_id)
+            )
+            if max_attempt < max_attempts:
+                delay = 30 * max_attempt
+                logger.info(
+                    f"Re-queueing KG failure recovery for document "
+                    f"{document_id} in {delay}s "
+                    f"({still_failed_pairs} source(s) still failing, "
+                    f"attempt {max_attempt}/{max_attempts})"
+                )
+                recover_kg_failures_task.apply_async(
+                    args=[document_id, max_attempts],
+                    countdown=delay,
+                )
+            else:
+                logger.warning(
+                    f"Giving up on {still_failed_pairs} source(s) for document "
+                    f"{document_id} after {max_attempts} attempts; "
+                    f"see kg_extraction_failures"
+                )
+
+        return {
+            'status': 'completed',
+            'document_id': document_id,
+            'recovered': recovered,
+            'still_failed': still_failed_pairs,
+        }
+
+    except DocumentDeletedError:
+        logger.info(
+            f"KG failure recovery aborted — document {document_id} was deleted"
+        )
+        return {'status': 'aborted', 'document_id': document_id}
+    except Exception as e:
+        logger.error(
+            f"KG failure recovery failed for document {document_id}: {e}"
+        )
+        raise
+    finally:
+        _task_loop.close()
+        asyncio.set_event_loop(None)
+
+
+def _trigger_kg_failure_recovery(document_id: str, max_attempts: int = 3) -> None:
+    """Queue a targeted recovery pass if any chunk failed KG extraction.
+
+    Called after the main KG stage (and manual re-extraction) completes.  Best
+    effort: never raises — a failure here only logs, since the durable failure
+    rows can still be picked up by a later manual trigger.
+    """
+    try:
+        failed = asyncio.run(_read_unresolved_kg_failures(document_id))
+    except Exception as e:
+        logger.warning(f"Could not check KG failures for recovery: {e}")
+        return
+    if failed:
+        recover_kg_failures_task.apply_async(args=[document_id, max_attempts])
+        logger.info(
+            f"Queued targeted recovery for {len(failed)} failed chunks "
+            f"of document {document_id}"
+        )
+
+
 async def _execute_with_retry(client, query, params, max_retries=3):
     """Execute a Neo4j query with exponential backoff retry on failure.
 
@@ -3286,7 +3583,62 @@ async def _execute_with_retry(client, query, params, max_retries=3):
             await asyncio.sleep(backoff)
 
 
-async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]], content_type: str = "general"):
+_BACK_MATTER_HEADINGS = (
+    "GENERAL REFERENCES",
+    "REFERENCES",
+    "SUBJECT INDEX",
+    "CUMULATIVE INDEX",
+    "INDEX",
+)
+
+
+def _is_back_matter_chunk(content: str) -> bool:
+    """Detect index/reference back-matter chunks that should skip LLM extraction.
+
+    These term-dense pages (index entries and bibliography citations) trigger
+    runaway LLM generation — the model faithfully enumerates hundreds of
+    entries until it hits ``max_tokens``.  They are recognised by a back-matter
+    heading near the top of the chunk, or by page-number / citation line
+    density.  Tables/charts are excluded by the caller (they carry clinical
+    data and keep the LLM source).  NER/regex/UMLS/gerund still run; only the
+    LLM source is skipped.
+    """
+    import re
+
+    text = (content or "").strip()
+    if not text:
+        return False
+
+    head = text[:600]
+    for heading in _BACK_MATTER_HEADINGS:
+        if re.search(rf"(?m)^\s*{re.escape(heading)}\b.*$", head):
+            return True
+
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    if len(lines) < 8:
+        return False
+
+    # Index body: many short lines, each ending in a page number.
+    page_number_lines = sum(1 for ln in lines if re.search(r"\s\d{1,4}$", ln))
+    if page_number_lines >= 0.6 * len(lines):
+        return True
+
+    # Reference body: PMID/DOI markers or numbered citation entries.
+    citation_lines = sum(
+        1 for ln in lines
+        if re.search(r"\b(?:PMID|DOI)\b", ln, re.IGNORECASE)
+        or re.match(r"^\s*\d{1,3}[.)]\s", ln)
+    )
+    return citation_lines >= 0.5 * len(lines)
+
+
+async def _update_knowledge_graph(
+    document_id: str,
+    chunks: List[Dict[str, Any]],
+    content_type: str = "general",
+    recovery_sources: Optional[Dict[str, Set[str]]] = None,
+    update_progress: bool = True,
+):
     """Update knowledge graph with concepts and relationships from chunks.
 
     Processes chunks in batches of 50 with concurrent extraction and
@@ -3302,7 +3654,12 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
     """
     kg_service = None  # Defined early so the finally block can always reference it
     try:
-        from ..components.knowledge_graph.kg_builder import KnowledgeGraphBuilder
+        from ..components.knowledge_graph.kg_builder import (
+            ALL_CONCEPT_SOURCES,
+            LLM_SOURCE,
+            NER_SOURCE,
+            KnowledgeGraphBuilder,
+        )
         from ..models.core import ContentType, KnowledgeChunk, SourceType
         from ..services.knowledge_graph_service import KnowledgeGraphService
 
@@ -3461,21 +3818,49 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
         except ValueError:
             doc_content_type = ContentType.GENERAL
 
-        # Convert all chunks to KnowledgeChunk objects first
+        # Convert all chunks to KnowledgeChunk objects first.  When
+        # recovery_sources is provided (targeted recovery), skip every chunk
+        # whose ID is not in the map so extraction runs only on the failed
+        # chunks, and re-run only the specific sources that failed for each.
         knowledge_chunks = []
+        back_matter_chunk_ids: Set[str] = set()
         for chunk in chunks:
+            chunk_id = chunk['id']
+            if recovery_sources is not None and chunk_id not in recovery_sources:
+                continue
+            # Clinical tables/charts/images are chunked as TECHNICAL, but in a
+            # medical document they carry dosage/clinical data that needs the
+            # MEDICAL prompt vocabulary and dose-composition extraction.
+            is_table = (
+                chunk.get('content_type') == 'TECHNICAL'
+                or chunk.get('chunk_type') in ('table', 'chart', 'image')
+            )
+            chunk_content_type = (
+                ContentType.MEDICAL if is_table else doc_content_type
+            )
             knowledge_chunk = KnowledgeChunk(
-                id=chunk['id'],
+                id=chunk_id,
                 content=chunk['content'],
                 source_type=SourceType.BOOK,
                 source_id=document_id,
                 location_reference=str(chunk.get('chunk_index', 0)),
                 section=chunk.get('metadata', {}).get('section', ''),
-                content_type=doc_content_type
+                content_type=chunk_content_type
             )
             knowledge_chunks.append(knowledge_chunk)
 
+            # Index/reference back-matter skips the LLM source entirely: the
+            # model enumerates their dense term/citation lists to max_tokens.
+            if not is_table and _is_back_matter_chunk(chunk['content']):
+                back_matter_chunk_ids.add(chunk_id)
+
         total_chunks = len(knowledge_chunks)
+
+        if back_matter_chunk_ids:
+            logger.info(
+                f"Skipping LLM extraction for {len(back_matter_chunk_ids)} "
+                f"back-matter chunks of document {document_id}"
+            )
 
         # Quality gate failure counters
         ner_failure_count = 0
@@ -3519,6 +3904,8 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
             f"scale_factor={_scale_factor}) for KG extraction"
         )
 
+        recovered_chunk_ids: Set[str] = set()
+
         for batch_start in range(0, total_chunks, EXTRACT_BATCH_SIZE):
             batch_end = min(
                 batch_start + EXTRACT_BATCH_SIZE, total_chunks
@@ -3546,26 +3933,55 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
             # the shared pool (task_type="kg") for fair share with bridging.
             # NER, regex, and model-server calls stay on this event loop.
             import os as _os
-            _kg_concurrency = int(_os.environ.get('OLLAMA_NUM_PARALLEL', '16'))
+            _kg_concurrency = int(_os.environ.get('VLLM_NUM_PARALLEL', '22'))
             _kg_semaphore = asyncio.Semaphore(_kg_concurrency)
 
-            async def process_chunk_with_semaphore(chunk: KnowledgeChunk):
+            async def process_chunk_with_semaphore(chunk: KnowledgeChunk, sources: Optional[Set[str]]):
                 """Process chunk with semaphore-limited concurrency."""
                 async with _kg_semaphore:
-                    return await kg_builder.process_knowledge_chunk_extract_only(chunk)
+                    return await kg_builder.process_knowledge_chunk_extract_only(chunk, sources=sources)
 
-            tasks = [process_chunk_with_semaphore(chunk) for chunk in batch]
+            def _run_sources(chunk: KnowledgeChunk) -> Set[str]:
+                """Sources to actually run for this chunk (LLM skipped for back-matter)."""
+                if recovery_sources is not None:
+                    srcs = set(recovery_sources.get(chunk.id, set()))
+                else:
+                    srcs = set(ALL_CONCEPT_SOURCES)
+                if chunk.id in back_matter_chunk_ids:
+                    srcs.discard(LLM_SOURCE)
+                return srcs
+
+            tasks = [
+                process_chunk_with_semaphore(chunk, _run_sources(chunk))
+                for chunk in batch
+            ]
             extractions = await asyncio.gather(*tasks, return_exceptions=True)
 
             batch_concepts = []
             batch_relationships = []
+            failed_records: List[tuple] = []
+            resolved_map: Dict[str, Set[str]] = {}
             for i, extraction in enumerate(extractions):
+                chunk = batch[i]
+                requested = _run_sources(chunk)
+                if recovery_sources is not None:
+                    _full = set(recovery_sources.get(chunk.id, set()))
+                else:
+                    _full = set(ALL_CONCEPT_SOURCES)
+                skipped = _full - requested
+
                 if isinstance(extraction, BaseException):
                     logger.warning(
                         f"KG extraction failed for chunk "
-                        f"{batch_start + i}: "
+                        f"{chunk.id}: "
                         f"{type(extraction).__name__}: {extraction}"
                     )
+                    # Durably record each requested source as failed so a
+                    # targeted recovery pass can re-run only those sources.
+                    for source in requested:
+                        failed_records.append(
+                            (chunk.id, source, type(extraction).__name__, str(extraction))
+                        )
                     # Only count as model failures if it's a
                     # connection/timeout error.  Generic exceptions
                     # (CancelledError, ValueError, etc.) are not
@@ -3576,15 +3992,57 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
                     )):
                         ner_failure_count += 1
                         llm_failure_count += 1
+                    # Sources skipped by design (back-matter LLM) are resolved,
+                    # not failed, even if the other sources errored.
+                    if skipped:
+                        resolved_map[chunk.id] = skipped
                     continue
-                # Unpack (ConceptExtraction, ner_failed, llm_failed) tuple
-                concept_extraction, ner_failed, llm_failed = extraction
-                if ner_failed:
-                    ner_failure_count += 1
-                if llm_failed:
-                    llm_failure_count += 1
+
+                # Unpack (ConceptExtraction, failed_sources) tuple
+                concept_extraction, failed_sources = extraction
                 batch_concepts.extend(concept_extraction.extracted_concepts)
                 batch_relationships.extend(concept_extraction.extracted_relationships)
+
+                # Durably record the sources that failed, and resolve the
+                # sources that succeeded, so recovery re-runs only the former.
+                for source in failed_sources:
+                    failed_records.append(
+                        (chunk.id, source, "source_failed", None)
+                    )
+                succeeded = requested - failed_sources
+                resolved = succeeded | skipped
+                if resolved:
+                    resolved_map[chunk.id] = resolved
+
+                if NER_SOURCE in failed_sources:
+                    ner_failure_count += 1
+                if LLM_SOURCE in failed_sources:
+                    llm_failure_count += 1
+
+            recovered_chunk_ids.update(resolved_map.keys())
+
+            # Persist per-source failure rows for this batch.
+            if failed_records:
+                try:
+                    await _record_kg_extraction_failures(
+                        document_id, failed_records
+                    )
+                except Exception as rec_err:
+                    logger.warning(
+                        f"Failed to record KG extraction failures: {rec_err}"
+                    )
+
+            # Sources that extracted cleanly are no longer failed.  Clear any
+            # recorded failure rows for them (no-op on a fresh run).
+            if resolved_map:
+                try:
+                    await _resolve_kg_extraction_failures(
+                        document_id, resolved_map
+                    )
+                except Exception as res_err:
+                    logger.warning(
+                        f"Failed to resolve KG extraction failures: {res_err}"
+                    )
 
             # --- Batch-level ConceptNet validation (2 Neo4j queries per batch) ---
             validated_concepts, conceptnet_rels, _val_stats = \
@@ -3895,20 +4353,23 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
 
             # Send live stats via WebSocket after each batch
             # Keep progress at 70% during parallel phase — metadata tells the real story
-            fraction = batch_num / total_batches
-            pct = _set_parallel_progress(document_id, 'kg', fraction)
-            await _update_job_status_sync(
-                UUID(document_id), 'running', pct,
-                _get_parallel_step_label(document_id),
-                metadata={
-                    'kg_batch': batch_num,
-                    'kg_total_batches': total_batches,
-                    'concepts': total_concepts_persisted,
-                    'relationships': total_relationships_persisted,
-                    'chunks_processed': batch_end,
-                    'total_chunks': total_chunks,
-                }
-            )
+            # Skipped in recovery mode (update_progress=False) so a background
+            # recovery pass never flips a completed document back to 'running'.
+            if update_progress:
+                fraction = batch_num / total_batches
+                pct = _set_parallel_progress(document_id, 'kg', fraction)
+                await _update_job_status_sync(
+                    UUID(document_id), 'running', pct,
+                    _get_parallel_step_label(document_id),
+                    metadata={
+                        'kg_batch': batch_num,
+                        'kg_total_batches': total_batches,
+                        'concepts': total_concepts_persisted,
+                        'relationships': total_relationships_persisted,
+                        'chunks_processed': batch_end,
+                        'total_chunks': total_chunks,
+                    }
+                )
 
         logger.info(
             f"KG complete: persisted {total_concepts_persisted} concepts and "
@@ -3958,20 +4419,43 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
         # (now rationale-free) left empty.
         if model_client and kg_service is not None:
             try:
-                ollama_url = os.environ.get("OLLAMA_HOST", "http://host.docker.internal:11434")
-                ollama_model = os.environ.get("OLLAMA_MODEL", "llama3.2:3b")
-                enrich_result = await _run_lean_rationale_enrichment(
-                    document_id=document_id,
-                    kg_client=kg_service.client,
-                    model_client=model_client,
-                    ollama_url=ollama_url,
-                    ollama_model=ollama_model,
+                vllm_url = os.environ.get("VLLM_URL", "http://host.docker.internal:8002")
+                vllm_model = os.environ.get(
+                    "VLLM_MODEL", "mlx-community/Llama-3.2-3B-Instruct-4bit"
                 )
-                logger.info(
-                    f"Lean rationale enrichment complete for document {document_id}: "
-                    f"{enrich_result['edges_enriched']} edges enriched over "
-                    f"{enrich_result['chunks_processed']} chunks"
-                )
+                if recovery_sources is not None:
+                    if recovered_chunk_ids:
+                        enrich_result = await _run_lean_rationale_enrichment(
+                            document_id=document_id,
+                            kg_client=kg_service.client,
+                            model_client=model_client,
+                            vllm_url=vllm_url,
+                            vllm_model=vllm_model,
+                            chunk_ids=sorted(recovered_chunk_ids),
+                        )
+                        logger.info(
+                            f"Scoped rationale enrichment for document {document_id}: "
+                            f"{enrich_result['edges_enriched']} edges over "
+                            f"{len(recovered_chunk_ids)} recovered chunks"
+                        )
+                    else:
+                        logger.info(
+                            f"No chunks recovered this pass for document {document_id} "
+                            f"— skipping rationale enrichment"
+                        )
+                else:
+                    enrich_result = await _run_lean_rationale_enrichment(
+                        document_id=document_id,
+                        kg_client=kg_service.client,
+                        model_client=model_client,
+                        vllm_url=vllm_url,
+                        vllm_model=vllm_model,
+                    )
+                    logger.info(
+                        f"Lean rationale enrichment complete for document {document_id}: "
+                        f"{enrich_result['edges_enriched']} edges enriched over "
+                        f"{enrich_result['chunks_processed']} chunks"
+                    )
             except Exception as e:
                 logger.warning(
                     f"Lean rationale enrichment failed for document {document_id}: {e}"
@@ -3984,10 +4468,13 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
             )
 
         # Mark enrichment as complete in progress tracking
-        _set_parallel_progress(document_id, "enrich", 1.0)
+        if update_progress:
+            _set_parallel_progress(document_id, "enrich", 1.0)
 
-        # Queue background enrichment task
-        if all_concept_ids:
+        # Queue background enrichment task.  Skipped in recovery mode
+        # (update_progress=False) so a targeted recovery pass doesn't clobber
+        # the document's enrichment_status row or re-trigger enrichment.
+        if all_concept_ids and update_progress:
             await _create_enrichment_status(document_id, len(all_concept_ids))
 
             enrich_concepts_task.apply_async(
@@ -3999,7 +4486,7 @@ async def _update_knowledge_graph(document_id: str, chunks: List[Dict[str, Any]]
                 f"Queued background enrichment for document {document_id} "
                 f"with {len(all_concept_ids)} concepts"
             )
-        else:
+        elif not all_concept_ids:
             logger.info(f"No concepts to enrich for document {document_id}")
 
         return {
@@ -5265,7 +5752,7 @@ async def _read_document_chunks(document_id: str) -> List[Dict[str, Any]]:
     try:
         rows = await conn.fetch(
             """
-            SELECT id, content, chunk_index, metadata
+            SELECT id, content, chunk_index, content_type, metadata
             FROM multimodal_librarian.knowledge_chunks
             WHERE source_id = $1::uuid
             ORDER BY chunk_index ASC
@@ -5285,6 +5772,157 @@ async def _read_document_chunks(document_id: str) -> List[Dict[str, Any]]:
                 'id': str(row['id']),
                 'content': row['content'],
                 'chunk_index': row['chunk_index'],
+                'content_type': row['content_type'],
+                'metadata': metadata or {},
+            })
+        return chunks
+    finally:
+        await conn.close()
+
+
+async def _record_kg_extraction_failures(
+    document_id: str,
+    failures: List[tuple],
+) -> None:
+    """Durably record per-source KG-extraction failures for targeted recovery.
+
+    ``failures`` is a list of ``(chunk_id, source, error_type, error_message)``
+    tuples — one row per (chunk, source) pair, so a single failed source can be
+    re-run without re-running the other three.  Upserts into
+    multimodal_librarian.kg_extraction_failures keyed on
+    ``(document_id, chunk_id, source)``.  Re-opening a previously-resolved row
+    resets attempt_count to 1; otherwise it increments, so the recovery pass can
+    give up after a bounded number of attempts.
+    """
+    if not failures:
+        return
+    from ..database.connection import get_async_connection
+
+    chunk_ids = [f[0] for f in failures]
+    sources = [f[1] for f in failures]
+    error_types = [f[2] for f in failures]
+    error_messages = [f[3] for f in failures]
+
+    conn = await get_async_connection()
+    try:
+        await conn.execute(
+            """
+            INSERT INTO multimodal_librarian.kg_extraction_failures
+                (document_id, chunk_id, source, error_type, error_message)
+            SELECT $1::uuid, r.chunk_id::uuid, r.source, r.error_type, r.error_message
+            FROM unnest($2::uuid[], $3::text[], $4::text[], $5::text[])
+                 AS r(chunk_id, source, error_type, error_message)
+            ON CONFLICT (document_id, chunk_id, source) DO UPDATE SET
+                error_type = EXCLUDED.error_type,
+                error_message = EXCLUDED.error_message,
+                attempt_count = CASE
+                    WHEN multimodal_librarian.kg_extraction_failures.resolved_at IS NULL
+                    THEN multimodal_librarian.kg_extraction_failures.attempt_count + 1
+                    ELSE 1
+                END,
+                resolved_at = NULL,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            document_id, chunk_ids, sources, error_types, error_messages,
+        )
+    finally:
+        await conn.close()
+
+
+async def _resolve_kg_extraction_failures(
+    document_id: str, chunk_sources: Dict[str, Set[str]]
+) -> None:
+    """Mark recorded per-source failures resolved once they re-extract cleanly.
+
+    ``chunk_sources`` maps chunk_id -> the set of source keys that succeeded,
+    so only those (chunk, source) rows are cleared; other sources on the same
+    chunk remain unresolved.
+    """
+    if not chunk_sources:
+        return
+    from ..database.connection import get_async_connection
+
+    chunk_ids = []
+    sources = []
+    for chunk_id, source_set in chunk_sources.items():
+        for source in source_set:
+            chunk_ids.append(chunk_id)
+            sources.append(source)
+
+    conn = await get_async_connection()
+    try:
+        await conn.execute(
+            """
+            UPDATE multimodal_librarian.kg_extraction_failures f
+            SET resolved_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            FROM unnest($2::uuid[], $3::text[]) AS r(chunk_id, source)
+            WHERE f.document_id = $1::uuid
+              AND f.chunk_id = r.chunk_id
+              AND f.source = r.source
+              AND f.resolved_at IS NULL
+            """,
+            document_id, chunk_ids, sources,
+        )
+    finally:
+        await conn.close()
+
+
+async def _read_unresolved_kg_failures(document_id: str) -> Dict[str, Set[str]]:
+    """Return {chunk_id: {source, ...}} with unresolved failures for a document."""
+    from ..database.connection import get_async_connection
+
+    conn = await get_async_connection()
+    try:
+        rows = await conn.fetch(
+            """
+            SELECT chunk_id::text AS chunk_id, source
+            FROM multimodal_librarian.kg_extraction_failures
+            WHERE document_id = $1::uuid
+              AND resolved_at IS NULL
+            """,
+            document_id,
+        )
+        result: Dict[str, Set[str]] = {}
+        for row in rows:
+            result.setdefault(row['chunk_id'], set()).add(row['source'])
+        return result
+    finally:
+        await conn.close()
+
+
+async def _read_chunks_by_ids(
+    document_id: str, chunk_ids: List[str]
+) -> List[Dict[str, Any]]:
+    """Read chunk content for a specific set of chunk IDs (targeted recovery)."""
+    from ..database.connection import get_async_connection
+
+    conn = await get_async_connection()
+    try:
+        rows = await conn.fetch(
+            """
+            SELECT id, content, chunk_index, content_type, metadata
+            FROM multimodal_librarian.knowledge_chunks
+            WHERE source_id = $1::uuid
+              AND id = ANY($2::uuid[])
+            ORDER BY chunk_index ASC
+            """,
+            document_id, chunk_ids,
+        )
+        chunks = []
+        for row in rows:
+            metadata = row['metadata']
+            if isinstance(metadata, str):
+                import json
+                try:
+                    metadata = json.loads(metadata)
+                except (json.JSONDecodeError, TypeError):
+                    metadata = {}
+            chunks.append({
+                'id': str(row['id']),
+                'content': row['content'],
+                'chunk_index': row['chunk_index'],
+                'content_type': row['content_type'],
                 'metadata': metadata or {},
             })
         return chunks

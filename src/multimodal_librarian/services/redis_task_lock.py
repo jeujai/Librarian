@@ -13,6 +13,7 @@ Requirements: 10.3, 10.5, 10.6, 10.7, 10.8
 """
 
 import functools
+import inspect
 import logging
 import os
 import threading
@@ -143,18 +144,16 @@ def redis_task_lock(lock_key_template: str, ttl: Optional[int] = None):
     def decorator(func):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            # Extract document_id from kwargs or positional args
-            # It could be the first arg (extract_pdf_content_task) or
-            # the second arg (generate_chunks_task, generate_bridges_task, etc.)
+            # Extract document_id by binding to the wrapped function's signature,
+            # so it is correct regardless of where document_id sits in the arg
+            # order (first arg for some tasks, second for others).
             document_id = kwargs.get("document_id")
             if document_id is None:
-                # Try to find document_id in positional args
-                # Check args[1] first (most tasks have upstream_result as first arg)
-                if len(args) > 1:
-                    document_id = args[1]
-                elif len(args) > 0:
-                    # Single-arg tasks like extract_pdf_content_task
-                    document_id = args[0]
+                try:
+                    bound = inspect.signature(func).bind_partial(*args, **kwargs)
+                    document_id = bound.arguments.get("document_id")
+                except (TypeError, ValueError):
+                    document_id = None
             if document_id is None:
                 document_id = "unknown"
 

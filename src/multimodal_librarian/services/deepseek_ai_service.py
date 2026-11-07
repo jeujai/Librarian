@@ -1,7 +1,7 @@
 """
 DeepSeek AI service for training data generation.
 
-Drop-in replacement for OllamaAIService that uses the DeepSeek API
+Drop-in replacement for VLLMAIService that uses the DeepSeek API
 (OpenAI-compatible) for higher-quality medical Q&A generation.
 
 The service implements the same ``generate_response`` interface that

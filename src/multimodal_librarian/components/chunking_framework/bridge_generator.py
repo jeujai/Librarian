@@ -2,11 +2,11 @@
 Smart Bridge Generator with Multi-Provider LLM Support.
 
 This module implements LLM-powered bridge generation supporting multiple providers:
-- Ollama (local, fast, GPU-accelerated via Metal on Apple Silicon)
-- DeepSeek V4 Flash (cloud, higher quality)
+- vLLM (local, Apple Metal, OpenAI-compatible) - default
+- DeepSeek V4 Flash (cloud fallback)
 
 The provider can be configured via BRIDGE_GENERATION_PROVIDER environment variable.
-Default is "ollama" for faster local processing.
+Default is "vllm" for local Metal-accelerated processing.
 """
 
 import asyncio
@@ -17,7 +17,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-from ...clients.ollama_client import OllamaClient, get_ollama_client
 from ...config import get_settings
 from ...models.chunking import BridgeChunk, DomainConfig, GapAnalysis
 from ...models.core import BridgeStrategy, ContentType
@@ -75,13 +74,13 @@ class BatchGenerationStats:
 class SmartBridgeGenerator:
     """
     Smart bridge generator supporting multiple LLM providers.
-    
+
     Supports:
-    - Ollama (local, fast, GPU-accelerated) - default
-    - DeepSeek V4 Flash (cloud, higher quality)
+    - vLLM (local, Apple Metal, OpenAI-compatible) - default
+    - DeepSeek V4 Flash (cloud fallback)
 
     The provider is selected via settings.bridge_generation_provider.
-    
+
     IMPORTANT: LLM initialization is LAZY to avoid blocking the event loop.
     The model is only initialized on first use, not during __init__.
     """
@@ -95,14 +94,12 @@ class SmartBridgeGenerator:
         self.settings = get_settings()
         
         # Provider selection
-        self.provider = getattr(self.settings, 'bridge_generation_provider', 'ollama')
-        
+        self.provider = getattr(self.settings, 'bridge_generation_provider', 'vllm')
+
         # Lazy initialization - models are None until first use
         self._deepseek_service = None
         self._deepseek_initialized = False
-        self._ollama_client: Optional[OllamaClient] = None
-        self._ollama_available: Optional[bool] = None
-        
+
         # Generation statistics
         self.generation_stats = {
             'total_requests': 0,
@@ -138,33 +135,6 @@ class SmartBridgeGenerator:
         
         logger.info(f"Bridge generator initialized with provider: {self.provider}")
     
-    async def _get_ollama_client(self) -> Optional[OllamaClient]:
-        """Get Ollama client, checking availability.
-        
-        Uses a per-thread cached client to avoid creating a new
-        OllamaClient + httpx.AsyncClient + availability HTTP check
-        on every single bridge call. Thread-local storage is used
-        because each thread pool worker has its own event loop.
-        """
-        import threading
-        local = self._thread_local
-        client = getattr(local, 'ollama_client', None)
-        if client is not None:
-            return client
-        
-        # First call on this thread — create and check once
-        client = OllamaClient()
-        is_available = await client.is_available()
-        if is_available:
-            local.ollama_client = client
-            return client
-        else:
-            logger.warning(
-                "Ollama not available, will fall back to "
-                "DeepSeek or mechanical"
-            )
-            return None
-
     def _ensure_deepseek(self):
         """Lazily initialize DeepSeek for bridge generation fallback.
 
@@ -520,13 +490,13 @@ Bridge:""",
                 bisected_concepts=request.bisected_concepts
             )
 
-            # Try Ollama first if configured as the primary provider
-            if self.provider == 'ollama':
-                result = self._generate_with_ollama_sync(request, prompt, start_time)
+            # Try vLLM first if configured as the primary provider
+            if self.provider == 'vllm':
+                result = self._generate_with_vllm_sync(request, prompt, start_time)
                 if result.is_successful():
                     return result
-                # Fall through to DeepSeek if Ollama fails
-                logger.info("Ollama generation failed, falling back to DeepSeek")
+                # Fall through to DeepSeek if vLLM fails
+                logger.info("vLLM generation failed, falling back to DeepSeek")
 
             # Try DeepSeek (primary when provider == 'deepseek', fallback otherwise)
             result = self._generate_with_deepseek(request, prompt, start_time)
@@ -575,18 +545,42 @@ Bridge:""",
                 error=str(e)
             )
     
-    def _generate_with_ollama_sync(
+    async def _get_vllm_client(self):
+        """Get a per-thread cached httpx.AsyncClient for the vLLM server.
+
+        The client is created inside this async method on the thread's
+        persistent event loop and cached in thread-local storage, so it
+        stays bound to the correct loop across calls on the same pool worker.
+        """
+        import httpx
+
+        local = self._thread_local
+        client = getattr(local, 'vllm_client', None)
+        if client is not None:
+            return client
+
+        client = httpx.AsyncClient(
+            base_url=self.settings.vllm_url,
+            timeout=httpx.Timeout(self.settings.vllm_timeout),
+            limits=httpx.Limits(
+                max_keepalive_connections=10,
+                max_connections=32,
+            ),
+        )
+        local.vllm_client = client
+        return client
+
+    def _generate_with_vllm_sync(
         self,
         request: BridgeGenerationRequest,
         prompt: str,
         start_time: float
     ) -> BridgeGenerationResult:
-        """Generate bridge using Ollama (sync wrapper).
+        """Generate bridge using vLLM (sync wrapper).
 
-        Always runs inside a ThreadPoolExecutor worker, so there
-        is never a running event loop. We reuse a per-thread event
-        loop so the cached httpx.AsyncClient stays valid across
-        calls on the same thread.
+        Always runs inside a ThreadPoolExecutor worker, so there is never a
+        running event loop. We reuse a per-thread event loop so the cached
+        httpx.AsyncClient stays valid across calls on the same thread.
         """
         try:
             local = self._thread_local
@@ -595,16 +589,16 @@ Bridge:""",
                 loop = asyncio.new_event_loop()
                 local.event_loop = loop
             return loop.run_until_complete(
-                self._generate_with_ollama_async(
+                self._generate_with_vllm_async(
                     request, prompt, start_time
                 )
             )
         except Exception as e:
-            logger.warning(f"Ollama sync wrapper failed: {e}")
+            logger.warning(f"vLLM sync wrapper failed: {e}")
             return BridgeGenerationResult(
                 request_id=request.get_request_id(),
                 bridge_content="",
-                generation_method="ollama_failed",
+                generation_method="vllm_failed",
                 confidence_score=0.0,
                 generation_time=time.time() - start_time,
                 token_usage={
@@ -614,75 +608,90 @@ Bridge:""",
                 },
                 error=str(e)
             )
-    
-    async def _generate_with_ollama_async(
-        self, 
-        request: BridgeGenerationRequest, 
-        prompt: str, 
+
+    async def _generate_with_vllm_async(
+        self,
+        request: BridgeGenerationRequest,
+        prompt: str,
         start_time: float
     ) -> BridgeGenerationResult:
-        """Generate bridge using Ollama (async)."""
-        ollama = await self._get_ollama_client()
-        if ollama is None:
-            return BridgeGenerationResult(
-                request_id=request.get_request_id(),
-                bridge_content="",
-                generation_method="ollama_unavailable",
-                confidence_score=0.0,
-                generation_time=time.time() - start_time,
-                token_usage={'input_tokens': 0, 'output_tokens': 0, 'total_tokens': 0},
-                error="Ollama not available"
+        """Generate bridge using vLLM (OpenAI-compatible /v1/chat/completions)."""
+        try:
+            client = await self._get_vllm_client()
+
+            system_prompt = (
+                "You are a technical writer creating smooth transitions between document sections. "
+                "Generate concise bridge text (2-3 sentences max) that connects the ideas naturally. "
+                "Output ONLY the bridge text, no explanations or metadata."
             )
-        
-        # System prompt for bridge generation
-        system_prompt = (
-            "You are a technical writer creating smooth transitions between document sections. "
-            "Generate concise bridge text (2-3 sentences max) that connects the ideas naturally. "
-            "Output ONLY the bridge text, no explanations or metadata."
-        )
-        
-        response = await ollama.generate(
-            prompt=prompt,
-            system=system_prompt,
-            temperature=0.3,
-            max_tokens=800  # Higher limit to accommodate reasoning model thinking tokens
-        )
-        
-        if not response.is_successful():
-            return BridgeGenerationResult(
-                request_id=request.get_request_id(),
-                bridge_content="",
-                generation_method="ollama_error",
-                confidence_score=0.0,
-                generation_time=time.time() - start_time,
-                token_usage={'input_tokens': 0, 'output_tokens': 0, 'total_tokens': 0},
-                error=response.error
-            )
-        
-        generation_time = time.time() - start_time
-        
-        # Clean up the response (remove any thinking tags from DeepSeek-R1)
-        bridge_content = self._clean_llm_response(response.content)
-        
-        # Update statistics
-        self.generation_stats['total_requests'] += 1
-        self.generation_stats['successful_generations'] += 1
-        self.generation_stats['total_tokens'] += response.eval_count
-        self._track_provider('ollama')
-        
-        return BridgeGenerationResult(
-            request_id=request.get_request_id(),
-            bridge_content=bridge_content,
-            generation_method=f"ollama_{ollama.model}",
-            confidence_score=0.75,  # Good confidence for local model
-            generation_time=generation_time,
-            token_usage={
-                'input_tokens': response.prompt_eval_count,
-                'output_tokens': response.eval_count,
-                'total_tokens': response.prompt_eval_count + response.eval_count
+
+            payload = {
+                "model": self.settings.vllm_model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt},
+                ],
+                "max_tokens": 800,
+                "temperature": 0.3,
             }
-        )
-    
+
+            response = await client.post("/v1/chat/completions", json=payload)
+            response.raise_for_status()
+            data = response.json()
+
+            content = (data.get("choices", [{}])[0]
+                       .get("message", {}).get("content", "") or "")
+            usage = data.get("usage", {}) or {}
+            prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
+            completion_tokens = int(usage.get("completion_tokens", 0) or 0)
+
+            bridge_content = self._clean_llm_response(content)
+            if not bridge_content:
+                return BridgeGenerationResult(
+                    request_id=request.get_request_id(),
+                    bridge_content="",
+                    generation_method="vllm_error",
+                    confidence_score=0.0,
+                    generation_time=time.time() - start_time,
+                    token_usage={'input_tokens': 0, 'output_tokens': 0, 'total_tokens': 0},
+                    error="vLLM returned empty content"
+                )
+
+            generation_time = time.time() - start_time
+
+            self.generation_stats['total_requests'] += 1
+            self.generation_stats['successful_generations'] += 1
+            self.generation_stats['total_tokens'] += prompt_tokens + completion_tokens
+            self._track_provider('vllm')
+
+            return BridgeGenerationResult(
+                request_id=request.get_request_id(),
+                bridge_content=bridge_content,
+                generation_method=f"vllm_{self.settings.vllm_model}",
+                confidence_score=0.75,  # Good confidence for local model
+                generation_time=generation_time,
+                token_usage={
+                    'input_tokens': prompt_tokens,
+                    'output_tokens': completion_tokens,
+                    'total_tokens': prompt_tokens + completion_tokens
+                }
+            )
+        except Exception as e:
+            logger.warning(f"vLLM bridge generation failed: {e}")
+            return BridgeGenerationResult(
+                request_id=request.get_request_id(),
+                bridge_content="",
+                generation_method="vllm_failed",
+                confidence_score=0.0,
+                generation_time=time.time() - start_time,
+                token_usage={
+                    'input_tokens': 0,
+                    'output_tokens': 0,
+                    'total_tokens': 0
+                },
+                error=str(e)
+            )
+
     def _clean_llm_response(self, content: str) -> str:
         """Clean LLM response, removing thinking tags from reasoning models."""
         import re
@@ -707,7 +716,7 @@ Bridge:""",
     ) -> BridgeGenerationResult:
         """Generate bridge using DeepSeek (sync wrapper).
 
-        Mirrors ``_generate_with_ollama_sync``: runs the async DeepSeek call on
+        Mirrors ``_generate_with_vllm_sync``: runs the async DeepSeek call on
         a per-thread event loop so the service's httpx.AsyncClient stays bound
         to the correct loop.
         """

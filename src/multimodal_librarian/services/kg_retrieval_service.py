@@ -18,6 +18,7 @@ import asyncio
 import heapq
 import logging
 import math
+import os
 import re
 import sys
 import time
@@ -155,6 +156,8 @@ _UMLS_PROMOTION_ELIGIBLE_RELA = frozenset({
     "has_method", "method_of",
     "has_direct_morphology", "has_indirect_morphology",
     "has_causative_agent",
+    "causative_agent_of",
+    "induces", "induced_by",
     "has_pharmacokinetics",
     "has_physiologic_effect",
     "has_mechanism_of_action",
@@ -234,6 +237,32 @@ _DRUG_NAME_PATTERN = re.compile(
 )
 
 
+# Reference-list / bibliography detection.  Chunks dense with structured
+# citation markers (year;volume:page, "et al." author lists) are reference
+# lists, not prose.  Such chunks get promoted to direct status via UMLS
+# treatment edges (diagnosis → may_treat → drug → EXTRACTED_FROM →
+# bibliography) and must not outrank the prose chunks that actually answer
+# the query.
+_REFERENCE_YEAR_VOL_PAGE = re.compile(r'\b\d{4}\s*;\s*\d+\s*:\s*\d+')
+_REFERENCE_ET_AL = re.compile(r'\bet\s+al\.?', re.IGNORECASE)
+_REFERENCE_LIST_MAX_WEIGHT = 0.5  # cap reference-list chunks to reasoning-path weight
+
+
+def _is_reference_list(content: str) -> bool:
+    """True when *content* is dense with bibliography citation markers.
+
+    Bracket citations like "[1]" are deliberately NOT counted: clinical
+    prose routinely cites sources inline, so bracketed refs alone would
+    false-positive.  Only structured year;volume:page or author-list
+    signals are strong enough to identify a reference list.
+    """
+    if not content:
+        return False
+    year_vol_page = len(_REFERENCE_YEAR_VOL_PAGE.findall(content))
+    et_al = len(_REFERENCE_ET_AL.findall(content))
+    return (year_vol_page >= 2) or (year_vol_page >= 1 and et_al >= 1) or (et_al >= 3)
+
+
 # Path-type-aware decay rates for hop-distance scoring.
 # UMLS clinical paths are curated medical knowledge — they get minimal/no decay.
 # Document-extracted edges and co-occurrence are noisier — they get full decay.
@@ -264,9 +293,34 @@ _MAX_2HOP_TARGETS_PER_INTERMEDIATE = 3  # max 2-hop targets per intermediate
 _MAX_CONCEPTS_FOR_2HOP = 3        # only top-N concepts by match score get 2-hop
 _MAX_CONCEPTS_FOR_1HOP = 10       # only top-N concepts by match score get 1-hop traversal
 _MAX_CONCEPTS_FOR_UMLS_1HOP = 5  # narrower cap for UMLS bridge (13.9M UMLS_REL edges)
+# Extra UMLS-traversal slots for matched concepts whose SAME_AS UMLS node has a
+# clinically-meaningful edge reaching chunk-bearing content, even when they rank
+# below the similarity cap.  A low-ranked bridge ("immunosuppressant" →
+# Immunosuppressive Agents → sirolimus) surfaces real drug chunks, whereas a
+# high-ranked fragment ("solid organ" → isa → Morphological descriptors) yields
+# nothing; raw similarity alone cannot tell them apart.
+_MAX_CONCEPTS_FOR_UMLS_REACHABLE_BONUS = 10
+# Max UMLS neighbor names harvested for cross-encoder query expansion.  These
+# are injected into the rerank query so the cross-encoder sees the concrete
+# tokens (drug names, treatment concepts) the KG traversal reached — giving it
+# the lexical overlap it needs to recognize structurally-retrieved table chunks.
+_MAX_PROVENANCE_TERMS = 20
 _MAX_CONCEPTS_FOR_SHARED_CHUNK = 10  # top-N concepts get shared-chunk co-occurrence discovery
 _MAX_PROMOTED_CHUNKS_PER_CONCEPT = 30  # wider pool; pre-filter selects relevant via cosine sim
 _MAX_CONCEPTS_DIRECT = 15         # cap direct chunk retrieval to top-N concepts
+# Safety bound for per-concept chunk-ID fan-out.  Some concepts fan out to
+# 100K+ chunks (single-word CODE_TERMs like "fever"), so we cannot return
+# every chunk.  The bound must be high enough to keep prose chunks (which
+# sit far down the old concept_count ordering) in the candidate set, while
+# staying deterministic and memory-bounded.  Ordering is by chunk_id, never
+# by concept density, so reference lists no longer crowd out prose.
+_MAX_CHUNKS_PER_CONCEPT = 5000
+# Cap on relationship-traversal-discovered chunks merged into Stage 1.
+# A dense concept graph surfaces tens of thousands of chunks via UMLS
+# clinical paths; without a bound, Stage 1 balloons past the ~400 chunk
+# resolution cap and every downstream O(n) step (rationale second pass,
+# proper-noun filter, aggregation) pays for it.  Mirror _MAX_RESOLVE.
+_MAX_TRAVERSAL_MERGE = 400
 
 # Relationship types to prioritize during traversal (Requirement 2.3)
 # Includes both pattern-extracted types (uppercase) and ConceptNet types (PascalCase)
@@ -526,9 +580,22 @@ class KGRetrievalService:
                     # Fall back to unfiltered candidates
 
             # Step 4: Stage 2 - Semantic re-ranking
+            # When the cross-encoder is active, embed KG provenance (reachable
+            # UMLS neighbor names) into a rerank-only query so it can recognize
+            # structurally-retrieved chunks that share those tokens (e.g. a bare
+            # drug-causes table).  The vector-search query stays unchanged.
+            rerank_query: Optional[str] = None
+            if os.environ.get("USE_CROSS_ENCODER", "false").lower() == "true":
+                provenance_terms = await self._harvest_umls_provenance_terms(
+                    decomposition.concept_matches
+                )
+                if provenance_terms:
+                    rerank_query = query + " " + " ".join(provenance_terms)
+
             ranked_chunks = await self._semantic_reranker.rerank(
                 chunks_for_reranking, query, effective_top_k,
                 decomposition=decomposition,
+                rerank_query=rerank_query,
             )
             stage2_count = len(ranked_chunks)
 
@@ -851,6 +918,13 @@ class KGRetrievalService:
                 m = source_mappings.get(cid)
                 return m.match_score if m else 0.0
 
+            # Deterministic sort: concept match score descending, then
+            # chunk_id ascending.  Chunks from the same concept tie on
+            # match_score, so chunk_id is the tiebreak — otherwise set
+            # iteration order makes the resolution cap non-deterministic.
+            def _resolve_sort_key(cid: str) -> tuple:
+                return (-_mapping_score(cid), cid)
+
             promoted_ids = [
                 cid for cid in direct_chunk_ids
                 if source_mappings.get(cid)
@@ -864,8 +938,8 @@ class KGRetrievalService:
             # arbitrary set iteration order, making the resolution cap
             # non-deterministic and capable of dropping top-concept chunks
             # (e.g. "work restrictions" SHEA evidence) before scoring.
-            promoted_ids.sort(key=_mapping_score, reverse=True)
-            direct_only_ids.sort(key=_mapping_score, reverse=True)
+            promoted_ids.sort(key=_resolve_sort_key)
+            direct_only_ids.sort(key=_resolve_sort_key)
             half = _MAX_RESOLVE // 2
             resolve_ids = direct_only_ids[:half] + promoted_ids[:half]
             # Fill remaining budget from whichever list has more
@@ -882,7 +956,7 @@ class KGRetrievalService:
                 related_only = [
                     cid for cid in all_chunk_ids if cid not in direct_chunk_ids
                 ]
-                related_only.sort(key=_mapping_score, reverse=True)
+                related_only.sort(key=_resolve_sort_key)
                 resolve_ids.extend(related_only[:remaining])
             logger.info(
                 f"Capped chunk resolution: {len(all_chunk_ids)} → "
@@ -915,7 +989,7 @@ class KGRetrievalService:
             c["name"] for c in decomposition.concept_matches
             if c.get("name") and not is_generic_concept(c["name"])
         ]
-        # Embed query once so both rationale-sim passes share it.
+        # Embed query once for the rationale-sim pass.
         q_emb = await self._embed_query(decomposition.original_query)
         _t_embed = time.monotonic()
         # Precompute rationale→query similarity per (concept, chunk).  Done
@@ -984,6 +1058,21 @@ class KGRetrievalService:
                     - existing_ids
                 )
 
+                # Cap the traversal merge.  Keep the chunks that bridge
+                # the most query concepts (stronger multi-hop evidence)
+                # first, then chunk_id for determinism.
+                if len(new_traversal_ids) > _MAX_TRAVERSAL_MERGE:
+                    _conns = traversal_result.chunk_concept_connections
+
+                    def _trav_sort_key(cid: str) -> tuple:
+                        return (-len(_conns.get(cid, ())), cid)
+
+                    new_traversal_ids = set(
+                        sorted(new_traversal_ids, key=_trav_sort_key)[
+                            :_MAX_TRAVERSAL_MERGE
+                        ]
+                    )
+
                 if new_traversal_ids:
                     # Build chunk_id → best path_type from annotations
                     pt_map: Dict[str, str] = {}
@@ -1026,41 +1115,6 @@ class KGRetrievalService:
                         chunk.metadata["umls_discovered"] = True
 
                     chunks.extend(new_resolved)
-
-                    # Second-pass rationale boost: traversal-discovered
-                    # chunks missed the first pass (their linking concepts
-                    # are UMLS-mediated, not query-matched, so the per-
-                    # (concept,chunk) map has no entry for them).  Reuse
-                    # the query embedding from the first pass and compute
-                    # chunk-scoped rationale→query similarity across ANY
-                    # concept's EXTRACTED_FROM edge into each chunk.
-                    if q_emb is not None:
-                        _RATIONALE_WEIGHT = 0.25
-                        trav_rat_sims = await self._compute_rationale_sims_for_chunks(
-                            new_traversal_ids, q_emb,
-                        )
-                        _t_rationale2 = time.monotonic()
-                        logger.info(
-                            f"Phase timing: rationale2 (traversal) = "
-                            f"{_t_rationale2 - _t_traverse:.2f}s "
-                            f"({len(trav_rat_sims) if trav_rat_sims else 0} sims)"
-                        )
-                        if trav_rat_sims:
-                            boosted = 0
-                            for chunk in new_resolved:
-                                best_rat = trav_rat_sims.get(chunk.chunk_id, 0.0)
-                                if best_rat > 0:
-                                    chunk.kg_relevance_score = min(
-                                        1.0,
-                                        chunk.kg_relevance_score * (1.0 + best_rat * _RATIONALE_WEIGHT),
-                                    )
-                                    chunk.metadata["rationale_boost_applied"] = True
-                                    boosted += 1
-                            if boosted:
-                                logger.info(
-                                    f"Rationale boost (traversal): applied to "
-                                    f"{boosted}/{len(new_resolved)} chunks"
-                                )
 
                     logger.info(
                         f"Merged {len(new_resolved)} UMLS-discovered chunks "
@@ -1330,64 +1384,6 @@ class KGRetrievalService:
             )
         return sims
 
-    async def _compute_rationale_sims_for_chunks(
-        self,
-        chunk_ids: Set[str],
-        q_emb: List[float],
-    ) -> Dict[str, float]:
-        """Compute best rationale→query cosine similarity per chunk.
-
-        Concept-agnostic: queries rationale embeddings from ANY concept's
-        EXTRACTED_FROM edge into each chunk.  Used for traversal-discovered
-        chunks whose linking concepts are not among the query-matched concepts
-        (e.g., Metformin→chunk reached via Diabetes-[may_be_treated_by]→Metformin
-        — the rationale lives on the Metformin edge, not a Diabetes edge).
-        """
-        if not chunk_ids or not self._neo4j_client:
-            return {}
-
-        cypher = """
-        MATCH ()-[r:EXTRACTED_FROM]->(ch:Chunk)
-        WHERE ch.chunk_id IN $chunk_ids
-          AND r.rationale_embedding IS NOT NULL
-        RETURN ch.chunk_id AS chunk_id,
-               r.rationale_embedding AS emb
-        """
-        try:
-            rows = await with_timeout(
-                self._neo4j_client.execute_query(
-                    cypher,
-                    {"chunk_ids": list(chunk_ids)},
-                ),
-                self._query_timeout,
-            )
-        except Exception as e:
-            logger.debug(f"Rationale boost (traversal): edge query failed: {e}")
-            return {}
-
-        def _cos(a, b) -> float:
-            dot = sum(x * y for x, y in zip(a, b))
-            na = sum(x * x for x in a) ** 0.5
-            nb = sum(x * x for x in b) ** 0.5
-            return dot / (na * nb) if na and nb else 0.0
-
-        best: Dict[str, float] = {}
-        for row in (rows or []):
-            emb = row.get("emb")
-            if not emb:
-                continue
-            cid = row["chunk_id"]
-            s = _cos(q_emb, emb)
-            if s > best.get(cid, -1.0):
-                best[cid] = s
-
-        if best:
-            logger.info(
-                f"Rationale boost (traversal): {len(best)} chunks "
-                f"(max={max(best.values()):.3f})"
-            )
-        return best
-
     async def _query_chunk_ids_for_concept(self, concept_id: str) -> List[str]:
         """
         Query Neo4j for chunk IDs linked to a concept via EXTRACTED_FROM traversal.
@@ -1404,16 +1400,23 @@ class KGRetrievalService:
             return []
 
         try:
+            # Deterministic, unbiased chunk-ID ordering.  The previous
+            # ORDER BY concept_count DESC biased the candidate set toward
+            # concept-dense chunks (reference lists, headings) and was
+            # non-deterministic under ties, dropping prose chunks whose
+            # concepts fan out beyond the cap.  Ordering by chunk_id keeps
+            # prose in the candidate set and lets the cross-encoder — the
+            # only reliable discriminator — do the actual ranking.
             cypher_query = """
             MATCH (c:Concept {concept_id: $concept_id})-[:EXTRACTED_FROM]->(ch:Chunk)
-            OPTIONAL MATCH (ch)<-[:EXTRACTED_FROM]-(other:Concept)
-            RETURN ch.chunk_id AS chunk_id, count(other) AS concept_count
-            ORDER BY concept_count DESC
-            LIMIT 400
+            RETURN ch.chunk_id AS chunk_id
+            ORDER BY ch.chunk_id
+            LIMIT $limit
             """
             results = await with_timeout(
                 self._neo4j_client.execute_query(
-                    cypher_query, {"concept_id": concept_id}
+                    cypher_query,
+                    {"concept_id": concept_id, "limit": _MAX_CHUNKS_PER_CONCEPT},
                 ),
                 self._query_timeout,
             )
@@ -1526,6 +1529,34 @@ class KGRetrievalService:
             concept_matches, key=_traversal_sort_key, reverse=True
         )
 
+        # Identify semantic matches whose UMLS bridge actually reaches
+        # chunk-bearing content, so they can be traversed even when they rank
+        # below the similarity cap (see _MAX_CONCEPTS_FOR_UMLS_REACHABLE_BONUS).
+        semantic_ids = [
+            c.get("concept_id", "")
+            for c in sorted_matches
+            if c.get("match_type") == "semantic" and c.get("concept_id")
+        ]
+        reachable_umls_ids = await self._find_reachable_umls_bridge_concepts(
+            semantic_ids
+        )
+
+        def _select_umls_traversal_concepts(
+            matches: List[Dict[str, Any]], base_cap: int
+        ) -> List[Dict[str, Any]]:
+            """Top-N by similarity plus reachable-bridge concepts (in order)."""
+            selected = list(matches[:base_cap])
+            selected_ids = {c.get("concept_id") for c in selected}
+            bonus = [
+                c for c in matches
+                if c.get("concept_id") in reachable_umls_ids
+                and c.get("concept_id") not in selected_ids
+            ]
+            # ``matches`` is already similarity-ordered, so the bonus slice
+            # keeps the highest-similarity reachable concepts.
+            selected.extend(bonus[:_MAX_CONCEPTS_FOR_UMLS_REACHABLE_BONUS])
+            return selected
+
         for concept in sorted_matches[:_MAX_CONCEPTS_FOR_1HOP]:
             concept_id = concept.get("concept_id", "")
             concept_name = concept.get("name", "")
@@ -1552,7 +1583,9 @@ class KGRetrievalService:
         # edge exists.
         # Uses a narrower cap than plain 1-hop because each query walks
         # the 13.9M-edge UMLS_REL graph.
-        for concept in sorted_matches[:_MAX_CONCEPTS_FOR_UMLS_1HOP]:
+        for concept in _select_umls_traversal_concepts(
+            sorted_matches, _MAX_CONCEPTS_FOR_UMLS_1HOP
+        ):
             concept_id = concept.get("concept_id", "")
             concept_name = concept.get("name", "")
             if concept.get("match_type") == "semantic":
@@ -1616,7 +1649,9 @@ class KGRetrievalService:
             sorted_concepts = sorted(
                 concept_matches, key=_traversal_sort_key, reverse=True
             )
-            for concept in sorted_concepts[:_MAX_CONCEPTS_FOR_2HOP]:
+            for concept in _select_umls_traversal_concepts(
+                sorted_concepts, _MAX_CONCEPTS_FOR_2HOP
+            ):
                 cid = concept.get("concept_id", "")
                 cname = concept.get("name", "")
                 if not cid:
@@ -1965,6 +2000,150 @@ class KGRetrievalService:
             )
             return []
 
+    async def _find_reachable_umls_bridge_concepts(
+        self, concept_ids: List[str]
+    ) -> Set[str]:
+        """Return concept_ids whose SAME_AS UMLS node reaches chunk-bearing content.
+
+        A matched concept is a valuable UMLS-traversal candidate only if its
+        UMLS counterpart has a clinically-meaningful UMLS_REL edge to a
+        neighbor that itself SAME_AS-bridges to a corpus Concept with chunks.
+        This separates content-bearing bridges ("immunosuppressant" →
+        Immunosuppressive Agents → sirolimus) from dead-end taxonomy
+        ("solid organ" → isa → Morphological descriptors) — the edge
+        rela_type alone cannot tell them apart.
+
+        Runs one batched query over all candidates rather than one query per
+        concept, so the cost is a single round-trip regardless of candidate
+        count.
+        """
+        if not self._neo4j_client or not concept_ids:
+            return set()
+
+        try:
+            cypher = """
+            UNWIND $concept_ids AS cid
+            MATCH (start:Concept {concept_id: cid})
+                  -[:SAME_AS]-(ua:UMLSConcept)
+                  -[r:UMLS_REL]-(n:UMLSConcept)
+            WHERE r.rela_type IN $clinical_rela
+            // SAME_AS is undirected; a neighbor only counts if it leads to a
+            // corpus Concept that has at least one EXTRACTED_FROM chunk (the
+            // same reachability the 1-hop UMLS traversal relies on).  The
+            // chunk check is a pattern predicate so it does not fan out one
+            // row per chunk.
+            MATCH (n)-[:SAME_AS]-(c:Concept)
+            WHERE (c)-[:EXTRACTED_FROM]->(:Chunk)
+            RETURN DISTINCT start.concept_id AS concept_id
+            """
+            async with self._neo4j_semaphore:
+                results = await with_timeout(
+                    self._neo4j_client.execute_query(
+                        cypher,
+                        {
+                            "concept_ids": concept_ids,
+                            "clinical_rela": RelationshipTraverser.CLINICALLY_MEANINGFUL_UMLS_RELA,
+                        },
+                    ),
+                    self._query_timeout,
+                )
+            return {
+                r["concept_id"]
+                for r in (results or [])
+                if r.get("concept_id")
+            }
+        except asyncio.TimeoutError:
+            logger.warning("Timeout computing reachable UMLS bridge concepts")
+            return set()
+        except Exception as e:
+            logger.warning(
+                f"Error computing reachable UMLS bridge concepts: {e}"
+            )
+            return set()
+
+    async def _harvest_umls_provenance_terms(
+        self, concept_matches: List[Dict[str, Any]]
+    ) -> List[str]:
+        """Return UMLS neighbor names reachable from the matched concepts.
+
+        For each matched concept whose SAME_AS UMLS node reaches chunk-bearing
+        content via a clinically-meaningful UMLS_REL edge, collect the far-side
+        neighbor's ``preferred_name``.  These are the concrete corpus-grounded
+        tokens (drug names, treatment concepts) the KG traversal surfaces.
+
+        The cross-encoder scores query↔document *token* overlap, so a bare
+        drug-name table (e.g. a "drugs causing ILD" list) is indistinguishable
+        from irrelevant text unless those drug names appear in the query.  The
+        SAME_AS+chunk bridge requirement already excludes broad UMLS taxonomy
+        nodes (they have no exact-string corpus Concept), so the returned terms
+        are specific and corpus-anchored by construction.
+
+        Runs one batched query over all candidates, mirroring
+        :meth:`_find_reachable_umls_bridge_concepts` so the cost is a single
+        round-trip regardless of candidate count.
+        """
+        if not self._neo4j_client or not concept_matches:
+            return []
+
+        concept_ids = [
+            c.get("concept_id", "")
+            for c in concept_matches
+            if c.get("concept_id")
+        ]
+        if not concept_ids:
+            return []
+
+        try:
+            cypher = """
+            UNWIND $concept_ids AS cid
+            MATCH (start:Concept {concept_id: cid})
+                  -[:SAME_AS]-(ua:UMLSConcept)
+                  -[r:UMLS_REL]-(n:UMLSConcept)
+            WHERE r.rela_type IN $clinical_rela
+              AND n.preferred_name IS NOT NULL
+            MATCH (n)-[:SAME_AS]-(c:Concept)
+            WHERE (c)-[:EXTRACTED_FROM]->(:Chunk)
+            WITH n.preferred_name AS term, count(DISTINCT c) AS nconcepts
+            WHERE size(term) >= 4
+            RETURN term, nconcepts
+            ORDER BY nconcepts DESC, term
+            LIMIT $limit
+            """
+            async with self._neo4j_semaphore:
+                results = await with_timeout(
+                    self._neo4j_client.execute_query(
+                        cypher,
+                        {
+                            "concept_ids": concept_ids,
+                            "clinical_rela": RelationshipTraverser.CLINICALLY_MEANINGFUL_UMLS_RELA,
+                            "limit": _MAX_PROVENANCE_TERMS,
+                        },
+                    ),
+                    self._query_timeout,
+                )
+            terms: List[str] = []
+            seen: Set[str] = set()
+            for r in results or []:
+                term = (r.get("term") or "").strip()
+                key = term.lower()
+                if not term or key in seen:
+                    continue
+                seen.add(key)
+                terms.append(term)
+            logger.info(
+                f"Harvested {len(terms)} UMLS provenance terms: "
+                f"{', '.join(terms[:15])}"
+            )
+            return terms
+        except asyncio.TimeoutError:
+            logger.warning("Timeout harvesting UMLS provenance terms")
+            return []
+        except Exception as e:
+            logger.warning(
+                f"Error harvesting UMLS provenance terms: {e}"
+            )
+            return []
+
     async def _query_umls_related_concepts(
         self, concept_id: str, concept_name: str
     ) -> List[Dict[str, Any]]:
@@ -2114,6 +2293,7 @@ class KGRetrievalService:
                 "may_treat", "may_be_treated_by",
                 "cause_of", "due_to",
                 "has_manifestation", "manifestation_of",
+                "causative_agent_of", "induces", "induced_by",
             ]
 
             cypher = """
@@ -2246,18 +2426,23 @@ class KGRetrievalService:
               AND neighbor <> ua
               AND neighbor.embedding IS NOT NULL
             WITH DISTINCT neighbor, r.rela_type AS rela, start
-            LIMIT 15
             OPTIONAL MATCH (target:Concept)-[:SAME_AS]-(neighbor)
             WHERE target.concept_id <> $concept_id
             CALL (target) {
                 MATCH (target)-[:EXTRACTED_FROM]->(ch:Chunk)
-                RETURN ch.chunk_id AS chunk_id
-                LIMIT 100
+                RETURN collect(ch.chunk_id)[..100] AS chunk_ids, count(ch) AS nchunks
             }
+            WITH neighbor, rela, start, target, chunk_ids, nchunks
+            WITH neighbor, rela, start,
+                 collect({target: target, chunk_ids: chunk_ids}) AS targets,
+                 sum(nchunks) AS total_chunks
+            ORDER BY total_chunks DESC, neighbor.preferred_name
+            LIMIT 15
+            UNWIND targets AS tgt
             RETURN DISTINCT
-                target.concept_id AS concept_id,
-                target.name AS name,
-                collect(DISTINCT chunk_id) AS chunk_ids,
+                tgt.target.concept_id AS concept_id,
+                tgt.target.name AS name,
+                tgt.chunk_ids AS chunk_ids,
                 1 AS hop_distance,
                 [rela] AS relationship_path,
                 [start.name, neighbor.preferred_name] AS path_names
@@ -2773,6 +2958,15 @@ class KGRetrievalService:
                             if _norm_name(h.get("concept_name", "")) in _query_verbatim_names:
                                 chunk.kg_relevance_score *= _QUERY_VERBATIM_BOOST
                                 break
+                    # Reference-list gate: a bibliography chunk that reached
+                    # direct status (typically via UMLS treatment-edge
+                    # promotion) must not outrank prose.  Cap its score to
+                    # reasoning-path weight so the cross-encoder can rank the
+                    # actual answer prose above it.
+                    if _is_reference_list(chunk.content or ""):
+                        chunk.kg_relevance_score = min(
+                            chunk.kg_relevance_score, _REFERENCE_LIST_MAX_WEIGHT
+                        )
                     chunk.final_score = chunk.kg_relevance_score
                     # Store matched concepts on the chunk for downstream use
                     chunk.matched_concepts = hits
@@ -2813,6 +3007,10 @@ class KGRetrievalService:
                             chunk.kg_relevance_score *= _TREATMENT_DRUG_BOOST
                             if _DOSAGE_METRIC_PATTERN.search(chunk.content or ""):
                                 chunk.kg_relevance_score *= _TREATMENT_DOSAGE_BOOST
+                    if _is_reference_list(chunk.content or ""):
+                        chunk.kg_relevance_score = min(
+                            chunk.kg_relevance_score, _REFERENCE_LIST_MAX_WEIGHT
+                        )
                     chunk.final_score = chunk.kg_relevance_score
 
                 seen_ids.add(chunk.chunk_id)

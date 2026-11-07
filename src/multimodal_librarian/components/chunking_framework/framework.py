@@ -437,11 +437,15 @@ class GenericMultiLevelChunkingFramework:
             for row in rows:
                 lines.append(" | ".join(_cells(row)))
 
+            table_meta = table.metadata or {}
             content = "\n".join(lines).strip()
             if not content:
                 continue
 
-            table_meta = table.metadata or {}
+            page_number = table_meta.get("page_number")
+            if page_number is not None:
+                content = f"[Page {page_number}]\n{content}"
+
             chunks.append(ProcessedChunk(
                 id=str(uuid.uuid4()),
                 content=content,

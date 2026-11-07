@@ -37,11 +37,18 @@ Environment variables (or .env):
     PG_USER              (default: postgres)
     PG_PASSWORD          (default: postgres)
     MODEL_SERVER_URL     (default: http://localhost:8001)
+    ENRICH_BACKEND       (default: vllm)  "vllm" or "ollama"
+    VLLM_URL             (default: http://127.0.0.1:8002)
+    VLLM_MODEL           (default: mlx-community/Llama-3.2-3B-Instruct-4bit)
+    GEN_MAX_TOKENS       (default: 700)   max output tokens per LLM call
+    GEN_TEMPERATURE      (default: 0.2)
     OLLAMA_URL           (default: http://localhost:11434)
     OLLAMA_MODEL         (default: llama3.2:3b)
-    ENRICH_CONCURRENCY   (default: 8)     concurrent per-chunk LLM calls
+    ENRICH_CONCURRENCY   (default: 32)    concurrent per-chunk LLM calls
     ENRICH_MAX_CONCEPTS  (default: 20)    concept names per LLM call (chunked)
-    ENRICH_MAX_CHARS     (default: 2000)  passage chars sent to the LLM
+    ENRICH_MAX_CHARS     (default: 9000)  passage chars sent to the LLM
+    ENRICH_DENSE_TEXT_CHARS  (default: 4000)  chunks longer than this use
+    ENRICH_DENSE_MAX_CONCEPTS (default: 10)   fewer concepts per call
 """
 
 import argparse
@@ -51,7 +58,7 @@ import logging
 import os
 import random
 import time
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import asyncpg
 import httpx
@@ -77,10 +84,29 @@ MODEL_SERVER_URL = os.getenv("MODEL_SERVER_URL", "http://localhost:8001")
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:3b")
 
-CONCURRENCY = int(os.getenv("ENRICH_CONCURRENCY", "8"))
+# Rationale-generation backend: "vllm" (HTTP to a vllm-metal server, default)
+# or "ollama" (HTTP to a local Ollama server).  vllm-metal supports concurrent
+# batching, so it runs one process with high ENRICH_CONCURRENCY.
+BACKEND = os.getenv("ENRICH_BACKEND", "vllm")
+GEN_MAX_TOKENS = int(os.getenv("GEN_MAX_TOKENS", "700"))
+GEN_TEMPERATURE = float(os.getenv("GEN_TEMPERATURE", "0.2"))
+
+VLLM_URL = os.getenv("VLLM_URL", "http://127.0.0.1:8002")
+VLLM_MODEL = os.getenv("VLLM_MODEL", "mlx-community/Llama-3.2-3B-Instruct-4bit")
+
+_DEFAULT_CONCURRENCY = {"ollama": "8", "vllm": "32"}.get(BACKEND, "1")
+CONCURRENCY = int(os.getenv("ENRICH_CONCURRENCY", _DEFAULT_CONCURRENCY))
 WRITE_CONCURRENCY = int(os.getenv("ENRICH_WRITE_CONCURRENCY", "1"))
 MAX_CONCEPTS = int(os.getenv("ENRICH_MAX_CONCEPTS", "20"))
-MAX_CHARS = int(os.getenv("ENRICH_MAX_CHARS", "2000"))
+# Sized to the largest observed chunk (~8.4k chars ~= 2.1k tokens) so full text
+# fits under the vLLM 4096-token context; the old 2000-char truncation was the
+# root cause of "Not mentioned in the passage" no-ops on dense table chunks.
+MAX_CHARS = int(os.getenv("ENRICH_MAX_CHARS", "9000"))
+# For text longer than DENSE_TEXT_CHARS, shrink each sub-batch to
+# DENSE_MAX_CONCEPTS names: grounding 20 names against a multi-thousand-char
+# table in one call is too much for the 3B model (first sub-batch yielded 0).
+DENSE_TEXT_CHARS = int(os.getenv("ENRICH_DENSE_TEXT_CHARS", "4000"))
+DENSE_MAX_CONCEPTS = int(os.getenv("ENRICH_DENSE_MAX_CONCEPTS", "10"))
 # Per-call read timeout for the Ollama generate call.  Dense chunks (many
 # concepts -> long JSON output) can exceed the old 120s and trip an empty
 # ReadTimeout; 180s default, env-tunable for retry passes over dense leftovers.
@@ -95,22 +121,45 @@ EMBED_BATCH = 500
 # dry-run turned into junk rationales, and cuts LLM calls ~4x (far fewer concepts
 # per chunk -> fewer MAX_CONCEPTS sub-batches), which is the real cost lever given
 # Ollama runs effectively serial here.
-_CLINICAL_FILTER = """  AND (
+_CLINICAL_FILTER = """  AND c.name CONTAINS ' '
+  AND (
     EXISTS { (c)-[:SAME_AS]->(:UMLSConcept) }
     OR EXISTS { (c)-[:SIMILAR_TO]->(:UMLSConcept) }
     OR (
       c.concept_id STARTS WITH 'multi_word_'
       AND c.name =~ '^[A-Za-z][A-Za-z ]{4,}[A-Za-z]$'
-      AND c.name CONTAINS ' '
     )
   )
 """
+
+# Shard by the first hex nibble of chunk_id (a Postgres UUID, uniformly
+# distributed).  `shard_chars` is a list of the hex chars this process owns, so
+# N processes each handle a disjoint, roughly-equal subset of chunks.
+_SHARD_CLAUSE = "  AND substring(ch.chunk_id, 0, 1) IN $shard_chars\n"
+_ALL_HEX = list("0123456789abcdef")
+
+
+def shard_chars_for(index: int, total: int) -> List[str]:
+    """Return the hex-nibble prefixes owned by shard `index` of `total`."""
+    if total <= 1:
+        return _ALL_HEX
+    buckets = []
+    for i, ch in enumerate(_ALL_HEX):
+        buckets.append(ch)
+    # Distribute 16 nibbles across `total` shards as evenly as possible.
+    per = 16 // total
+    rem = 16 % total
+    start = index * per + min(index, rem)
+    end = start + per + (1 if index < rem else 0)
+    return _ALL_HEX[start:end]
+
 
 # Edges lacking a rationale, per document.  Chunk.chunk_id == the Postgres
 # knowledge_chunks.id, so we join back to chunk text by that id.
 _READ_QUERY = (
     "MATCH (c:Concept)-[r:EXTRACTED_FROM]->(ch:Chunk {source_id: $doc})\n"
     "WHERE r.rationale IS NULL\n"
+    + _SHARD_CLAUSE
     + _CLINICAL_FILTER
     + "RETURN ch.chunk_id AS chunk_id, c.concept_id AS cid, c.name AS name\n"
 )
@@ -120,6 +169,7 @@ _READ_QUERY = (
 _READ_QUERY_ALL = (
     "MATCH (c:Concept)-[r:EXTRACTED_FROM]->(ch:Chunk {source_id: $doc})\n"
     "WHERE true\n"
+    + _SHARD_CLAUSE
     + _CLINICAL_FILTER
     + "RETURN ch.chunk_id AS chunk_id, c.concept_id AS cid, c.name AS name\n"
 )
@@ -139,6 +189,7 @@ _READ_QUERY_ZERO_CHUNKS = (
     "MATCH (c:Concept)-[r:EXTRACTED_FROM]->(ch:Chunk {source_id: $doc})\n"
     "WHERE r.rationale IS NULL\n"
     + _ZERO_CHUNK_GUARD
+    + _SHARD_CLAUSE
     + _CLINICAL_FILTER
     + "RETURN ch.chunk_id AS chunk_id, c.concept_id AS cid, c.name AS name\n"
 )
@@ -149,6 +200,24 @@ UNWIND $rows AS row
 MATCH (c:Concept {concept_id: row.cid})-[r:EXTRACTED_FROM]->(ch:Chunk {chunk_id: row.chid})
 SET r.rationale = row.rationale, r.rationale_embedding = row.emb
 RETURN count(r) AS cnt
+"""
+
+# Recompute the concept-level rationale embedding (mean of its edge rationale
+# embeddings).  Mirrors celery_service._RECOMPUTE_RATIONALE_EMBEDDING_QUERY so
+# concept_rationale_embedding_index reflects the enrichment pass.  The mean is
+# un-normalized: the vector index uses cosine (magnitude-invariant).
+_RECOMPUTE_RATIONALE_EMBEDDING_QUERY = """
+UNWIND $cids AS cid
+MATCH (c:Concept {concept_id: cid})-[r:EXTRACTED_FROM]->(:Chunk)
+WHERE r.rationale_embedding IS NOT NULL
+WITH c, collect(r.rationale_embedding) AS embs
+WITH c, embs, size(embs) AS n, size(embs[0]) AS d
+UNWIND range(0, d - 1) AS i
+WITH c, i, reduce(s = 0.0, e IN embs | s + e[i]) / n AS mean_i
+WITH c, i, mean_i
+ORDER BY c.concept_id, i
+WITH c, collect(mean_i) AS mean_vec
+SET c.rationale_embedding = mean_vec
 """
 
 _PROMPT = """You are given a passage from a clinical document and a list of \
@@ -243,6 +312,33 @@ def _parse_json_array(text: str) -> List[Dict[str, Any]]:
     return _extract_json_objects(t)
 
 
+def _is_noop_rationale(text: str) -> bool:
+    """True if the rationale is a non-answer (the model couldn't ground the name)."""
+    t = (text or "").strip().strip('".').strip().lower()
+    if not t:
+        return True
+    if t in {"n/a", "na", "none", "none mentioned", "not applicable",
+             "not stated", "unknown"}:
+        return True
+    return t.startswith("not mentioned")
+
+
+def _parse_rationales(content: str) -> Dict[str, str]:
+    """Map a raw LLM response to {normalized_name: rationale}."""
+    out: Dict[str, str] = {}
+    for entry in _parse_json_array(content):
+        name = entry.get("name")
+        rationale = entry.get("rationale")
+        if (
+            isinstance(name, str)
+            and isinstance(rationale, str)
+            and rationale.strip()
+            and not _is_noop_rationale(rationale)
+        ):
+            out[_norm(name)] = rationale.strip()
+    return out
+
+
 async def _ollama_rationales(
     client_ref: List[httpx.AsyncClient],
     names: List[str],
@@ -295,13 +391,80 @@ async def _ollama_rationales(
             )
             return {}
 
-    out: Dict[str, str] = {}
-    for entry in _parse_json_array(content):
-        name = entry.get("name")
-        rationale = entry.get("rationale")
-        if isinstance(name, str) and isinstance(rationale, str) and rationale.strip():
-            out[_norm(name)] = rationale.strip()
-    return out
+    return _parse_rationales(content)
+
+
+# vLLM (vllm-metal) serves an OpenAI-compatible /v1/chat/completions endpoint.
+# The system prompt mirrors the one that produced clean JSON in the Metal
+# benchmark: a chat template (system + user messages) avoids the raw-prompt
+# repetition/degeneration the 4-bit model exhibited under MLX.
+_VLLM_SYSTEM = (
+    "You are a medical rationale extractor. Given a clinical passage and a list "
+    "of concept names, for EACH concept name write a brief one-clause reason it "
+    "matters in THIS passage, paraphrased. Return ONLY a JSON array of objects "
+    '[{"name": "<exact concept name>", "rationale": "<one clause>"}]. '
+    "No markdown, no explanation, no repetition."
+)
+
+
+async def _vllm_rationales(
+    client_ref: List[httpx.AsyncClient],
+    names: List[str],
+    text: str,
+    chunk_id: str = "",
+) -> Dict[str, str]:
+    """One chat-completions call -> {normalized_name: rationale} for `names`."""
+    payload = {
+        "model": VLLM_MODEL,
+        "messages": [
+            {"role": "system", "content": _VLLM_SYSTEM},
+            {
+                "role": "user",
+                "content": (
+                    "Concept names:\n"
+                    + "\n".join(f"- {n}" for n in names)
+                    + "\n\nPassage:\n"
+                    + text[:MAX_CHARS]
+                ),
+            },
+        ],
+        "max_tokens": GEN_MAX_TOKENS,
+        "temperature": GEN_TEMPERATURE,
+    }
+    for attempt in (0, 1):
+        try:
+            resp = await client_ref[0].post(
+                f"{VLLM_URL}/v1/chat/completions", json=payload, timeout=300.0
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            content = data["choices"][0]["message"]["content"]
+            break
+        except Exception as e:
+            is_transport = (
+                "client has been closed" in str(e).lower()
+                or type(e).__name__ in ("ReadError", "RemoteProtocolError",
+                                         "ConnectError", "PoolTimeout",
+                                         "NetworkError")
+            )
+            if attempt == 0 and (is_transport or isinstance(e, httpx.HTTPError)):
+                logger.info(
+                    f"Replacing broken httpx client after {type(e).__name__} "
+                    f"(chunk {chunk_id or '?'}, {len(names)} concepts)"
+                )
+                try:
+                    await client_ref[0].aclose()
+                except Exception:
+                    pass
+                client_ref[0] = httpx.AsyncClient()
+                continue
+            logger.warning(
+                f"vLLM call failed (chunk {chunk_id or '?'}, {len(names)} concepts): "
+                f"{type(e).__name__}: {e}"
+            )
+            return {}
+
+    return _parse_rationales(content)
 
 
 async def _embed(
@@ -377,6 +540,33 @@ async def _write_with_retry(session, write_tx_fn, *, max_retries: int = 5, base_
             await asyncio.sleep(delay)
 
 
+async def _recompute_centroids(driver, cids: set) -> int:
+    """Recompute concept-level rationale embeddings (mean of edge rationale
+    embeddings) for the given concept ids, batched to bound transaction size."""
+    cid_list = list(cids)
+    BATCH = 2000
+    total = 0
+    for start in range(0, len(cid_list), BATCH):
+        batch = cid_list[start : start + BATCH]
+        try:
+            async with driver.session() as session:
+                res = await session.run(
+                    _RECOMPUTE_RATIONALE_EMBEDDING_QUERY, {"cids": batch}
+                )
+                summary = await res.consume()
+                total += (
+                    summary.counters.properties_set
+                    if summary and summary.counters
+                    else 0
+                )
+        except Exception as e:
+            logger.warning(
+                f"centroid recompute failed for batch {start}: {e}"
+            )
+    logger.info(f"recomputed centroids for {len(cid_list)} concepts")
+    return total
+
+
 async def _enrich_document(
     doc_id: str,
     driver,
@@ -386,6 +576,7 @@ async def _enrich_document(
     include_enriched: bool = False,
     dry_run: bool = False,
     zero_chunks_only: bool = False,
+    shard_chars: Optional[List[str]] = None,
 ) -> Tuple[int, int]:
     """Enrich one document.  Returns (edges_updated, chunks_processed)."""
     # 1. Edges needing rationale, grouped by chunk.
@@ -395,9 +586,12 @@ async def _enrich_document(
         read_query = _READ_QUERY_ALL
     else:
         read_query = _READ_QUERY
+    shard_chars = shard_chars or _ALL_HEX
     cid_to_name: Dict[str, str] = {}
     async with driver.session() as session:
-        result = await session.run(read_query, {"doc": doc_id})
+        result = await session.run(
+            read_query, {"doc": doc_id, "shard_chars": shard_chars}
+        )
         by_chunk: Dict[str, List[Tuple[str, str]]] = {}
         async for rec in result:
             by_chunk.setdefault(rec["chunk_id"], []).append((rec["cid"], rec["name"]))
@@ -429,6 +623,8 @@ async def _enrich_document(
     dry_samples: List[Tuple[str, str]] = []
     total = len(by_chunk)
     write_sem = asyncio.Semaphore(WRITE_CONCURRENCY)
+    # Concept ids whose edges were written this pass, for centroid recompute.
+    written_cids: set = set()
     # Mutable reference: when any task detects a broken httpx client, it
     # replaces the shared client once so all concurrent tasks benefit.
     client_ref: List[httpx.AsyncClient] = [http]
@@ -447,12 +643,16 @@ async def _enrich_document(
         unique_names = [
             n for _, n in concepts if not (_norm(n) in seen or seen.add(_norm(n)))
         ]
+        batch_size = DENSE_MAX_CONCEPTS if len(text) > DENSE_TEXT_CHARS else MAX_CONCEPTS
 
         async with sem:
             merged: Dict[str, str] = {}
-            for i in range(0, len(unique_names), MAX_CONCEPTS):
-                sub = unique_names[i : i + MAX_CONCEPTS]
-                merged.update(await _ollama_rationales(client_ref, sub, text, chunk_id))
+            for i in range(0, len(unique_names), batch_size):
+                sub = unique_names[i : i + batch_size]
+                if BACKEND == "vllm":
+                    merged.update(await _vllm_rationales(client_ref, sub, text, chunk_id))
+                else:
+                    merged.update(await _ollama_rationales(client_ref, sub, text, chunk_id))
 
             # (cid, rationale) for THIS chunk only
             chunk_pairs = [
@@ -503,6 +703,7 @@ async def _enrich_document(
             async with write_sem:
                 async with driver.session() as session:
                     stats["updated"] += await _write_with_retry(session, _write_tx)
+                    written_cids.update(cid for cid, _ in chunk_pairs)
 
         stats["done"] += 1
         if stats["done"] % 50 == 0 or stats["done"] == total:
@@ -527,6 +728,11 @@ async def _enrich_document(
         logger.warning(f"[{doc_id}] LLM produced no usable rationales")
     else:
         logger.info(f"[{doc_id}] updated {stats['updated']} edges over {total} chunks")
+
+    # Recompute concept-level rationale centroids for the concepts we touched.
+    if written_cids:
+        await _recompute_centroids(driver, written_cids)
+
     return (stats["updated"], total)
 
 
@@ -535,6 +741,8 @@ async def main(
     include_enriched: bool = False,
     dry_run: bool = False,
     zero_chunks_only: bool = False,
+    shard: int = 0,
+    shard_total: int = 1,
 ):
     driver = AsyncGraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
     pg = await asyncpg.connect(
@@ -545,6 +753,8 @@ async def main(
     total_updated = 0
     total_chunks = 0
 
+    shard_chars = shard_chars_for(shard, shard_total)
+
     mode = (
         "DRY-RUN"
         if dry_run
@@ -554,9 +764,11 @@ async def main(
             else ("ALL edges" if include_enriched else "resume-safe")
         )
     )
+    model_desc = VLLM_MODEL if BACKEND == "vllm" else OLLAMA_MODEL
     logger.info(
         f"Enriching rationales for {len(doc_ids)} document(s) [{mode}] "
-        f"(model={OLLAMA_MODEL}, concurrency={CONCURRENCY})"
+        f"(backend={BACKEND}, model={model_desc}, concurrency={CONCURRENCY}, "
+        f"shard={shard}/{shard_total})"
     )
 
     async with httpx.AsyncClient() as http:
@@ -573,7 +785,8 @@ async def main(
         for doc_id in doc_ids:
             try:
                 updated, chunks = await _enrich_document(
-                    doc_id, driver, pg, http, sem, include_enriched, dry_run, zero_chunks_only
+                    doc_id, driver, pg, http, sem, include_enriched,
+                    dry_run, zero_chunks_only, shard_chars,
                 )
                 total_updated += updated
                 total_chunks += chunks
@@ -610,6 +823,18 @@ if __name__ == "__main__":
         help="Only reprocess chunks that have NO rationale on any edge "
         "(targeted retry of zero-yield chunks; tune with ENRICH_MAX_CONCEPTS/OLLAMA_TIMEOUT)",
     )
+    parser.add_argument(
+        "--shard",
+        type=int,
+        default=0,
+        help="Zero-based shard index (chunks partitioned by chunk_id first hex nibble)",
+    )
+    parser.add_argument(
+        "--shard-total",
+        type=int,
+        default=1,
+        help="Total number of shards across all worker processes",
+    )
     args = parser.parse_args()
     asyncio.run(
         main(
@@ -617,5 +842,7 @@ if __name__ == "__main__":
             include_enriched=args.include_enriched,
             dry_run=args.dry_run,
             zero_chunks_only=args.zero_chunks_only,
+            shard=args.shard,
+            shard_total=args.shard_total,
         )
     )

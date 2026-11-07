@@ -80,10 +80,10 @@ async def main(training_data_path: str, output_path: str, count: int) -> int:
             await ai_service.verify_available()
             logger.info("Using DeepSeek for gold answers")
         else:
-            from multimodal_librarian.services.ollama_ai_service import OllamaAIService
-            ai_service = OllamaAIService()
+            from multimodal_librarian.services.vllm_ai_service import VLLMAIService
+            ai_service = VLLMAIService()
             await ai_service.verify_available()
-            logger.info("Using Ollama for gold answers")
+            logger.info("Using vLLM for gold answers")
 
         from multimodal_librarian.services.rag_service import RAGService
         rag_service = RAGService(vector_client=milvus, ai_service=ai_service)

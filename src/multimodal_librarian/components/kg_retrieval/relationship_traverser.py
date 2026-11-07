@@ -93,6 +93,8 @@ class RelationshipTraverser:
         "has_method", "method_of",
         "has_direct_morphology", "has_indirect_morphology",
         "has_causative_agent",
+        "causative_agent_of",
+        "induces", "induced_by",
         "has_pharmacokinetics",
         "has_physiologic_effect",
         "has_mechanism_of_action",
