@@ -937,61 +937,73 @@ class PDFProcessor:
             List of MediaElement objects for tables
         """
         tables = []
-        
+
         try:
             with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-                # Process ALL pages: tables on pages beyond the former 50-page
-                # threshold were silently dropped. Per-page try/except and
-                # batch gc already bound memory.
-                for page_num, page in enumerate(pdf.pages, 1):
-                    try:
-                        page_tables = page.extract_tables()
-                        
-                        for table_index, table_data in enumerate(page_tables):
-                            if table_data and len(table_data) > 1:  # Must have header + data
-                                # Convert table to structured format
-                                table_dict = {
-                                    'headers': table_data[0] if table_data[0] else [],
-                                    'rows': table_data[1:],
-                                    'row_count': len(table_data) - 1,
-                                    'col_count': len(table_data[0]) if table_data[0] else 0
-                                }
-                                
-                                # Generate unique ID
-                                element_id = f"table_{page_num}_{table_index}_{uuid.uuid4().hex[:8]}"
-                                
-                                # Serialize table data
-                                import json
-                                table_json = json.dumps(table_dict, ensure_ascii=False)
-                                
-                                media_element = MediaElement(
-                                    element_id=element_id,
-                                    element_type="table",
-                                    content_data=table_json.encode('utf-8'),
-                                    caption=f"Table from page {page_num}",
-                                    alt_text=f"Table {table_index + 1} on page {page_num} "
-                                             f"({table_dict['row_count']} rows, {table_dict['col_count']} columns)",
-                                    metadata={
-                                        'page_number': page_num,
-                                        'table_index': table_index,
-                                        'row_count': table_dict['row_count'],
-                                        'col_count': table_dict['col_count'],
-                                        'format': 'JSON'
-                                    }
-                                )
-                                
-                                tables.append(media_element)
-                    except Exception as e:
-                        logger.warning(f"Failed to extract tables from page {page_num}: {str(e)}")
-                        continue
-                    
-                    # Garbage collection every batch_size pages
-                    if page_num % self.batch_size == 0:
-                        gc.collect()
-        
+                page_count = len(pdf.pages)
         except Exception as e:
-            logger.warning(f"Failed to extract tables with pdfplumber: {str(e)}")
-        
+            logger.warning(f"Failed to open PDF for table extraction: {str(e)}")
+            return tables
+
+        # pdfminer.six builds a full layout graph per page and does not release
+        # it eagerly, so iterating every page of a 4k+ page PDF in one session
+        # balloons RSS into the tens of GB. Process in bounded page batches,
+        # re-opening the file per batch so each session's layout objects are
+        # released before the next batch begins.
+        batch_size = max(self.batch_size * 10, self.large_pdf_threshold)
+        for start in range(1, page_count + 1, batch_size):
+            end = min(start + batch_size - 1, page_count)
+            try:
+                with pdfplumber.open(
+                    io.BytesIO(pdf_bytes), pages=list(range(start, end + 1))
+                ) as pdf:
+                    for page in pdf.pages:
+                        page_num = page.page_number
+                        try:
+                            page_tables = page.extract_tables()
+
+                            for table_index, table_data in enumerate(page_tables):
+                                if table_data and len(table_data) > 1:  # Must have header + data
+                                    # Convert table to structured format
+                                    table_dict = {
+                                        'headers': table_data[0] if table_data[0] else [],
+                                        'rows': table_data[1:],
+                                        'row_count': len(table_data) - 1,
+                                        'col_count': len(table_data[0]) if table_data[0] else 0
+                                    }
+
+                                    # Generate unique ID
+                                    element_id = f"table_{page_num}_{table_index}_{uuid.uuid4().hex[:8]}"
+
+                                    # Serialize table data
+                                    import json
+                                    table_json = json.dumps(table_dict, ensure_ascii=False)
+
+                                    media_element = MediaElement(
+                                        element_id=element_id,
+                                        element_type="table",
+                                        content_data=table_json.encode('utf-8'),
+                                        caption=f"Table from page {page_num}",
+                                        alt_text=f"Table {table_index + 1} on page {page_num} "
+                                                 f"({table_dict['row_count']} rows, {table_dict['col_count']} columns)",
+                                        metadata={
+                                            'page_number': page_num,
+                                            'table_index': table_index,
+                                            'row_count': table_dict['row_count'],
+                                            'col_count': table_dict['col_count'],
+                                            'format': 'JSON'
+                                        }
+                                    )
+
+                                    tables.append(media_element)
+                        except Exception as e:
+                            logger.warning(f"Failed to extract tables from page {page_num}: {str(e)}")
+                            continue
+            except Exception as e:
+                logger.warning(f"Failed to extract tables for pages {start}-{end}: {str(e)}")
+                continue
+            gc.collect()
+
         return tables
     
     def analyze_structure(self, content: DocumentContent) -> DocumentStructure:
