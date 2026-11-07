@@ -207,8 +207,12 @@ class GenericMultiLevelChunkingFramework:
             document_id = str(uuid.uuid4())
         
         logger.info(f"Processing document {document_id} (chunks only, no bridges)")
-        
+
         try:
+            # Bind trailing table/figure captions to the list they title so a
+            # caption lands in the same chunk as its content (not the next one).
+            document.text = self._reassociate_trailing_captions(document.text)
+
             # Step 1: Generate content profile
             content_profile = self.generate_content_profile(document)
             
@@ -682,8 +686,12 @@ class GenericMultiLevelChunkingFramework:
             document_id = str(uuid.uuid4())
         
         logger.info(f"Processing document {document_id}")
-        
+
         try:
+            # Bind trailing table/figure captions to the list they title so a
+            # caption lands in the same chunk as its content (not the next one).
+            document.text = self._reassociate_trailing_captions(document.text)
+
             # Step 1: Generate content profile
             content_profile = self.generate_content_profile(document)
             
@@ -1093,6 +1101,108 @@ class GenericMultiLevelChunkingFramework:
             return left + right  # default: soft-wrap
 
         return pattern.sub(_repl, text)
+
+    @staticmethod
+    def _reassociate_trailing_captions(text: str) -> str:
+        """Bind a trailing table/figure caption to the list it titles.
+
+        Some textbooks lay a table's title *after* the table body in the PDF
+        reading order, so extraction yields the caption trailing the body::
+
+            ANTIMICROBIAL AGENTS
+            Cephalosporins
+            ...
+            ILLICIT DRUGS
+            Propoxyphene
+            DRUG-INDUCED AND IATROGENIC
+            INTERSTITIAL LUNG DISEASE*
+            TABLE 80-2
+
+        Size-based chunking then drops the title into a different chunk than
+        the drug names, and a token-overlap reranker can no longer tie the two
+        together.  This moves such a caption in front of the list block it
+        titles, page by page (the extractor emits ``[Page N]`` markers).
+
+        Deliberately conservative: the caption must be a standalone
+        ``TABLE/FIGURE/BOX/ALGORITHM <n>`` line, preceded by an ALL-CAPS
+        title, which is itself preceded by a list block containing at least two
+        ALL-CAPS category headers.  A *leading* caption (title above, table
+        below) has no such list above it and is left untouched.
+        """
+        import re
+
+        kind_re = re.compile(
+            r"^(TABLE|FIGURE|BOX|ALGORITHM)\s+(\d+)(?:-(\d+))?\.?\*?\s*$",
+            re.IGNORECASE,
+        )
+
+        def _ends_sentence(line: str) -> bool:
+            return line.rstrip().endswith((".", "!", "?"))
+
+        def _is_caption_title(line: str) -> bool:
+            core = line.strip().rstrip("*").rstrip()
+            if not core or len(core) > 80 or _ends_sentence(core):
+                return False
+            letters = [c for c in core if c.isalpha()]
+            if not letters:
+                return False
+            upper = sum(1 for c in letters if c.isupper()) / len(letters)
+            return upper >= 0.6
+
+        def _is_list_header(line: str) -> bool:
+            core = line.strip()
+            if not core or len(core) > 60:
+                return False
+            letters = [c for c in core if c.isalpha()]
+            if not letters:
+                return False
+            return all(c.isupper() for c in letters) and not _ends_sentence(core)
+
+        def _is_body_line(line: str) -> bool:
+            raw = line.rstrip("\n")
+            core = raw.strip()
+            if not core or core.startswith("[Page "):
+                return False
+            if core.startswith("*"):
+                # footnote / figure-note line, part of the table body
+                return len(core) <= 150
+            if _ends_sentence(core) and len(core) > 40:
+                return False
+            if len(core) >= 60 and raw.endswith((" ", "-")):
+                # soft-wrapped prose continuation (trailing space/hyphen)
+                return False
+            return True
+
+        def _reassociate(lines):
+            for i in range(len(lines)):
+                if not kind_re.match(lines[i].strip()):
+                    continue
+                j = i - 1
+                title = []
+                while j >= 0 and _is_caption_title(lines[j]):
+                    title.insert(0, lines[j])
+                    j -= 1
+                if not title:
+                    continue
+                k = j
+                body = []
+                headers = 0
+                while k >= 0 and len(body) < 200 and _is_body_line(lines[k]):
+                    body.insert(0, lines[k])
+                    if _is_list_header(lines[k]):
+                        headers += 1
+                    k -= 1
+                if headers >= 2 and len(body) >= 5:
+                    caption = title + [lines[i]]
+                    return lines[: k + 1] + caption + body + lines[i + 1 :]
+            return lines
+
+        page_re = re.compile(r"(?=\[Page [^\]]+\]\n)")
+        return "".join(
+            "\n".join(_reassociate(page.split("\n")))
+            for page in page_re.split(text)
+            if page
+        )
 
     # Function words never terminate a soft-wrap ("pre- and post-operative"):
     # a hyphen directly followed by one of these is a dash, not a line-break.

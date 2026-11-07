@@ -170,3 +170,52 @@ class TestChunkingFrameworkBasic:
         # Verify statistics reflect multiple documents
         stats = framework.get_framework_statistics()
         assert stats['documents_processed'] == 3
+
+
+class TestReassociateTrailingCaptions:
+    """Trailing table/figure captions should be bound to the list they title."""
+
+    def test_moves_trailing_caption_before_list(self):
+        framework = GenericMultiLevelChunkingFramework()
+        text = (
+            "[Page 1]\n"
+            "Some leading prose that wraps across a long line to reach the full \n"
+            "width of the page so it is clearly a soft-wrapped paragraph ending. \n"
+            "ANTIMICROBIAL AGENTS\n"
+            "Cephalosporins\n"
+            "Isoniazid\n"
+            "Nitrofurantoin\n"
+            "ANTI-INFLAMMATORY AGENTS\n"
+            "Sirolimus\n"
+            "Everolimus\n"
+            "DRUG-INDUCED AND IATROGENIC \n"
+            "INTERSTITIAL LUNG DISEASE*\n"
+            "TABLE 80-2\n"
+        )
+        out = framework._reassociate_trailing_captions(text)
+
+        assert out.index("TABLE 80-2") < out.index("ANTIMICROBIAL AGENTS")
+        assert out.index("DRUG-INDUCED AND IATROGENIC") < out.index("Sirolimus")
+
+    def test_leading_caption_is_left_untouched(self):
+        # A caption *above* its table has no list above it and must not move.
+        framework = GenericMultiLevelChunkingFramework()
+        text = (
+            "[Page 1]\n"
+            "CLINICAL FEATURES\n"
+            "TABLE 80-3\n"
+            "Amiodarone\n"
+            "Bleomycin\n"
+            "Busulfan\n"
+        )
+        assert framework._reassociate_trailing_captions(text) == text
+
+    def test_no_caption_page_is_unchanged(self):
+        framework = GenericMultiLevelChunkingFramework()
+        text = (
+            "[Page 1]\n"
+            "A normal paragraph of prose with no table captions at all. It just \n"
+            "continues on with more words to fill out the line width fully and \n"
+            "ends with a terminal sentence.\n"
+        )
+        assert framework._reassociate_trailing_captions(text) == text
